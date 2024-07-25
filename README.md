@@ -1,7 +1,17 @@
 # Tauri + React
 
-This template should help get you started developing with Tauri and React in Vite.
+开发中
 
-## Recommended IDE Setup
+目前功能展示：
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+### 1.本地app快速搜索，用户习惯排序
+![image](show/2.png)
+
+### 2. 本地文件搜索
+![image](show/3.png)
+
+### 3. 关键词快速搜索，url访问
+![image](show/4.png)
+
+### 4. 子页面组件开发，本地文件交互 [todo]
+![image](show/5.png)
