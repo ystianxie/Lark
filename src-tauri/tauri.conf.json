@@ -1,0 +1,82 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devPath": "http://localhost:1421",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "lark",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "macOSPrivateApi": true,
+    "allowlist": {
+      "all": true,
+      "clipboard": {
+        "all": true,
+        "readText": true,
+        "writeText": true
+      },
+      "shell": {
+        "all": false,
+        "open": true,
+        "sidecar": true,
+        "scope": []
+      },
+      "http": {
+        "scope": [
+          "http://**",
+          "https://**"
+        ]
+      },
+      "fs": {
+        "all": true,
+        "scope": [
+          "*",
+          "$DOWNLOAD/*"
+        ]
+      },
+      "window": {
+        "all": true
+      },
+      "globalShortcut": {
+        "all": true
+      }
+    },
+    "windows": [
+      {
+        "title": "lark",
+        "width": 718,
+        "height": 71,
+        "resizable": false,
+        "transparent": true,
+        "hiddenTitle": true,
+        "decorations": false,
+        "skipTaskbar": false,
+        "label": "skylark",
+        "alwaysOnTop": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.starsxu.lark",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "externalBin": []
+    },
+    "systemTray": {
+      "iconPath": "icons/logo.png",
+      "iconAsTemplate": true
+    }
+  }
+}

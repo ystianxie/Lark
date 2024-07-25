@@ -1,0 +1,20 @@
+{
+    "title": "JSON",
+    "description": "JSON格式化",
+    "workflow": [
+        {
+            "keyword": "json",
+            "title": "JSON格式化",
+            "step": 0,
+            "action": "openUrl",
+            "icon": "",
+            "data": "chrome-extension://pogcfcgaeocmmoadpbcfnponnlidodjn/JSON-handle/JSON-handle.html",
+            "desc": "",
+            "next": []
+        }
+    ],
+    "type": "component",
+    "icon": "icon-json",
+    "version": "1.0.0",
+    "author": "dmj"
+}

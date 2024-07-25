@@ -1,0 +1,81 @@
+[package]
+name = "lark"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["dmj"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+tauri = { version = "1.7.0", features = [
+    "system-tray",
+    "api-all",
+    "macos-private-api",
+    "devtools",
+    "icon-ico",
+    "icon-png",
+    "global-shortcut",
+    "process-command-api",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.117"
+window-shadows = "0.2.1"
+fd-find = "10.1.0"
+image = "0.25.1"
+objc = "0.2.7"
+core-graphics = "0.23"
+pelite = "0.10.0"
+log = "0.4.21"
+regex = "1.10.5"
+reqwest = { version = "0.12.4", features = ["blocking"] }
+auto-launch = "0.5.0"
+pinyin = "0.10.0"
+icns = "0.3.1"
+tauri-icns = "0.1.0"
+applications = "0.2.3"
+base64 = "0.22.1"
+plist = "1.6.1"
+encoding_rs = "0.8"
+encoding_rs_io = "0.1"
+webbrowser = "1.0.1"
+enigo = "0.2.1"
+open = "5"
+winit = "0.30.3"
+anyhow = "1.0.86"
+rusqlite = "0.31.0"
+rust-crypto = "0.2.36"
+chrono = "0.4.23"
+arboard = "3.4.0"
+rdev = { version = "0.5.1", features = ['unstable_grab']} #获取键盘按键
+#accessibility = "0.1.6" #获取鼠标选中文本
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.25.0"
+
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58.0", features = [
+    "Win32_System_Com",
+    "Win32_System_WindowsProgramming",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32",
+    "Win32_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Ole",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Memory",
+    "Win32_System_LibraryLoader",
+    "Win32_System",
+] }
+winapi = { version = "0.3.9" ,features = ["winuser"]}
+[features]
+# This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
