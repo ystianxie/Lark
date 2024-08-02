@@ -28,6 +28,6 @@ pub fn parse<T: DeserializeOwned>(json_str: &str) -> Result<T> {
     serde_json::from_str::<T>(json_str).context("failed to parse json string")
 }
 
-pub fn stringfy<T: Serialize>(data: &T) -> Result<String> {
+pub fn stringify<T: Serialize>(data: &T) -> Result<String> {
     Ok(serde_json::to_string(data)?)
 }

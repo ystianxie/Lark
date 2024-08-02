@@ -10,7 +10,6 @@ pub struct Record {
     pub id: u64,
     pub content: String,
     pub content_preview: Option<String>,
-    // data_type(文本=text、图片=image)
     pub data_type: String,
     pub md5: String,
     pub create_time: u64,
@@ -73,7 +72,7 @@ impl SqliteDB {
         let sql = "insert into record (content,md5,create_time,data_type,content_preview) values (?1,?2,?3,?4,?5)";
         let md5 = string_factory::md5(r.content.as_str());
         let now = chrono::Local::now().timestamp_millis() as u64;
-        let content_preview = r.content_preview.as_deref().unwrap_or( "");
+        let content_preview = r.content_preview.as_deref().unwrap_or("");
         let res = self.conn.execute(
             sql,
             (
@@ -87,9 +86,9 @@ impl SqliteDB {
         Ok(self.conn.last_insert_rowid())
     }
 
-    fn find_record_by_md5(&self, md5: &str) -> Result<Record> {
-        let sql = "SELECT id FROM record WHERE md5 = ?1";
-        let r = self.conn.query_row(sql, [md5], |row| {
+    fn find_record_by_md5(&self, md5: &str, data_type: &str) -> Result<Record> {
+        let sql = "SELECT id FROM record WHERE md5 = ?1 and data_type = ?2";
+        let r = self.conn.query_row(sql, [md5, data_type], |row| {
             Ok(Record {
                 id: row.get(0)?,
                 ..Default::default()
@@ -109,7 +108,7 @@ impl SqliteDB {
 
     pub fn insert_if_not_exist(&self, r: &Record) -> Result<()> {
         let md5 = string_factory::md5(r.content.as_str());
-        match self.find_record_by_md5(&md5) {
+        match self.find_record_by_md5(&md5, &r.data_type) {
             Ok(res) => {
                 self.update_record_create_time(&res)?;
             }
@@ -172,8 +171,6 @@ impl SqliteDB {
             );
         }
         let sql = format!("{} order by create_time desc limit ?1", sql);
-        println!("sql: {}", sql);
-        println!("params: {:?}", params);
         let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
         let mut res = vec![];
@@ -196,16 +193,14 @@ impl SqliteDB {
     //删除超过limit的记录
     pub fn delete_over_limit(&self, limit: usize) -> Result<bool> {
         // 先查询count，如果数量超过limit 10个以上了就删除多余的部分 主要是防止频繁重建数据库
-        let mut stmt = self
-            .conn
-            .prepare("SELECT count(*) FROM record")?;
+        let mut stmt = self.conn.prepare("SELECT count(id) FROM record")?;
         let mut rows = stmt.query([])?;
         let count: usize = rows.next()?.unwrap().get(0).unwrap();
         if count < 10 + limit {
             return Ok(false);
         }
         let remove_num = count - limit;
-        let sql = "DELETE FROM record WHERE id in (SELECT id FROM record where order by create_time asc limit ?1)";
+        let sql = "DELETE FROM record WHERE id in (SELECT id FROM record order by create_time asc limit ?1)";
         self.conn.execute(sql, [remove_num])?;
         Ok(true)
     }
@@ -236,14 +231,14 @@ fn test_sqlite_insert() {
         create_time: 12345689,
         ..Default::default()
     };
-    let q = QueryReq{
-        key : Option::from("123456".to_string()),
+    let q = QueryReq {
+        key: Option::from("123456".to_string()),
         ..Default::default()
     };
     // println!("{:?}",SqliteDB::new().md5_is_exist("e10adc3949ba59abbe56e057f20f883e").unwrap());
     // println!("{:?}",SqliteDB::new().find_all());
     // println!("{:?}",SqliteDB::new().clear_data());
     // println!("{:?}",SqliteDB::new().find_by_key(&q).unwrap());
-    println!("{:?}",SqliteDB::new().find_by_id(3).unwrap());
+    println!("{:?}", SqliteDB::new().find_by_id(3).unwrap());
     // assert_eq!(SqliteDB::new().insert_record(&r).unwrap(), 1_i64)
 }

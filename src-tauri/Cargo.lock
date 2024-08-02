@@ -2906,6 +2906,7 @@ dependencies = [
  "fd-find",
  "icns",
  "image 0.25.1",
+ "libc",
  "log",
  "objc",
  "open 5.3.0",

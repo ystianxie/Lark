@@ -1,13 +1,13 @@
 use crate::utils::database::{self, Record};
 use crate::config::Config;
-use crate::utils::{img_factory, json_factory, string_factory};
+use crate::utils::{img_factory, json_factory, string_factory, file_factory};
 use anyhow::Result;
 use arboard::Clipboard;
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use enigo::{Enigo, Key, Keyboard, Settings};
-
 use std::thread;
+
 const CHANGE_DEFAULT_MSG: &str = "ok";
 
 pub struct ClipboardWatcher;
@@ -41,7 +41,7 @@ impl ClipboardOperator {
         Ok(text)
     }
 
-    pub fn paste_text(text:&str) -> Result<()> {
+    pub fn paste_text(text: &str) -> Result<()> {
         let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
         let _ = enigo.text(text);
         Ok(())
@@ -60,21 +60,17 @@ impl ClipboardWatcher {
             loop {
                 let mut need_notify = false;
                 let db = database::SqliteDB::new();
-                let text = clipboard.get_text();
-                let _ = text.map(|text| {
-                    let content_origin = text.clone();
-                    let content = text.trim();
-                    let md5 = string_factory::md5(&content_origin);
-                    if !content.is_empty() && md5 != last_content_md5 {
-                        // 说明有新内容
-                        let content_preview = if content.len() > 1000 {
-                            Some(content.chars().take(1000).collect())
-                        } else {
-                            Some(content.to_string())
-                        };
+
+                let files = file_factory::get_clipboard_files();
+                if !files.is_empty() {
+                    let files_string = files.clone().join(",");
+                    let md5 = string_factory::md5(&files_string);
+                    println!("获取到文件: {:?}", files);
+                    if md5 != last_content_md5 {
                         let res = db.insert_if_not_exist(&Record {
-                            content: content_origin,
-                            content_preview,
+                            content: files.clone().join(","),
+                            content_preview: Some(format!("{} File{}:{}", files.len(), if files.len() > 1 { "s" } else { "" }, files[0].split("/").last().unwrap())),
+                            data_type: "file".to_string(),
                             ..Default::default()
                         });
                         match res {
@@ -87,11 +83,41 @@ impl ClipboardWatcher {
                         }
                         last_content_md5 = md5;
                     }
-                });
-
+                } else {
+                    let text = clipboard.get_text();
+                    let _ = text.map(|text| {
+                        let content_origin = text.clone();
+                        let content = text.trim();
+                        let md5 = string_factory::md5(&content_origin);
+                        println!("获取新到文本: {}", content);
+                        if !content.is_empty() && md5 != last_content_md5 {
+                            // 说明有新内容
+                            let content_preview = if content.len() > 1000 {
+                                Some(content.chars().take(1000).collect())
+                            } else {
+                                Some(content.to_string())
+                            };
+                            let res = db.insert_if_not_exist(&Record {
+                                content: content_origin,
+                                content_preview,
+                                ..Default::default()
+                            });
+                            match res {
+                                Ok(_) => {
+                                    need_notify = true;
+                                }
+                                Err(e) => {
+                                    println!("insert record error: {}", e);
+                                }
+                            }
+                            last_content_md5 = md5;
+                        }
+                    });
+                }
                 let img = clipboard.get_image();
                 let _ = img.map(|img| {
                     let img_md5 = string_factory::md5_by_bytes(&img.bytes);
+                    println!("获取新到图片md5: {}", img_md5);
                     if img_md5 != last_img_md5 {
                         // 有新图片产生
                         let base64 = img_factory::rgba8_to_base64(&img);
@@ -101,14 +127,14 @@ impl ClipboardWatcher {
                             base64,
                         };
                         // 压缩画质作为预览图，防止渲染时非常卡顿
-                        let jpeg_base64 = img_factory::rgba8_to_jpeg_base64(&img, 75);
+                        let jpeg_base64 = img_factory::rgba8_to_jpeg_base64(&img, 70);
                         let content_preview_db = ImageDataDB {
                             width: img.width,
                             height: img.height,
                             base64: jpeg_base64,
                         };
-                        let content = json_factory::stringfy(&content_db).unwrap();
-                        let content_preview = json_factory::stringfy(&content_preview_db).unwrap();
+                        let content = json_factory::stringify(&content_db).unwrap();
+                        let content_preview = json_factory::stringify(&content_preview_db).unwrap();
                         let res = db.insert_if_not_exist(&Record {
                             content,
                             content_preview: Some(content_preview),
@@ -129,14 +155,6 @@ impl ClipboardWatcher {
                 });
                 // TODO 获取剪贴板历史保存数量
                 let limit = Config::get_clipboard_record_limit().clone();
-                // if let Some(l) = limit {
-                //     let res = db.delete_over_limit(l as usize);
-                //     if let Ok(success) = res {
-                //         if success {
-                //             need_notify = true;
-                //         }
-                //     }
-                // }
                 let res = db.delete_over_limit(limit as usize);
                 if let Ok(success) = res {
                     if success {
@@ -144,10 +162,22 @@ impl ClipboardWatcher {
                     }
                 }
                 if need_notify {
-                //TODO 显示通知窗口
+                    //TODO 显示通知窗口
                 }
                 thread::sleep(Duration::milliseconds(wait_millis).to_std().unwrap());
             }
         });
     }
 }
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_history_all() -> Vec<Record> {
+    let db = database::SqliteDB::new();
+    db.find_all().unwrap()
+}
+#[tauri::command(rename_all = "camelCase")]
+pub fn get_history_id(id: u64) -> Record {
+    let db = database::SqliteDB::new();
+    db.find_by_id(id).unwrap()
+}
+

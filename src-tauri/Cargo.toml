@@ -50,8 +50,9 @@ rusqlite = "0.31.0"
 rust-crypto = "0.2.36"
 chrono = "0.4.23"
 arboard = "3.4.0"
-rdev = { version = "0.5.1", features = ['unstable_grab']} #获取键盘按键
+rdev = { version = "0.5.1", features = ['unstable_grab'] } #获取键盘按键
 #accessibility = "0.1.6" #获取鼠标选中文本
+libc="0.2.152"
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.25.0"
 
@@ -75,7 +76,7 @@ windows = { version = "0.58.0", features = [
     "Win32_System_LibraryLoader",
     "Win32_System",
 ] }
-winapi = { version = "0.3.9" ,features = ["winuser"]}
+winapi = { version = "0.3.9" ,features = ["winuser"] }
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]

@@ -8,10 +8,12 @@ use std::collections::HashMap;
 mod api;
 mod utils;
 mod config;
+
 use tauri::{
     AppHandle, CustomMenuItem, GlobalShortcutManager, Manager, SystemTray, SystemTrayEvent,
     SystemTrayMenu, Window, WindowEvent,
 };
+use crate::api::clipboard::ClipboardWatcher;
 
 #[derive(Clone)]
 struct AppState {
@@ -47,6 +49,7 @@ pub fn set_window_show(main_window: &Window) {
 
 
 fn main() {
+    ClipboardWatcher::start();
     tauri::Builder::default()
         .setup(|app| {
             app.manage(AppState {
@@ -116,6 +119,8 @@ fn main() {
             api::explorer::read_file_to_base64,
             api::explorer::read_icns_to_base64,
             utils::window::set_window_hide_macos,
+            api::clipboard::get_history_all,
+            api::clipboard::get_history_id,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
