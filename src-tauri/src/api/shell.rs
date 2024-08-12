@@ -1,7 +1,12 @@
+#[cfg(target_os = "macos")]
 extern crate cocoa;
+#[cfg(target_os = "macos")]
 extern crate objc;
+#[cfg(target_os = "macos")]
 use cocoa::base::{id, nil};
+#[cfg(target_os = "macos")]
 use cocoa::foundation::{NSAutoreleasePool, NSString};
+#[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
 use super::clipboard::ClipboardOperator;
 use open;
@@ -42,6 +47,7 @@ pub fn run_python_script(script_path: &str, params: Vec<String>) -> HashMap<&str
 }
 
 #[tauri::command(rename_all = "camelCase")]
+#[cfg(target_os = "macos")]
 pub fn open_app(app_path: &str) {
     unsafe {
         let pool: id = NSAutoreleasePool::new(nil);
@@ -59,6 +65,12 @@ pub fn open_app(app_path: &str) {
         pool.drain();
     }
 }
+#[tauri::command(rename_all = "camelCase")]
+#[cfg(target_os = "windows")]
+pub fn open_app(app_path: &str) {
+
+}
+
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn open_url(url: &str) {

@@ -189,7 +189,7 @@ dependencies = [
  "cocoa 0.25.0",
  "core-foundation 0.9.4",
  "glob",
- "image 0.25.1",
+ "image 0.25.2",
  "ini",
  "lnk",
  "objc",
@@ -218,7 +218,7 @@ checksum = "9fb4009533e8ff8f1450a5bcbc30f4242a1d34442221f72314bea1f5dc9c7f89"
 dependencies = [
  "clipboard-win",
  "core-graphics 0.23.2",
- "image 0.25.1",
+ "image 0.25.2",
  "log",
  "objc2",
  "objc2-app-kit",
@@ -858,9 +858,9 @@ checksum = "4b82cf0babdbd58558212896d1a4272303a57bdb245c2bf1147185fb45640e70"
 
 [[package]]
 name = "clipboard-win"
-version = "5.3.1"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79f4473f5144e20d9aceaf2972478f06ddf687831eafeeb434fbaf0acc4144ad"
+checksum = "15efe7a882b08f34e38556b14f2fb3daa98769d06c7f0c1b076dfd0d983bc892"
 dependencies = [
  "error-code",
 ]
@@ -1372,9 +1372,9 @@ dependencies = [
 
 [[package]]
 name = "dunce"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56ce8c6da7551ec6c462cbaf3bfbc75131ebbfa1c944aeaa9dab51ca1c5f0c3b"
+checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "either"
@@ -2583,12 +2583,12 @@ dependencies = [
 
 [[package]]
 name = "image"
-version = "0.25.1"
+version = "0.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd54d660e773627692c524beaad361aca785a4f9f5730ce91f42aabe5bce3d11"
+checksum = "99314c8a2152b8ddb211f924cdae532d8c5e4c8bb54728e12fff1b0cd5963a10"
 dependencies = [
  "bytemuck",
- "byteorder",
+ "byteorder-lite",
  "color_quant",
  "exr",
  "gif",
@@ -2898,15 +2898,18 @@ dependencies = [
  "auto-launch",
  "base64 0.22.1",
  "chrono",
+ "clipboard-win",
  "cocoa 0.25.0",
  "core-graphics 0.23.2",
+ "dunce",
  "encoding_rs",
  "encoding_rs_io",
  "enigo",
  "fd-find",
  "icns",
- "image 0.25.1",
+ "image 0.25.2",
  "libc",
+ "libsqlite3-sys",
  "log",
  "objc",
  "open 5.3.0",
@@ -2923,6 +2926,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-icns",
+ "walkdir",
  "webbrowser",
  "winapi",
  "window-shadows",
@@ -3030,6 +3034,7 @@ version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c10584274047cb335c23d3e61bcef8e323adae7c5c8c760540f73610177fc3f"
 dependencies = [
+ "cc",
  "pkg-config",
  "vcpkg",
 ]

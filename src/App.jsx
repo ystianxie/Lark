@@ -22,6 +22,7 @@ import {
     loadCustomComponent,
     initAppDB, initAppHabitDB
 } from "./template.jsx";
+import {divide} from "mathjs";
 
 
 const App = () => {
@@ -48,7 +49,10 @@ const App = () => {
     // app缓存
     const [appCache, setAppCache] = useState([]);
     // 功能键状态
-    const [fnDown, setfnDown] = useState(false);
+    const [fnDown, setFnDown] = useState(false);
+    // 按下按键
+    const [keyDown, setKeyDown] = useState(false);
+
     // 自制插件管理
     const [pluginStatus, setPluginStatus] = useLocalStorage("pluginStatus", {});
     // 自制插件列表
@@ -71,15 +75,17 @@ const App = () => {
         setKeywordComponent([]);
         setSelectedIndex(-1);
         setIsComposing({status: false, ppos: 0});
-        setfnDown(false);
+        setFnDown(false);
     }
 
 
     async function handleKeyDown(event) {
         // 处理
-        console.log(inputBox.current.value.length, event.key);
+        setKeyDown(event)
         if (!event.metaKey && event.key === "Enter") {
-            await confirmComponentSelected();
+            if (keywordComponent) {
+                await confirmComponentSelected();
+            }
         } else if (event.key === "Tab") {
             // 当按下TAB键时，将焦点移动到下一个输入框
             event.preventDefault();
@@ -122,8 +128,8 @@ const App = () => {
             console.log("space");
             event.preventDefault();
             event.target.value = "";
-            setComponent(<div className='activateComponent'
-                              data-tauri-drag-region>{insidePluginList.searchFileComponent.icon}</div>);
+            let icon = <img style={{height: "38px"}} {...insidePluginList.searchFileComponent.icon.props}/>
+            setComponent(icon)
             setComponentInfo(insidePluginList.searchFileComponent);
         } else if (inputBox.current.value.length === 1 && event.key === "Backspace") {
             setKeywordComponent([]);
@@ -158,11 +164,8 @@ const App = () => {
         } else if ((event.metaKey || event.ctrlKey)) {
             console.log(event.metaKey, event.key);
             if (event.key === "Meta") {
-                setfnDown(true);
+                setFnDown(true);
             } else if (event.key === "Enter") {
-                // let file_file = keywordComponent[selectedIndex].data.split("/");
-                // file_file = file_file.slice(0, -1).join("/");
-                // await invoke("open_explorer", { path: keywordComponent[selectedIndex].data });
                 await confirmComponentSelected();
                 setInputValue("");
             } else {
@@ -211,23 +214,27 @@ const App = () => {
         // 组件确认选择后
         let currentComponent = keywordComponent[index !== undefined ? index : selectedIndex];
         setSelectedIndex(0);
-
+        if (!currentComponent) return
         if (currentComponent.type === "component") {
+            await updateAppHabit(inputValue, currentComponent.title);
             if (typeof currentComponent.icon == "string") {
                 setComponent(<div className='activateComponent'
                                   data-tauri-drag-region>{currentComponent.icon.slice(0, 4)}</div>);
             } else {
-                setComponent(currentComponent.icon);
+                let icon = <img style={{height: "38px"}} {...currentComponent.icon.props}/>
+                setComponent(icon);
             }
             setComponentInfo(currentComponent);
             setInputValue("");
             inputBox.current.focus();
         } else if (currentComponent.type === "subpage") {
+            await updateAppHabit(inputValue, currentComponent.title);
             if (typeof currentComponent.icon == "string") {
                 setComponent(<div className='activateComponent'
                                   data-tauri-drag-region>{currentComponent.icon.slice(0, 4)}</div>);
             } else {
-                setComponent(currentComponent.icon);
+                let icon = <img style={{height: "38px"}} {...currentComponent.icon.props}/>
+                setComponent(icon);
             }
             setComponentInfo(currentComponent);
             setInputValue("");
@@ -237,7 +244,7 @@ const App = () => {
             await invoke("clipboard_control", {text: currentComponent.data.toString(), control: "copy", paste: true});
         } else if (currentComponent.type === "app") {
             if (!fnDown) {
-                await updateAppHabit(inputValue, keywordComponent[selectedIndex].title);
+                await updateAppHabit(inputValue, currentComponent.title);
                 await invoke("open_app", {appPath: currentComponent.data});
                 initStatus();
             } else {
@@ -261,7 +268,7 @@ const App = () => {
                 }
             };
             handle(currentComponent);
-            await invoke("set_window_hide_macos", {});
+            initStatus();
         } else if (currentComponent.type === "file") {
             if (!fnDown) {
                 await invoke("open_file", {filePath: currentComponent.data});
@@ -270,6 +277,7 @@ const App = () => {
             }
 
         }
+        setKeywordComponent([])
     }
 
     useEffect(() => {
@@ -385,7 +393,7 @@ const App = () => {
                 });
             }
             let searchType = "app";
-            if (componentInfo?.title === "搜索文件") {
+            if (componentInfo?.title === "文件搜索") {
                 searchType = "file";
             } else if (componentInfo?.type) {
                 searchType = componentInfo.title;
@@ -652,8 +660,10 @@ const App = () => {
 
 
         // 读取本地组件库，查看注册状态
-        setPluginList(loadCustomComponent());
-
+        loadCustomComponent().then((result) => {
+                setPluginList(result);
+            }
+        )
         if (!windowPosition.current) {
             windowPosition.current = getWindowPosition();
         }
@@ -700,7 +710,7 @@ const App = () => {
                            }}
                            onKeyDown={handleKeyDown}
                            onKeyUp={() => {
-                               setfnDown(false)
+                               setFnDown(false)
                            }}
                            onCompositionStart={() => {
                                setIsComposing({status: true, ppos: 0})
@@ -711,7 +721,7 @@ const App = () => {
                            }}/>
                 </div>
                 {TemplateComponent(keywordComponent, selectedIndex, setSelectedIndex, confirmComponentSelected, fnDown)}
-                <SubpageComponent component={componentInfo}/>
+                <SubpageComponent component={componentInfo} keyDown={keyDown}/>
             </div>
         </div>
     );

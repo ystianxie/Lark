@@ -1,11 +1,12 @@
-use cocoa::appkit::NSPasteboard;
-use cocoa::base::nil;
-use cocoa::foundation::{NSArray, NSAutoreleasePool};
-use objc::{msg_send, sel, sel_impl};
-use objc::runtime::{Class, Object};
+use cocoa::foundation::NSString;
 
 #[cfg(target_os = "macos")]
-pub fn get_clipboard_files() -> Vec<String> {
+pub fn get_clipboard_files() -> Vec<(String, String)> {
+    use cocoa::appkit::NSPasteboard;
+    use cocoa::base::nil;
+    use cocoa::foundation::{NSArray, NSAutoreleasePool};
+    use objc::{msg_send, sel, sel_impl};
+    use objc::runtime::{Class, Object};
     unsafe {
         let _pool = NSAutoreleasePool::new(nil);
         let pasteboard = NSPasteboard::generalPasteboard(nil);
@@ -25,48 +26,45 @@ pub fn get_clipboard_files() -> Vec<String> {
 
         let count = objects.count();
         let mut files = Vec::new();
-
+        let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
         for i in 0..count {
             let object = objects.objectAtIndex(i);
             let url: *mut Object = object as *mut Object;
 
             let path: *mut Object = msg_send![url, path];
+            let extension: *mut Object = msg_send![url, pathExtension];
+
             if !path.is_null() {
                 let path_str: *const libc::c_char = msg_send![path, UTF8String];
-                let path_string = std::ffi::CStr::from_ptr(path_str).to_string_lossy().into_owned();
-                files.push(path_string);
+                let mut path_string = std::ffi::CStr::from_ptr(path_str).to_string_lossy().into_owned();
+                let mut extension_string = if !extension.is_null() {
+                    let extension_str: *const libc::c_char = msg_send![extension, UTF8String];
+                    std::ffi::CStr::from_ptr(extension_str).to_string_lossy().into_owned()
+                } else {
+                    String::new()
+                };
+                if extension_string.is_empty() {
+                    let path_ = std::path::Path::new(&path_string);
+                    if path_.is_dir() {
+                        extension_string = "folder".to_string();
+                    }
+                }
+                path_string = path_string.replace(&home_dir, "~");
+                files.push((path_string,extension_string));
             }
         }
+
         files
     }
 }
 
 
 #[cfg(target_os = "windows")]
-fn get_clipboard_files() -> Vec<String> {
-    use std::ptr;
-    use winapi::um::winuser::{OpenClipboard, CloseClipboard, GetClipboardData, CF_HDROP};
-    use winapi::um::shellapi::{DragQueryFileW, DragFinish};
+pub fn get_clipboard_files() -> Vec<String> {
+    use clipboard_win::raw;
     let mut files = Vec::new();
-
-    unsafe {
-        if OpenClipboard(ptr::null_mut()) != 0 {
-            let handle = GetClipboardData(CF_HDROP);
-            if !handle.is_null() {
-                let count = DragQueryFileW(handle, 0xFFFFFFFF, ptr::null_mut(), 0);
-                for i in 0..count {
-                    let mut buffer: [u16; 260] = [0; 260];
-                    let length = DragQueryFileW(handle, i, buffer.as_mut_ptr(), buffer.len() as u32);
-                    if length > 0 {
-                        let filename = String::from_utf16_lossy(&buffer[..length as usize]);
-                        files.push(filename);
-                    }
-                }
-                DragFinish(handle);
-            }
-            CloseClipboard();
-        }
-    }
-
+    let _ = raw::open();
+    let _ = raw::get_file_list(&mut files);
+    let _ = raw::close();
     files
 }

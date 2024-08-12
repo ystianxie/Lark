@@ -86,11 +86,11 @@ pub fn get_all_app(keyword: &str) -> Vec<HashMap<String, String>> {
         result.extend(get_app(
             "/System/Volumes/Preboot/Cryptexes/App/System/Applications",
         ));
-        return result;
     }
     #[cfg(target_os = "windows")]{
-        return get_app("C:\\Program Files");
+        result.extend( get_app("C:\\Program Files"));
     }
+    result
 }
 
 pub fn get_app(path: &str) -> Vec<HashMap<String, String>> {

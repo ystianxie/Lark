@@ -1,14 +1,14 @@
 use anyhow::Result;
 use std::path::PathBuf;
 use tauri::api::path::home_dir;
-
+#[cfg(target_os = "windows")]
+use dunce;
 static APP_DIR: &str = "lark";
 static CONFIG_FILE: &str = "config.json";
 
 /// get the app home dir
 pub fn app_home_dir() -> Result<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
+    #[cfg(target_os = "windows")]{
         use tauri::utils::platform::current_exe;
 
         let app_exe = current_exe()?;
@@ -16,22 +16,23 @@ pub fn app_home_dir() -> Result<PathBuf> {
         let app_dir = app_exe
             .parent()
             .ok_or(anyhow::anyhow!("failed to get the portable app dir"))?;
-        let app_dir = PathBuf::from(app_dir).join(".config").join(APP_DIR);
+        let app_dir = PathBuf::from(app_dir).join("config").join(APP_DIR);
         if !app_dir.exists() {
             std::fs::create_dir_all(&app_dir)?;
         }
         Ok(app_dir)
     }
 
-    #[cfg(not(target_os = "windows"))]
-    let home = home_dir()
-        .ok_or(anyhow::anyhow!("failed to get the app home dir"))?
-        .join(".config")
-        .join(APP_DIR);
-    if !home.exists() {
-        std::fs::create_dir_all(&home)?;
+    #[cfg(not(target_os = "windows"))]{
+        let home = home_dir()
+            .ok_or(anyhow::anyhow!("failed to get the app home dir"))?
+            .join(".config")
+            .join(APP_DIR);
+        if !home.exists() {
+            std::fs::create_dir_all(&home)?;
+        }
+        Ok(home)
     }
-    Ok(home)
 }
 
 /// logs dir
@@ -45,7 +46,8 @@ pub fn app_logs_dir() -> Result<PathBuf> {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    Ok(app_home_dir()?.join(CONFIG_FILE))
+    let config = app_home_dir()?.join(CONFIG_FILE);
+    Ok(config)
 }
 
 #[allow(unused)]

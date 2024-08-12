@@ -1,10 +1,10 @@
 #[cfg(target_os = "windows")]
 extern crate winapi;
 
-use objc::msg_send;
+#[cfg(target_os = "macos")]
+use objc::{msg_send,sel,sel_impl};
+#[cfg(target_os = "macos")]
 use objc::runtime::{Class, Object};
-use objc::sel;
-use objc::sel_impl;
 use tauri::{Manager, Runtime};
 use window_shadows::set_shadow;
 
@@ -30,7 +30,8 @@ pub fn set_window_hide_macos() -> String {
 }
 
 #[cfg(target_os = "macos")]
-pub fn set_window_show_macos() -> String {
+#[tauri::command(rename_all = "camelCase")]
+pub fn set_window_show() -> String {
     unsafe {
         // 获取 NSApplication 的类
         let ns_app = Class::get("NSApplication").expect("NSApplication class not found");
@@ -44,6 +45,14 @@ pub fn set_window_show_macos() -> String {
     "".to_string()
 }
 
+#[cfg(target_os = "windows")]
+#[tauri::command(rename_all = "camelCase")]
+pub fn set_window_show() -> String {
+
+    "".to_string()
+}
+
+#[cfg(target_os = "macos")]
 pub fn register_global_hotkey() {
     unsafe {
         let ns_app = Class::get("NSApplication").expect("NSApplication class not found");

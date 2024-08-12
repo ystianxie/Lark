@@ -27,7 +27,7 @@ fn search_keyword(component_name: &str, input_value: &str) -> Vec<HashMap<String
     let comps: Vec<HashMap<String, String>> = Vec::new();
     if component_name == "" {
         return search_all_app(input_value);
-    } else if component_name == "搜索文件" {
+    } else if component_name == "文件搜索" {
         return api::explorer::search_files(input_value);
     }
     return comps;
@@ -47,11 +47,17 @@ pub fn set_window_show(main_window: &Window) {
         .expect("Failed to emit event");
 }
 
+#[cfg(target_os = "windows")]
+pub fn set_window_show(main_window: &Window) {
+    // let main_window = state.app_handle.get_window("skylark").unwrap();
+    main_window.emit("window-focus", true).expect("Failed to emit event");
+}
 
 fn main() {
     ClipboardWatcher::start();
+    let config = config::Config::read_local_config().unwrap();
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(move |app| {
             app.manage(AppState {
                 app_handle: app.handle(),
             });
@@ -63,12 +69,12 @@ fn main() {
 
             // Register global shortcut
             shortcut_manager
-                .register("Option+Space", move || {
-                    // utils::set_window_show_macos();
+                .register(&config.base.hotkey_awaken, move || {
                     let main_window_clone = main_window.clone();
                     set_window_show(&main_window_clone);
                 })
                 .expect("Failed to register global shortcut");
+
 
             let main_window = app.get_window("skylark").unwrap();
 
@@ -97,7 +103,7 @@ fn main() {
         .on_system_tray_event(|app, event| match event {
             SystemTrayEvent::MenuItemClick { id, .. } => {
                 if id.as_str() == "show" {
-                    utils::window::set_window_show_macos();
+                    utils::window::set_window_show();
                 }
             }
             _ => {}
@@ -118,9 +124,11 @@ fn main() {
             api::explorer::open_explorer,
             api::explorer::read_file_to_base64,
             api::explorer::read_icns_to_base64,
-            utils::window::set_window_hide_macos,
+            utils::window::set_window_show,
             api::clipboard::get_history_all,
             api::clipboard::get_history_id,
+            api::clipboard::get_history_part,
+            api::clipboard::get_history_search,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

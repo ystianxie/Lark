@@ -14,11 +14,13 @@
     "antd": "^5.19.4",
     "file-extension-icon-js": "^1.1.6",
     "file-icon": "^5.1.1",
+    "lodash": "^4.17.21",
     "mathjs": "^13.0.0",
     "pinyin-pro": "^3.22.2",
     "plist": "^3.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-infinite-scroll-component": "^6.1.0",
     "react-use": "^17.5.0",
     "styled-components": "^6.1.12"
   },

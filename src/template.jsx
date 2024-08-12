@@ -1,6 +1,9 @@
 import React, {useEffect, useState} from "react";
 import fileImg from "./assets/file.svg";
 import calcImg from "./assets/calc.svg";
+import settingImg from "./assets/setting.svg";
+import clipboardImg from "./assets/clipboard.svg";
+import componentImg from "./assets/component.svg";
 import {evaluate} from "mathjs";
 import {appWindow, LogicalSize} from "@tauri-apps/api/window";
 import {IndexDBCache} from "./indexedDB.jsx";
@@ -66,31 +69,33 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
     );
 }
 
-function SubpageComponent({component}) {
+function SubpageComponent({component, keyDown}) {
     const [RenderComponent, setRenderComponent] = useState(false);
     useEffect(() => {
         const loadDynamicComponent = async () => {
             const module = await import(`./panels/${component.data}.jsx`);
             setRenderComponent(() => module.default);
         }
-        if (component?.type === "subpage") {
+        if (component?.type === "subpage" && component.data) {
             console.log("更新子页面：", component.data)
             loadDynamicComponent()
+        } else {
+            setRenderComponent(false)
         }
 
     }, [component])
+
     let subpageStyle = {
         backgroundColor: "#d8d8d7",
         height: "100%",
         borderRadius: "10px",
-        borderWidth: "0px"
+        borderWidth: "0px",
+        overflow: 'hidden'
     }
     return (
         <>
-            <div>
-
-                {RenderComponent ? <div style={subpageStyle}><RenderComponent/></div> :
-                    <div/>}
+            <div id="subPageFrame" style={component?.type === "subpage" ? {height: "calc(100vh - 75px)",marginTop:"5px"} : {}}>
+                {RenderComponent ? <div style={subpageStyle}><RenderComponent onKeyDown={keyDown}/></div> : <div/>}
             </div>
         </>
     );
@@ -140,30 +145,39 @@ function webSearchComponent(inputValue) {
 }
 
 
+function activeStyle(ss) {
+    if (ss) {
+        return ""
+    } else {
+        return "activateComponent"
+    }
+}
+
 const searchFileComponent = {
     icon: <img src={fileImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
-    title: '搜索文件',
+    title: '文件搜索',
     desc: 'search file',
-    type: "component"
+    type: "component",
 };
 const showPluginComponent = {
-    icon: <img src={fileImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
-    title: '显示组件',
+    icon: <img src={componentImg} alt="component" className='activateComponent' data-tauri-drag-region/>,
+    title: '组件库',
     desc: 'show component',
     type: "subpage"
 };
 const settingPluginComponent = {
-    icon: <img src={fileImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
+    icon: <img src={settingImg} alt="setting" className='activateComponent' data-tauri-drag-region/>,
     title: '应用设置',
     desc: 'app setting',
     type: "subpage",
     data: "settingComponent"
 };
 const clipboardPluginComponent = {
-    icon: <img src={fileImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
+    icon: <img src={clipboardImg} alt="clipboard" className='activateComponent' data-tauri-drag-region/>,
     title: '剪贴板',
     desc: 'clipboard',
-    type: "subpage"
+    type: "subpage",
+    data: "clipboardComponent"
 };
 const calcComponent = (result, input) => {
     return {
