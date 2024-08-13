@@ -1,5 +1,3 @@
-use cocoa::foundation::NSString;
-
 #[cfg(target_os = "macos")]
 pub fn get_clipboard_files() -> Vec<(String, String)> {
     use cocoa::appkit::NSPasteboard;

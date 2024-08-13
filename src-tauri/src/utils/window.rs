@@ -15,7 +15,7 @@ pub fn set_window_shadow<R: Runtime>(app: &tauri::App<R>) {
 
 #[cfg(target_os = "macos")]
 #[tauri::command(rename_all = "camelCase")]
-pub fn set_window_hide_macos() -> String {
+pub fn set_window_hide() -> String {
     unsafe {
         // 获取 NSApplication 的类
         let ns_app = Class::get("NSApplication").expect("NSApplication class not found");

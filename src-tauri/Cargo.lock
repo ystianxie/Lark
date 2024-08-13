@@ -2916,6 +2916,7 @@ dependencies = [
  "pelite",
  "pinyin",
  "plist",
+ "rayon",
  "rdev",
  "regex",
  "reqwest 0.12.4",

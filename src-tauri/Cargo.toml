@@ -50,7 +50,8 @@ chrono = "0.4.23"
 arboard = "3.4.0"
 rdev = { version = "0.5.1", features = ['unstable_grab'] } #获取键盘按键
 #accessibility = "0.1.6" #获取鼠标选中文本
-libc="0.2.152"
+libc = "0.2.152"
+rayon = "1.10.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.25.0"
@@ -78,7 +79,7 @@ windows = { version = "0.58.0", features = [
     "Win32_System_LibraryLoader",
     "Win32_System",
 ] }
-winapi = { version = "0.3.9" ,features = ["winuser","shellapi"] }
+winapi = { version = "0.3.9", features = ["winuser", "shellapi", 'winnt'] }
 dunce = "1.0.5"
 libsqlite3-sys = { version = "0.28.0", features = ["bundled"] }
 clipboard-win = "5.4.0"

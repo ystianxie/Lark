@@ -1,3 +1,4 @@
+use std::fmt::format;
 use crate::utils::dirs::app_data_dir;
 use crate::utils::string_factory;
 use anyhow::Result;
@@ -31,7 +32,7 @@ impl Default for Record {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Default, Clone)]
 pub struct FileIndex {
     pub id: u64,
     pub title: String,
@@ -51,7 +52,6 @@ pub struct QueryReq {
 pub struct RecordSQL {
     conn: Connection,
 }
-
 
 #[allow(unused)]
 impl RecordSQL {
@@ -285,7 +285,6 @@ impl RecordSQL {
     }
 }
 
-
 pub struct IndexSQL {
     conn: Connection,
 }
@@ -294,7 +293,7 @@ pub struct IndexSQL {
 impl IndexSQL {
     pub fn new() -> Self {
         // 创建数据库链接
-        let data_dir = app_data_dir().unwrap().join(RECORD_SQLITE_FILE);
+        let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
         if !Path::new(&data_dir).exists() {
             Self::init()
         }
@@ -310,46 +309,58 @@ impl IndexSQL {
         }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
         let sql = r#"
-        create table if not exists app_index
+        CREATE TABLE IF NOT EXISTS app_index
         (
-            id       INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-            tile     VARCHAR(50) DEFAULT '',
-            path     VARCHAR(200) DEFAULT '',
-            desc     VARCHAR(200) DEFAULT '',
-            type     VARCHAR(20) DEFAULT 'app',
-            md5      VARCHAR(200) DEFAULT '',
-            create_time INTEGER
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            title        TEXT DEFAULT '',
+            path        TEXT NOT NULL UNIQUE,
+            desc        TEXT DEFAULT '',
+            type        TEXT DEFAULT 'app',
+            md5         TEXT NOT NULL,
+            create_time INTEGER DEFAULT (strftime('%s', 'now'))
         );
+        CREATE INDEX IF NOT EXISTS idx_md5 ON app_index (md5);
         "#;
         c.execute(sql, ()).unwrap();
         let sql = r#"
-        create table if not exists file_index
+        CREATE TABLE IF NOT EXISTS file_index
         (
-            id       INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-            tile     VARCHAR(50) DEFAULT '',
-            path     VARCHAR(200) DEFAULT '',
-            desc     VARCHAR(200) DEFAULT '',
-            type     VARCHAR(20) DEFAULT 'app',
-            md5      VARCHAR(200) DEFAULT '',
-            create_time INTEGER
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            title        TEXT DEFAULT '',
+            path        TEXT NOT NULL UNIQUE,
+            desc        TEXT DEFAULT '',
+            type        TEXT DEFAULT 'app',
+            md5         TEXT NOT NULL,
+            create_time INTEGER DEFAULT (strftime('%s', 'now'))
         );
+        CREATE INDEX IF NOT EXISTS idx_md5 ON file_index (md5);
         "#;
         c.execute(sql, ()).unwrap();
     }
 
     pub fn insert_index(&self, table: &str, r: &FileIndex) -> Result<i64> {
-        let sql = "insert into ?1 (title,path,desc,type,md5,create_time) values (?2,?3,?4,?5,?6,?7)";
-        let table_ = format!("{}_index", table);
+        let sql = &format!("insert into {}_index (title,path,desc,type,md5) values (?1,?2,?3,?4,?5)", table);
         let md5 = string_factory::md5(r.path.as_str());
-        let now = chrono::Local::now().timestamp_millis() as u64;
         let res = self.conn.execute(
-            sql, (table_, &r.title, &r.path, &r.desc, &r.file_type, md5, now),
+            sql, (&r.title, &r.path, &r.desc, &r.file_type, md5),
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn insert_indexes(&mut self, table: &str, paths: Vec<FileIndex>) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(&format!("INSERT OR IGNORE INTO {}_index (title,path,type,md5) VALUES (?1,?2,?3,?4)", table))?;
+            for path in paths {
+                let md5 = string_factory::md5(path.path.as_str());
+                stmt.execute(&[&path.title, &path.path, &path.file_type, &md5])?;
+            }
+        }
+        tx.commit()?; // 提交事务
+        Ok(())
+    }
     pub fn find_by_id(&self, table: &str, id: i64) -> Result<FileIndex> {
-        let sql = "SELECT id, title, path, type FROM record where id = ?1";
+        let sql = &format!("SELECT id, title, path, type FROM {}_index where id = ?1", table);
         let r = self.conn.query_row(sql, [&id], |row| {
             Ok(FileIndex {
                 id: row.get(0)?,
@@ -361,18 +372,18 @@ impl IndexSQL {
         })?;
         Ok(r)
     }
-    pub fn find_by_keyword(&self,table:&str, keyword: &str, offset: i32) -> Result<Vec<FileIndex>> {
+
+    pub fn find_by_keyword(&self, table: &str, keyword: &str, offset: i32) -> Result<Vec<FileIndex>> {
         let mut sql: String = String::new();
         sql.push_str(
-            "SELECT id, title, path, desc, type FROM ?1 where and content like ?2",
+            &format!("SELECT id, title, path, desc, type FROM {}_index where and content like ?1", table)
         );
         let mut limit: usize = 30;
         let mut params: Vec<String> = vec![];
-        params.push(format!("{}_index", table));
         params.push(format!("%{}%", keyword));
         params.push(limit.to_string());
         params.push(offset.to_string());
-        let sql = format!("{} order by create_time desc limit ?3 offset ?4", sql);
+        let sql = format!("{} order by create_time desc limit ?2 offset ?3", sql);
         let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
         let mut res = vec![];
@@ -390,7 +401,54 @@ impl IndexSQL {
         Ok(res)
     }
 
+    pub fn delete_by_id(&self, table: &str, id: i64) -> Result<()> {
+        let sql = &format!("delete from {}_index where id = ?1", table);
+        self.conn.execute(sql, [id.to_string()])?;
+        Ok(())
+    }
+
+    pub fn insert_if_not_exist(&self, table: &str, r: &FileIndex) -> Result<()> {
+        let md5 = string_factory::md5(r.path.as_str());
+        match self.find_by_md5(table, &md5) {
+            Ok(res) => {
+                self.update_create_time(table, &res)?;
+            }
+            Err(_e) => {
+                self.insert_index(table, r)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn md5_is_exist(&self, table: &str, md5: &str) -> Result<bool> {
+        let sql = &format!("SELECT count(*) FROM {}_index WHERE md5 = ?1", table);
+        let count: u32 = self.conn.query_row(sql, [md5.to_string()], |row| row.get(0))?;
+        Ok(count > 0)
+    }
+
+    pub fn clear_data(&self, table: &str) -> Result<()> {
+        let sql = &format!("delete from {}_index", table);
+        self.conn.execute(sql, ())?;
+        Ok(())
+    }
+
+    fn find_by_md5(&self, table: &str, md5: &str) -> Result<FileIndex> {
+        let sql = &format!("SELECT id FROM {}_index WHERE md5 = ?1", table);
+        let r = self.conn.query_row(sql, [md5.to_string()], |row| {
+            Ok(FileIndex { id: row.get(0)?, ..Default::default() })
+        })?;
+        Ok(r)
+    }
+
+    fn update_create_time(&self, table: &str, r: &FileIndex) -> Result<()> {
+        let sql = &format!("update {}_index set create_time = ?1 where id = ?2", table);
+        // 获取当前毫秒级时间戳
+        let now = chrono::Local::now().timestamp_millis() as u64;
+        self.conn.execute(sql, [now.to_string(), r.id.to_string()])?;
+        Ok(())
+    }
 }
+
 #[test]
 #[allow(unused)]
 fn test_sqlite_insert() {

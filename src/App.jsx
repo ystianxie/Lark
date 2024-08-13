@@ -404,6 +404,10 @@ const App = () => {
             let result = [];
             // 输入有值且不在输入状态时,进行搜索
             if (inputValue.trim() && !isComposing.status) {
+                if (inputValue.trim() === "reIndex"){
+                    await invoke("create_file_index",{})
+                    return
+                }
                 // 计算器组件，在没有选择组件时，尝试计算
                 if (searchType === "app") {
                     let calc_result = calculator();
@@ -643,6 +647,11 @@ const App = () => {
             }
         });
 
+        const unListenFileIndex = listen('file_index_count', event => {
+            const {payload} = event;
+            console.log(payload)
+        });
+
 
         // 输入框获取焦点
         inputBox.current.focus();
@@ -674,6 +683,7 @@ const App = () => {
         return () => {
             unListenFocusChanged.then((f) => f());
             unListenFileDrop.then((f) => f());
+            unListenFileIndex.then((f) => f());
         };
 
     }, []);

@@ -9,15 +9,17 @@ mod api;
 mod utils;
 mod config;
 
-use tauri::{
-    AppHandle, CustomMenuItem, GlobalShortcutManager, Manager, SystemTray, SystemTrayEvent,
-    SystemTrayMenu, Window, WindowEvent,
-};
+use tauri::{AppHandle, CustomMenuItem, GlobalShortcutManager, Manager, State, SystemTray, SystemTrayEvent, SystemTrayMenu, Window, WindowEvent};
 use crate::api::clipboard::ClipboardWatcher;
+use rayon::prelude::*;
+use walkdir::DirEntry;
+use std::path::Path;
+use std::thread;
+use crate::api::explorer::create_file_index_to_sql;
 
 #[derive(Clone)]
 struct AppState {
-    app_handle: AppHandle,
+    pub app_handle: AppHandle,
 }
 
 
@@ -53,6 +55,12 @@ pub fn set_window_show(main_window: &Window) {
     main_window.emit("window-focus", true).expect("Failed to emit event");
 }
 
+#[tauri::command]
+fn create_file_index(state: State<'_, AppState>) {
+    let app_handle = state.app_handle.clone();
+    create_file_index_to_sql(app_handle);
+}
+
 fn main() {
     ClipboardWatcher::start();
     let config = config::Config::read_local_config().unwrap();
@@ -68,11 +76,10 @@ fn main() {
             let main_window = app.get_window("skylark").unwrap();
 
             // Register global shortcut
-            shortcut_manager
-                .register(&config.base.hotkey_awaken, move || {
-                    let main_window_clone = main_window.clone();
-                    set_window_show(&main_window_clone);
-                })
+            shortcut_manager.register(&config.base.hotkey_awaken, move || {
+                let main_window_clone = main_window.clone();
+                set_window_show(&main_window_clone);
+            })
                 .expect("Failed to register global shortcut");
 
 
@@ -111,6 +118,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             search_keyword,
             search_all_app,
+            create_file_index,
             api::shell::open_app,
             api::shell::open_url,
             api::shell::get_file_icon,
@@ -132,4 +140,28 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+
+#[test]
+#[allow(unused)]
+fn test_walkdir() {
+    use walkdir::WalkDir;
+    use chrono::Duration;
+
+    fn is_hidden(entry: &DirEntry) -> bool {
+        entry.file_name().to_str().map_or(false, |s| s.starts_with('.'))
+    }
+    tauri::async_runtime::spawn(async {
+        WalkDir::new("/Users/starsxu/Music/Music/Media.localized")
+            .into_iter()
+            .filter_entry(|entry| !is_hidden(entry)) // 在遍历之前先过滤隐藏的文件夹
+            .filter_map(Result::ok)
+            .for_each(|entry| {
+                println!("{:?}", entry.path());
+                println!("外 {:?}", entry.file_name());
+            });
+    });
+    println!("hello");
+    thread::sleep(Duration::seconds(3).to_std().unwrap());
 }
