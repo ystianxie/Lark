@@ -79,7 +79,8 @@ pub fn get_active_application() -> Option<String> {
     }
 }
 #[cfg(target_os = "windows")]
-fn get_active_application() -> Option<(String, String)> {
+// fn get_active_application() -> Option<(String, String)> {
+fn get_active_application() -> Option<String> {
     use std::ffi::OsString;
     use std::iter::once;
     use std::os::windows::ffi::OsStringExt;
@@ -114,7 +115,8 @@ fn get_active_application() -> Option<(String, String)> {
         // 打开进程
         let process_handle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, process_id);
         if process_handle.is_null() {
-            return Some((window_title, String::new()));
+            // return Some((window_title, String::new()));
+            return Some(window_title);
         }
 
         // 获取可执行文件名
@@ -131,7 +133,8 @@ fn get_active_application() -> Option<(String, String)> {
         // 关闭进程句柄
         kernel32::CloseHandle(process_handle);
 
-        Some((window_title, exe_name))
+        // Some((window_title, exe_name))
+        Some(window_title)
     }
 }
 

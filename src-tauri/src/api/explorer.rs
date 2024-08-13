@@ -327,7 +327,8 @@ pub fn open_explorer(path: &str) -> String {
 fn get_drives() -> Vec<(String, String)> {
     let mut drives = Vec::new();
     use winapi::um::fileapi::{GetDriveTypeW, GetLogicalDrives};
-
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStrExt;
     let drive_bits = unsafe { GetLogicalDrives() };
 
     for i in 0..26 {
@@ -357,6 +358,7 @@ fn get_drives() -> Vec<(String, String)> {
 }
 
 fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, skip_extensions: Vec<String>) {
+
     fn is_hidden(entry: &DirEntry) -> bool {
         entry.file_name().to_str().map_or(false, |s| s.starts_with('.'))
     }
@@ -386,6 +388,7 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
     let main_window = app_handle.get_window("skylark").unwrap();
     let root_dir = root_dir.to_string();
     tauri::async_runtime::spawn(async move {
+        let mut index_db = IndexSQL::new();
         WalkDir::new(root_dir).into_iter()
             .filter_entry(move |entry| {
                 !is_hidden(entry) && !should_skip_file(entry, &skip_extensions_data) && !should_skip_dir(entry, &skip_dirs_data)
@@ -399,25 +402,25 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
                 } else {
                     entry.path().extension().and_then(|ext| ext.to_str()).unwrap_or("").to_string()
                 };
-                main_window.emit("file_index_count", &title).unwrap();
+                // main_window.emit("file_index_count", &title).unwrap();
+                println!("获取到文件 {:?}",&title);
                 let mut files = files.lock().unwrap();
                 files.push(FileIndex {
                     title,
                     path: file_path,
                     file_type: file_type.to_string(),
                     ..Default::default()
-                })
+                });
             });
         let files = files.lock().unwrap().clone();
-        let mut index_db = IndexSQL::new();
         index_db.insert_indexes("file", files).unwrap();
     });
 }
 pub fn create_file_index_to_sql(app_handle: AppHandle) {
     let config = config::Config::read_local_config().unwrap().base;
-    let index_db = IndexSQL::new();
-    let main_window = app_handle.get_window("skylark").unwrap();
     #[cfg(target_os = "macos")]{
+        let index_db = IndexSQL::new();
+        let main_window = app_handle.get_window("skylark").unwrap();
         let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
         let child_dir = std::fs::read_dir(&home_dir).unwrap();
         // 查找用户主目录下所有文件夹
@@ -448,4 +451,37 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
             }
         }
     }
+
+    #[cfg(target_os = "windows")]{
+        let drivers = get_drives();
+        for driver in drivers {
+            if driver.1 != "Fixed Drive"{
+                continue;
+            }
+            let skip_paths = config.local_file_search_exclude_paths.clone();
+            let skip_extensions = config.local_file_search_exclude_types.clone();
+            file_scanning(app_handle.clone(), &driver.0, skip_paths, skip_extensions);
+        }
+    }
+}
+
+#[test]
+#[allow(unused)]
+fn test1(){
+    use chrono::Duration;
+    use std::thread;
+
+    let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
+    let config = config::Config::read_local_config().unwrap().base;
+    println!("主目录:{}",home_dir);
+    let drivers = vec![ ("D:\\nssm-2.24-101-g897c7ad", "Fixed Drive")];
+    for driver in drivers {
+        if driver.1 != "Fixed Drive"{
+            continue;
+        }
+        let skip_paths = config.local_file_search_exclude_paths.clone();
+        let skip_extensions = config.local_file_search_exclude_types.clone();
+        // file_scanning(&driver.0, skip_paths, skip_extensions);
+    }
+    thread::sleep(Duration::milliseconds(10).to_std().unwrap());
 }

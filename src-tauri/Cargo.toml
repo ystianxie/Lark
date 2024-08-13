@@ -52,12 +52,12 @@ rdev = { version = "0.5.1", features = ['unstable_grab'] } #获取键盘按键
 #accessibility = "0.1.6" #获取鼠标选中文本
 libc = "0.2.152"
 rayon = "1.10.0"
+walkdir = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.25.0"
 core-graphics = "0.23"
 objc = "0.2.7"
-walkdir = "2"
 
 
 [target.'cfg(windows)'.dependencies]
@@ -79,10 +79,12 @@ windows = { version = "0.58.0", features = [
     "Win32_System_LibraryLoader",
     "Win32_System",
 ] }
-winapi = { version = "0.3.9", features = ["winuser", "shellapi", 'winnt'] }
+winapi = { version = "0.3.9", features = ["winuser", "shellapi", 'winnt','psapi'] }
 dunce = "1.0.5"
 libsqlite3-sys = { version = "0.28.0", features = ["bundled"] }
 clipboard-win = "5.4.0"
+kernel32-sys = "0.2.2"
+
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]

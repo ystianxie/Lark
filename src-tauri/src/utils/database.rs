@@ -305,6 +305,7 @@ impl IndexSQL {
         // 创建数据库文件并连接及创建数据库
         let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
         if !Path::new(&data_dir).exists() {
+            println!("创建数据库文件:{:?}",&data_dir);
             File::create(&data_dir).unwrap();
         }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
@@ -339,21 +340,32 @@ impl IndexSQL {
     }
 
     pub fn insert_index(&self, table: &str, r: &FileIndex) -> Result<i64> {
-        let sql = &format!("insert into {}_index (title,path,desc,type,md5) values (?1,?2,?3,?4,?5)", table);
+        let sql = format!("insert into {}_index (title,path,desc,type,md5) values (?1,?2,?3,?4,?5)", table).clone();
         let md5 = string_factory::md5(r.path.as_str());
         let res = self.conn.execute(
-            sql, (&r.title, &r.path, &r.desc, &r.file_type, md5),
-        )?;
+            sql.as_str(), [&r.title, &r.path, &r.desc, &r.file_type, &md5],
+        );
+        match res {
+            Ok(r)=>{}
+            Err(e)=>{
+                println!("插入索引失败:{:?}",e);
+            }
+        }
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn insert_indexes(&mut self, table: &str, paths: Vec<FileIndex>) -> Result<()> {
+        println!("开始提交索引:{:?}",&paths.len());
         let tx = self.conn.transaction()?;
         {
             let mut stmt = tx.prepare(&format!("INSERT OR IGNORE INTO {}_index (title,path,type,md5) VALUES (?1,?2,?3,?4)", table))?;
             for path in paths {
                 let md5 = string_factory::md5(path.path.as_str());
-                stmt.execute(&[&path.title, &path.path, &path.file_type, &md5])?;
+                let res = stmt.execute(&[&path.title, &path.path, &path.file_type, &md5]);
+                match res {
+                    Ok(r)=>{}
+                    Err(e)=>{println!("插入索引失败:{:?}",e);}
+                }
             }
         }
         tx.commit()?; // 提交事务
@@ -453,6 +465,7 @@ impl IndexSQL {
 #[allow(unused)]
 fn test_sqlite_insert() {
     RecordSQL::init();
+    IndexSQL::new();
     let r = Record {
         content: "1234567".to_string(),
         md5: "e10adc3949ba59abbe56e057f20f8823e".to_string(),
@@ -467,6 +480,7 @@ fn test_sqlite_insert() {
     // println!("{:?}",SqliteDB::new().find_all());
     // println!("{:?}",SqliteDB::new().clear_data());
     // println!("{:?}",SqliteDB::new().find_by_key(&q).unwrap());
-    println!("{:?}", RecordSQL::new().find_by_id(3).unwrap());
+    // println!("{:?}", RecordSQL::new().find_by_id(3).unwrap());
     // assert_eq!(SqliteDB::new().insert_record(&r).unwrap(), 1_i64)
+
 }

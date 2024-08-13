@@ -58,11 +58,21 @@ pub fn get_clipboard_files() -> Vec<(String, String)> {
 
 
 #[cfg(target_os = "windows")]
-pub fn get_clipboard_files() -> Vec<String> {
+pub fn get_clipboard_files() -> Vec<(String,String)> {
     use clipboard_win::raw;
     let mut files = Vec::new();
     let _ = raw::open();
     let _ = raw::get_file_list(&mut files);
     let _ = raw::close();
-    files
+    let mut files_data = Vec::new();
+    for file in files {
+        let file_path = std::path::Path::new(&file);
+        if file_path.is_dir(){
+            files_data.push((file.clone(),"folder".to_string()));
+        }else {
+            let file_extension = file_path.extension().unwrap().to_string_lossy().to_string();
+            files_data.push((file.clone(),file_extension.clone()));
+        }
+    }
+    files_data
 }

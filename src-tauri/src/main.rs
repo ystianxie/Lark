@@ -16,6 +16,7 @@ use walkdir::DirEntry;
 use std::path::Path;
 use std::thread;
 use crate::api::explorer::create_file_index_to_sql;
+use crate::utils::database::{RecordSQL,IndexSQL};
 
 #[derive(Clone)]
 struct AppState {
@@ -63,6 +64,8 @@ fn create_file_index(state: State<'_, AppState>) {
 
 fn main() {
     ClipboardWatcher::start();
+    IndexSQL::new();
+    RecordSQL::new();
     let config = config::Config::read_local_config().unwrap();
     tauri::Builder::default()
         .setup(move |app| {
