@@ -9,7 +9,7 @@ import systemAppName from "./assets/system_app_name.json";
 import {match} from 'pinyin-pro';
 import baseComponent from './baseComponent';
 import {useLocalStorage} from 'react-use';
-import {getMaterialFileIcon} from "file-extension-icon-js";
+import {getMaterialFileIcon, getMaterialFolderIcon} from "file-extension-icon-js";
 import {
     calcComponent,
     pluginsComponent,
@@ -28,6 +28,7 @@ import {divide} from "mathjs";
 const App = () => {
     // 键入值
     const [inputValue, setInputValue] = useState('');
+    const [searchOffset, setSearchOffset] = useState(0);
     // 组件结构
     const [component, setComponent] = useState('');
     // 手枪组件
@@ -404,8 +405,12 @@ const App = () => {
             let result = [];
             // 输入有值且不在输入状态时,进行搜索
             if (inputValue.trim() && !isComposing.status) {
-                if (inputValue.trim() === "reIndex"){
-                    await invoke("create_file_index",{})
+                if (inputValue.trim() === "reIndex") {
+                    await invoke("create_file_index", {})
+                    return
+                }
+                if (inputValue.trim() === "reApp") {
+                    await invoke("create_app_index", {})
                     return
                 }
                 // 计算器组件，在没有选择组件时，尝试计算
@@ -438,11 +443,13 @@ const App = () => {
                 } else {
                     query_result = await invoke("search_keyword", {
                         componentName: componentInfo?.title || "",
-                        inputValue
+                        inputValue,
+                        offset: searchOffset,
+                        params:{}
                     });
-                    if (searchType == "app") {
+                    if (searchType === "app") {
                         setAppCache(query_result);
-                    } else if (searchType == "file") {
+                    } else if (searchType === "file") {
                         window.searchFileCache[inputValue] = {
                             time: Date.now(),
                             data: query_result
@@ -478,8 +485,8 @@ const App = () => {
                 //* 匹配搜索结果
                 try {
                     for (let item of query_result) {
-                        if (item.title != "") {
-                            if (searchType == "app") {
+                        if (item.title !== "") {
+                            if (searchType === "app") {
                                 // 对于图标为icns的组件进行base64编码
                                 if (systemAppName[item.title]) {
                                     item.title = systemAppName[item.title];
@@ -505,31 +512,31 @@ const App = () => {
 
                                 if (is_match) {
                                     let item_ = await getDbAppByName(item.title);
-                                    if (componentCache[item.title] && componentCache[item.title].data == item.data) {
+                                    if (componentCache[item.title] && componentCache[item.title].data === item.data) {
                                         item = componentCache[item.title];
-                                    } else if (searchType == "app" && item_?.data == item.data) {
+                                    } else if (searchType === "app" && item_?.data === item.data) {
                                         item = item_;
                                         item.icon = <img src={`data:image/png;base64,${item.icon}`}
                                                          style={{width: "100%"}}></img>;
-                                    } else if (item.type == "app" && item.icon) {
+                                    } else if (item.type === "app" && item.icon) {
                                         await invoke("append_txt", {
                                             filePath: "/Users/starsxu/Documents/test2.txt",
                                             text: item.icon + "\n"
                                         });
                                         let icon_ = await invoke("read_app_info", {appPath: item.icon});
-                                        if (icon_ != "文件不存在！") {
+                                        if (icon_ !== "文件不存在！") {
                                             item.icon = icon_;
                                             item.iconPath = icon_;
                                         } else {
                                             icon_ = await invoke("get_file_icon", {filePath: item.data});
-                                            if (icon_ != "文件不存在！") {
+                                            if (icon_ !== "文件不存在！") {
                                                 item.icon = icon_;
                                                 addDbAppItem(item);
                                                 item.icon = <img src={`data:image/png;base64,${icon_}`}
                                                                  style={{width: "100%"}}></img>;
                                             }
                                         }
-                                        if (typeof item.icon == "string" && item.icon.indexOf(".icns") != -1) {
+                                        if (typeof item.icon == "string" && item.icon.indexOf(".icns") !== -1) {
                                             invoke('read_icns_to_base64', {path: item.icon})
                                                 .then((base64) => {
                                                     item.icon = base64;
@@ -543,7 +550,7 @@ const App = () => {
                                         }
                                     }
 
-                                    if (match_key == "py") {
+                                    if (match_key === "py") {
                                         pinyinMatches.push({item, index: is_match[0]});
                                     } else {
                                         otherMatches.push({item, index: match_key});
@@ -559,9 +566,17 @@ const App = () => {
                                     break;
                                 }
                             }
-                            if (searchType == "file") {
-                                let ext = item.data.split("/").pop();
-                                item.icon = <img src={getMaterialFileIcon(ext)} style={{width: "100%"}}></img>;
+                            if (searchType === "file") {
+                                item = item.File;
+                                item.data = item.path;
+                                item.desc = item.path;
+                                if (item.file_type === "folder") {
+                                    item.icon =
+                                        <img src={getMaterialFolderIcon(item.file_type)} style={{width: "100%"}}></img>;
+                                } else {
+                                    item.icon =
+                                        <img src={getMaterialFileIcon(item.file_type)} style={{width: "100%"}}></img>;
+                                }
                                 result.push(item);
                             }
                         }
@@ -659,7 +674,7 @@ const App = () => {
         const initCache = async () => {
             if (!updateCacheTime) {
                 updateCacheTime = setTimeout(async () => {
-                    let query_result = await invoke("search_keyword", {componentName: "", inputValue});
+                    let query_result = await invoke("search_keyword", {componentName: "", inputValue,offset:searchOffset});
                     setAppCache(query_result);
                     updateCacheTime = null;
                 }, 3000);

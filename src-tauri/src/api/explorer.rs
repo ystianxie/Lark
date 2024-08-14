@@ -3,14 +3,13 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-
 use base64::encode;
 use base64::engine::general_purpose;
 use encoding_rs::{UTF_16BE, UTF_16LE, UTF_8};
 use encoding_rs_io::DecodeReaderBytesBuilder;
 use icns::{IconFamily, IconType};
 use image::DynamicImage;
-use pinyin::ToPinyin;
+use pinyin::{Pinyin, ToPinyin};
 use plist::Value;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use regex::Regex;
@@ -20,6 +19,7 @@ use tauri::{AppHandle, Manager};
 use walkdir::{WalkDir, DirEntry};
 use crate::config;
 use crate::utils::database::{FileIndex, IndexSQL};
+use crate::utils::string_factory::text_to_pinyin;
 
 pub fn to_pinyin(hans: &str) -> Vec<String> {
     let mut ret = Vec::new();
@@ -82,6 +82,21 @@ pub fn search_files(keyword: &str) -> Vec<HashMap<String, String>> {
     }
 
     return result;
+}
+
+pub fn search_file_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
+    let db = IndexSQL::new();
+    if let Ok(result) = db.find_by_keyword("file", keyword, offset) {
+        return result;
+    }
+    return vec![FileIndex { ..Default::default() }];
+}
+pub fn search_app_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
+    let db = IndexSQL::new();
+    if let Ok(result) = db.find_by_keyword("app", keyword, offset) {
+        return result;
+    }
+    return vec![FileIndex { ..Default::default() }];
 }
 
 pub fn get_all_app(keyword: &str) -> Vec<HashMap<String, String>> {
@@ -358,7 +373,6 @@ fn get_drives() -> Vec<(String, String)> {
 }
 
 fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, skip_extensions: Vec<String>) {
-
     fn is_hidden(entry: &DirEntry) -> bool {
         entry.file_name().to_str().map_or(false, |s| s.starts_with('.'))
     }
@@ -372,8 +386,8 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
         if !is_skip {
             is_skip = skip_dirs.iter().any(|dir| {
                 if dir.starts_with("*/") {
-                    let skip_key = dir.split("/").last().clone().unwrap();
-                    entry.file_name().to_str().unwrap().contains(skip_key)
+                    let skip_key = dir.replace("*/", "");
+                    entry.file_name().to_str().unwrap().contains(skip_key.as_str())
                 } else {
                     false
                 }
@@ -385,9 +399,9 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
     let skip_extensions_data = Arc::new(skip_extensions);
     let skip_dirs_data = Arc::new(skip_dirs);
     let files = Arc::new(Mutex::new(Vec::new()));
-    let main_window = app_handle.get_window("skylark").unwrap();
     let root_dir = root_dir.to_string();
     tauri::async_runtime::spawn(async move {
+        let main_window = app_handle.get_window("skylark").unwrap();
         let mut index_db = IndexSQL::new();
         WalkDir::new(root_dir).into_iter()
             .filter_entry(move |entry| {
@@ -402,9 +416,9 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
                 } else {
                     entry.path().extension().and_then(|ext| ext.to_str()).unwrap_or("").to_string()
                 };
-                // main_window.emit("file_index_count", &title).unwrap();
-                println!("获取到文件 {:?}",&title);
+                println!("获取到文件 {:?}", &title);
                 let mut files = files.lock().unwrap();
+                main_window.emit("file_index_count", &title).unwrap();
                 files.push(FileIndex {
                     title,
                     path: file_path,
@@ -413,9 +427,54 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
                 });
             });
         let files = files.lock().unwrap().clone();
-        index_db.insert_indexes("file", files).unwrap();
+        index_db.insert_file_indexes(files).unwrap();
     });
 }
+
+pub fn create_app_index_to_sql(app_handle: AppHandle) {
+    let config = config::Config::read_local_config().unwrap().base;
+    let mut index_db = IndexSQL::new();
+    let mut result = Vec::new();
+    #[cfg(target_os = "macos")]{
+        result.extend(get_app("/System/Applications"));
+        result.extend(get_app("/Applications/"));
+        result.extend(get_app(
+            "/System/Volumes/Preboot/Cryptexes/App/System/Applications"
+        ));
+    }
+    #[cfg(target_os = "windows")]{
+        //  todo 添加到库
+        let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
+        result.extend(get_app(r"C:\Program Files\"));
+        result.extend(get_app(r"C:\Program Files (x86)\"));
+        result.extend(get_app(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\"));
+        result.extend(get_app(format!(r"C:\Users\{}\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\", home_dir)));
+        result.extend(get_app(format!(r"C:\Users\{}\Desktop\", home_dir)));
+    }
+    let items = result.into_iter().map(|app| {
+        let title = app.get("title").unwrap().to_string();
+        let (pinyin, abb) = text_to_pinyin(&title);
+        let mut icon_base64 = String::new();
+        #[cfg(target_os = "macos")]{
+            let icon_file_path = read_app_info(&app.get("data").unwrap());
+            icon_base64 = read_icns_to_base64(&icon_file_path).unwrap();
+        }
+        #[cfg(target_os = "windows")]{
+            //todo 获取应用图标
+        }
+        FileIndex {
+            title: title.clone(),
+            path: app.get("data").unwrap().to_string(),
+            desc: app.get("desc").unwrap().to_string(),
+            icon: icon_base64,
+            pinyin,
+            abb,
+            ..Default::default()
+        }
+    }).collect();
+    index_db.insert_app_indexes(items).unwrap();
+}
+
 pub fn create_file_index_to_sql(app_handle: AppHandle) {
     let config = config::Config::read_local_config().unwrap().base;
     #[cfg(target_os = "macos")]{
@@ -455,7 +514,7 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
     #[cfg(target_os = "windows")]{
         let drivers = get_drives();
         for driver in drivers {
-            if driver.1 != "Fixed Drive"{
+            if driver.1 != "Fixed Drive" {
                 continue;
             }
             let skip_paths = config.local_file_search_exclude_paths.clone();
@@ -467,21 +526,21 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
 
 #[test]
 #[allow(unused)]
-fn test1(){
+fn test1() {
     use chrono::Duration;
     use std::thread;
 
-    let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
-    let config = config::Config::read_local_config().unwrap().base;
-    println!("主目录:{}",home_dir);
-    let drivers = vec![ ("D:\\nssm-2.24-101-g897c7ad", "Fixed Drive")];
-    for driver in drivers {
-        if driver.1 != "Fixed Drive"{
-            continue;
-        }
-        let skip_paths = config.local_file_search_exclude_paths.clone();
-        let skip_extensions = config.local_file_search_exclude_types.clone();
-        // file_scanning(&driver.0, skip_paths, skip_extensions);
-    }
-    thread::sleep(Duration::milliseconds(10).to_std().unwrap());
+    // let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
+    // let config = config::Config::read_local_config().unwrap().base;
+    // println!("主目录:{}", home_dir);
+    // let drivers = vec![("D:\\nssm-2.24-101-g897c7ad", "Fixed Drive")];
+    // for driver in drivers {
+    //     if driver.1 != "Fixed Drive" {
+    //         continue;
+    //     }
+    //     let skip_paths = config.local_file_search_exclude_paths.clone();
+    //     let skip_extensions = config.local_file_search_exclude_types.clone();
+    //     // file_scanning(&driver.0, skip_paths, skip_extensions);
+    // }
+    // thread::sleep(Duration::milliseconds(10).to_std().unwrap());
 }

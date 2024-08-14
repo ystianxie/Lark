@@ -15,25 +15,38 @@ use rayon::prelude::*;
 use walkdir::DirEntry;
 use std::path::Path;
 use std::thread;
-use crate::api::explorer::create_file_index_to_sql;
-use crate::utils::database::{RecordSQL,IndexSQL};
+use rusqlite::params;
+use serde::{Deserialize, Serialize};
+use crate::api::explorer::{create_app_index_to_sql, create_file_index_to_sql};
+use crate::utils::database::{RecordSQL, IndexSQL, FileIndex};
 
 #[derive(Clone)]
 struct AppState {
     pub app_handle: AppHandle,
 }
-
+#[derive(Serialize,Deserialize)]
+enum SearchResult {
+    Map(HashMap<String, String>),
+    File(FileIndex),
+}
 
 #[tauri::command(rename_all = "camelCase")]
-fn search_keyword(component_name: &str, input_value: &str) -> Vec<HashMap<String, String>> {
-    println!("执行搜索 {:?} 关键词 {:?}", component_name, input_value);
+fn search_keyword(component_name: &str, input_value: &str, offset:i32, params: HashMap<String, String>) -> Vec<SearchResult>
+// where
+//     T: From<HashMap<String, String>> + From<FileIndex>,
+{
+    println!("执行搜索 {:?} 关键词 {:?} 参数 {:?}", component_name, input_value, params);
     let comps: Vec<HashMap<String, String>> = Vec::new();
     if component_name == "" {
-        return search_all_app(input_value);
+        // return search_all_app(input_value);
+        return api::explorer::search_app_index(input_value, offset)
+            .into_iter().map(SearchResult::File).collect();
     } else if component_name == "文件搜索" {
-        return api::explorer::search_files(input_value);
+        // return api::explorer::search_files(input_value);
+        return api::explorer::search_file_index(input_value, offset)
+            .into_iter().map(SearchResult::File).collect();
     }
-    return comps;
+    return comps.into_iter().map(SearchResult::Map).collect();
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -61,6 +74,13 @@ fn create_file_index(state: State<'_, AppState>) {
     let app_handle = state.app_handle.clone();
     create_file_index_to_sql(app_handle);
 }
+
+#[tauri::command]
+fn create_app_index(state: State<'_, AppState>) {
+    let app_handle = state.app_handle.clone();
+    create_app_index_to_sql(app_handle);
+}
+
 
 fn main() {
     ClipboardWatcher::start();
@@ -122,6 +142,7 @@ fn main() {
             search_keyword,
             search_all_app,
             create_file_index,
+            create_app_index,
             api::shell::open_app,
             api::shell::open_url,
             api::shell::get_file_icon,

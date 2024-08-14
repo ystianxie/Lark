@@ -52,6 +52,9 @@ impl Default for BaseConfig {
                 "/dev".to_string(),
                 "~/Library".to_string(),
                 "*/node_modules".to_string(),
+                "*/src-tauri/target".to_string(),
+                "*/venv".to_string(),
+                "*/dist".to_string(),
             ],
             local_file_search_exclude_types: vec![
                 "plist".to_string(),

@@ -38,6 +38,9 @@ pub struct FileIndex {
     pub title: String,
     pub path: String,
     pub desc: String,
+    pub icon: String,
+    pub pinyin: String,
+    pub abb: String,
     pub file_type: String,
     pub md5: String,
     pub create_time: u64,
@@ -293,10 +296,11 @@ pub struct IndexSQL {
 impl IndexSQL {
     pub fn new() -> Self {
         // 创建数据库链接
-        let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
-        if !Path::new(&data_dir).exists() {
-            Self::init()
-        }
+        // let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
+        let data_dir = "/Users/starsxu/.config/lark/data/index_data_v1.sqlite";
+        // if !Path::new(&data_dir).exists() {
+        //     Self::init()
+        // }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
         IndexSQL { conn: c }
     }
@@ -305,7 +309,7 @@ impl IndexSQL {
         // 创建数据库文件并连接及创建数据库
         let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
         if !Path::new(&data_dir).exists() {
-            println!("创建数据库文件:{:?}",&data_dir);
+            println!("创建数据库文件:{:?}", &data_dir);
             File::create(&data_dir).unwrap();
         }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
@@ -316,6 +320,9 @@ impl IndexSQL {
             title        TEXT DEFAULT '',
             path        TEXT NOT NULL UNIQUE,
             desc        TEXT DEFAULT '',
+            icon        TEXT DEFAULT '',
+            pinyin      TEXT DEFAULT '',
+            abb         TEXT DEFAULT '',
             type        TEXT DEFAULT 'app',
             md5         TEXT NOT NULL,
             create_time INTEGER DEFAULT (strftime('%s', 'now'))
@@ -330,6 +337,9 @@ impl IndexSQL {
             title        TEXT DEFAULT '',
             path        TEXT NOT NULL UNIQUE,
             desc        TEXT DEFAULT '',
+            icon        TEXT DEFAULT '',
+            pinyin      TEXT DEFAULT '',
+            abb         TEXT DEFAULT '',
             type        TEXT DEFAULT 'app',
             md5         TEXT NOT NULL,
             create_time INTEGER DEFAULT (strftime('%s', 'now'))
@@ -339,38 +349,104 @@ impl IndexSQL {
         c.execute(sql, ()).unwrap();
     }
 
-    pub fn insert_index(&self, table: &str, r: &FileIndex) -> Result<i64> {
-        let sql = format!("insert into {}_index (title,path,desc,type,md5) values (?1,?2,?3,?4,?5)", table).clone();
+    pub fn insert_file_index(&self, r: &FileIndex) -> Result<i64> {
+        let sql = "insert into file_index (title,path,desc,type,md5) values (?1,?2,?3,?4,?5)";
         let md5 = string_factory::md5(r.path.as_str());
         let res = self.conn.execute(
-            sql.as_str(), [&r.title, &r.path, &r.desc, &r.file_type, &md5],
+            sql, [&r.title, &r.path, &r.desc, &r.file_type, &md5],
         );
         match res {
-            Ok(r)=>{}
-            Err(e)=>{
-                println!("插入索引失败:{:?}",e);
+            Ok(r) => {}
+            Err(e) => {
+                println!("插入索引失败:{:?}", e);
             }
         }
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn insert_indexes(&mut self, table: &str, paths: Vec<FileIndex>) -> Result<()> {
-        println!("开始提交索引:{:?}",&paths.len());
+    pub fn insert_file_indexes(&mut self, paths: Vec<FileIndex>) -> Result<()> {
+        println!("开始提交索引:{:?}", &paths.len());
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare(&format!("INSERT OR IGNORE INTO {}_index (title,path,type,md5) VALUES (?1,?2,?3,?4)", table))?;
+            let mut stmt = tx.prepare("INSERT OR IGNORE INTO file_index (title,path,desc,type,md5) VALUES (?1,?2,?3,?4,?5)")?;
             for path in paths {
                 let md5 = string_factory::md5(path.path.as_str());
-                let res = stmt.execute(&[&path.title, &path.path, &path.file_type, &md5]);
+                let res = stmt.execute(&[&path.title, &path.path, &path.desc, &path.file_type, &md5]);
                 match res {
-                    Ok(r)=>{}
-                    Err(e)=>{println!("插入索引失败:{:?}",e);}
+                    Ok(r) => {}
+                    Err(e) => { println!("插入索引失败:{:?}", e); }
                 }
             }
         }
         tx.commit()?; // 提交事务
         Ok(())
     }
+
+    pub fn insert_app_index(&self, r: &FileIndex) -> Result<i64> {
+        let sql = "insert into app_index (title,path,desc,icon,pinyin,abb,md5) values (?1,?2,?3,?4,?5,?6,?7)";
+        let md5 = string_factory::md5(r.path.as_str());
+        let res = self.conn.execute(
+            sql, [&r.title, &r.path, &r.desc, &r.icon, &r.pinyin, &r.abb, &r.file_type, &md5],
+        );
+        match res {
+            Ok(r) => {}
+            Err(e) => {
+                println!("插入索引失败:{:?}", e);
+            }
+        }
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn insert_app_indexes(&mut self, paths: Vec<FileIndex>) -> Result<()> {
+        println!("开始提交索引:{:?}", &paths.len());
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare("INSERT OR IGNORE INTO app_index (title,path,desc,icon,pinyin,abb,md5) VALUES (?1,?2,?3,?4,?5,?6,?7)")?;
+            for r in paths {
+                let md5 = string_factory::md5(r.path.as_str());
+                let params = &[&r.title, &r.path, &r.desc, &r.icon, &r.pinyin, &r.abb, &md5];
+                let res = stmt.execute(params);
+                match res {
+                    Ok(row) => { println!("插入索引成功:{:?},{:?}", row, params); }
+                    Err(e) => { println!("插入索引失败:{:?}", e); }
+                }
+            }
+        }
+        tx.commit()?; // 提交事务
+        Ok(())
+    }
+
+    pub fn find_app(&self, keyword: &str, offset: i32) -> Result<Vec<FileIndex>> {
+        let mut sql: String = String::new();
+        sql.push_str(
+            "SELECT id, title, path, desc, icon FROM app_index where (title like ?1 or pinyin like ?2 or abb like ?2 or path like ?3)"
+        );
+        let mut limit: usize = 30;
+        let mut params: Vec<String> = vec![];
+        params.push(format!("%{}%", keyword));
+        params.push(format!("{}%", keyword));
+        params.push(format!("%/{}%", keyword));
+        params.push(limit.to_string());
+        params.push(offset.to_string());
+        let sql = format!("{} order by create_time desc limit ?4 offset ?5", sql);
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+        let mut res = vec![];
+        while let Some(row) = rows.next()? {
+            let r = FileIndex {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                path: row.get(2)?,
+                desc: row.get(3)?,
+                icon: row.get(4)?,
+                ..Default::default()
+            };
+            res.push(r);
+        }
+        Ok(res)
+    }
+
+
     pub fn find_by_id(&self, table: &str, id: i64) -> Result<FileIndex> {
         let sql = &format!("SELECT id, title, path, type FROM {}_index where id = ?1", table);
         let r = self.conn.query_row(sql, [&id], |row| {
@@ -388,7 +464,7 @@ impl IndexSQL {
     pub fn find_by_keyword(&self, table: &str, keyword: &str, offset: i32) -> Result<Vec<FileIndex>> {
         let mut sql: String = String::new();
         sql.push_str(
-            &format!("SELECT id, title, path, desc, type FROM {}_index where and content like ?1", table)
+            &format!("SELECT id, title, path, desc, icon, type FROM {}_index where title like ?1", table)
         );
         let mut limit: usize = 30;
         let mut params: Vec<String> = vec![];
@@ -405,7 +481,8 @@ impl IndexSQL {
                 title: row.get(1)?,
                 path: row.get(2)?,
                 desc: row.get(3)?,
-                file_type: row.get(4)?,
+                icon: row.get(4)?,
+                file_type: row.get(5)?,
                 ..Default::default()
             };
             res.push(r);
@@ -426,7 +503,7 @@ impl IndexSQL {
                 self.update_create_time(table, &res)?;
             }
             Err(_e) => {
-                self.insert_index(table, r)?;
+                self.insert_file_index(r)?;
             }
         }
         Ok(())
@@ -465,7 +542,7 @@ impl IndexSQL {
 #[allow(unused)]
 fn test_sqlite_insert() {
     RecordSQL::init();
-    IndexSQL::new();
+    println!("{:?}",IndexSQL::new().find_app("wec", 0));
     let r = Record {
         content: "1234567".to_string(),
         md5: "e10adc3949ba59abbe56e057f20f8823e".to_string(),
@@ -482,5 +559,4 @@ fn test_sqlite_insert() {
     // println!("{:?}",SqliteDB::new().find_by_key(&q).unwrap());
     // println!("{:?}", RecordSQL::new().find_by_id(3).unwrap());
     // assert_eq!(SqliteDB::new().insert_record(&r).unwrap(), 1_i64)
-
 }
