@@ -8,7 +8,7 @@ use cocoa::base::{id, nil};
 use cocoa::foundation::{NSAutoreleasePool, NSString};
 #[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
-use super::clipboard::ClipboardOperator;
+use super::clipboard::{ClipboardOperator, ImageDataDB};
 use open;
 use open::that;
 use std::collections::HashMap;
@@ -67,9 +67,7 @@ pub fn open_app(app_path: &str) {
 }
 #[tauri::command(rename_all = "camelCase")]
 #[cfg(target_os = "windows")]
-pub fn open_app(app_path: &str) {
-
-}
+pub fn open_app(app_path: &str) {}
 
 
 #[tauri::command(rename_all = "camelCase")]
@@ -94,15 +92,24 @@ pub fn open_file(file_path: &str) {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn clipboard_control(text: &str, control: &str, paste: bool) -> Result<String,String> {
+pub fn clipboard_control(text: &str, control: &str, paste: bool, data_type: &str) -> Result<String, String> {
     println!("剪贴板控制：{:?}", text);
-    if control == "copy" {
-        let _ = ClipboardOperator::set_text(text);
-        if paste {
-            let _ = ClipboardOperator::paste_text(text);
+    if control == "write" {
+        if data_type == "file" {
+           Ok("暂不支持文件复制".to_string())
+        }else if data_type=="image" {
+            let img = ImageDataDB {base64: text.to_string(),..Default::default()};
+            let _ = ClipboardOperator::set_image(img);
+            Ok("写入剪贴板成功".to_string())
+        }else {
+            let _ = ClipboardOperator::set_text(text);
+            if paste {
+                let _ = ClipboardOperator::paste_text(text);
+            }
+            Ok("写入剪贴板成功".to_string())
         }
-        Ok("复制成功".to_string())
     } else {
+        // todo 获取剪贴板当前内容
         let content = ClipboardOperator::get_text();
         println!("从剪贴板读取的内容：{:?}", content);
         Ok(content.unwrap())
@@ -110,7 +117,7 @@ pub fn clipboard_control(text: &str, control: &str, paste: bool) -> Result<Strin
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn get_file_icon(file_path: &str) -> Result<String,String> {
+pub fn get_file_icon(file_path: &str) -> Result<String, String> {
     println!("读取文件图标路径：{:?}", file_path);
     let output = Command::new("node")
         .args(["src/api/get_file_icon.js", file_path])
@@ -136,7 +143,7 @@ pub fn get_file_icon(file_path: &str) -> Result<String,String> {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn write_txt(file_path: &str, text: &str) -> Result<String,String> {
+pub fn write_txt(file_path: &str, text: &str) -> Result<String, String> {
     if path::Path::new(file_path).exists() {
         let mut file_dir = file_path.replace("\\", "/");
         file_dir = file_dir
@@ -153,7 +160,7 @@ pub fn write_txt(file_path: &str, text: &str) -> Result<String,String> {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn read_txt(file_path: &str) -> Result<String,String> {
+pub fn read_txt(file_path: &str) -> Result<String, String> {
     if path::Path::new(file_path).exists() {
         let content = fs::read_to_string(file_path).expect("Failed to read file");
         Ok(content)
@@ -162,7 +169,7 @@ pub fn read_txt(file_path: &str) -> Result<String,String> {
     }
 }
 #[tauri::command(rename_all = "camelCase")]
-pub fn append_txt(file_path: &str, text: &str) -> Result<String,String> {
+pub fn append_txt(file_path: &str, text: &str) -> Result<String, String> {
     let mut file = OpenOptions::new()
         .append(true)
         .open(file_path)
@@ -170,4 +177,11 @@ pub fn append_txt(file_path: &str, text: &str) -> Result<String,String> {
     file.write_all(text.as_bytes()).expect("write failed");
     println!("数据追加成功");
     Ok("数据追加成功".to_string())
+}
+
+#[test]
+fn test() {
+    let file_path = "/System/Applications/Utilities/Migration Assistant.app";
+    let base64 = get_file_icon(file_path).unwrap();
+    println!("{}", base64)
 }

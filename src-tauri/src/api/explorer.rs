@@ -93,26 +93,12 @@ pub fn search_file_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
 }
 pub fn search_app_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
     let db = IndexSQL::new();
-    if let Ok(result) = db.find_by_keyword("app", keyword, offset) {
+    if let Ok(result) = db.find_app(keyword, offset) {
         return result;
     }
     return vec![FileIndex { ..Default::default() }];
 }
 
-pub fn get_all_app(keyword: &str) -> Vec<HashMap<String, String>> {
-    let mut result = Vec::new();
-    #[cfg(target_os = "macos")]{
-        result.extend(get_app("/System/Applications"));
-        result.extend(get_app("/Applications/"));
-        result.extend(get_app(
-            "/System/Volumes/Preboot/Cryptexes/App/System/Applications",
-        ));
-    }
-    #[cfg(target_os = "windows")]{
-        result.extend(get_app("C:\\Program Files"));
-    }
-    result
-}
 
 pub fn get_app(path: &str) -> Vec<HashMap<String, String>> {
     // println!("开始检索目录： {:?}", path);
@@ -150,6 +136,16 @@ pub fn get_app(path: &str) -> Vec<HashMap<String, String>> {
             }
 
             app_title = app_name.to_string().replace(".app", "");
+            let current_dir = std::env::current_dir().expect("获取当前工作目录失败");
+            println!("当前工作目录: {:?}", current_dir);
+
+            let json_data = fs::read_to_string("src/api/system_app_name.json").expect("{}");
+            let translations: HashMap<String, String> = serde_json::from_str(&json_data).expect("JSON 解析失败");
+
+            if let Some(chinese_translation) = translations.get(&app_title) {
+                println!("{} 的中文翻译是: {}", app_name, chinese_translation);
+                app_title = chinese_translation.to_string();
+            }
 
             let resources = &(entry.path().join("Contents/Resources/"));
 
@@ -206,6 +202,7 @@ pub fn get_app(path: &str) -> Vec<HashMap<String, String>> {
                 continue;
             }
         }
+        println!("应用：{}，路径：{}", app_title, entry.path().to_str().unwrap());
         let map: HashMap<String, String> = HashMap::from([
             (
                 "icon".to_string(),
@@ -239,13 +236,25 @@ pub fn read_file_to_base64(path: &str) -> String {
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn read_icns_to_base64(path: &str) -> Result<String, String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
-    let icon_family = IconFamily::read(file).map_err(|e| e.to_string())?;
+    let file = File::open(path);
+    if let Err(_) = file {
+        return Ok("".to_string());
+    }
+    let icon_family = IconFamily::read(file.unwrap()).map_err(|e| e.to_string());
+    let icon_family = match icon_family {
+        Ok(icon_family) => icon_family,
+        Err(e) => {
+            return if e.contains("not an icns file") {
+                Ok(read_file_to_base64(path))
+            } else {
+                Ok("".to_string())
+            }
+        }
+    };
     let img_index = match path.contains("AirPort Utility.app") {
         true => 2,
         false => 0,
     };
-    println!("{:?}::{:?}", path, img_index);
     let image_type = icon_family.available_icons()[img_index];
     if let Some(img_buffer) = icon_family
         .elements
@@ -295,19 +304,30 @@ pub fn read_app_info(app_path: &str) -> String {
         } else {
             println!("Info.plist is not a dictionary");
         }
+        let resources = PathBuf::from(&app_path).join("Contents/Resources");
+
         if icon_name.is_empty() {
             icon_name = "AppIcon".to_string();
-            let path = Path::new(&icon_name);
+            let path = resources.join(format!("{icon_name}.icns"));
             if !path.exists() {
+                for entry in resources.read_dir().unwrap() {
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(_) => continue,
+                    };
+                    if entry.path().extension().unwrap_or("".as_ref()) == "icns" {
+                        icon_name = entry.file_name().to_string_lossy().into_owned();
+                        break;
+                    }
+                }
                 return "文件不存在！".to_string();
             }
         }
-        if !icon_name.contains(".icns") {
+        if !icon_name.ends_with(".icns") {
             icon_name.push_str(".icns");
         }
-        let icon_path = PathBuf::from(&app_path)
-            .join("Contents/Resources")
-            .join(icon_name);
+        let icon_path = resources.join(icon_name);
+        println!("获取文件图标：{:?}", icon_path);
         icon_path.to_string_lossy().into_owned()
     } else {
         "文件不存在！".to_string()
@@ -456,8 +476,20 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
         let (pinyin, abb) = text_to_pinyin(&title);
         let mut icon_base64 = String::new();
         #[cfg(target_os = "macos")]{
-            let icon_file_path = read_app_info(&app.get("data").unwrap());
-            icon_base64 = read_icns_to_base64(&icon_file_path).unwrap();
+            let local_icon_file = vec!["日历", "迁移助理", "Photo Booth", "系统信息", "系统设置"];
+            let mut icon_file_path = String::new();
+            if !local_icon_file.contains(&title.as_str()) {
+                icon_file_path = read_app_info(&app.get("data").unwrap());
+            } else {
+                icon_file_path = format!("icons/{}.png", title);
+            }
+            icon_base64 = match read_icns_to_base64(&icon_file_path) {
+                Ok(base64) => { base64 }
+                Err(e) => {
+                    println!("错误 {}", e);
+                    "".to_string()
+                }
+            }
         }
         #[cfg(target_os = "windows")]{
             //todo 获取应用图标
@@ -529,7 +561,6 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
 fn test1() {
     use chrono::Duration;
     use std::thread;
-
     // let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
     // let config = config::Config::read_local_config().unwrap().base;
     // println!("主目录:{}", home_dir);

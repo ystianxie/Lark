@@ -5,8 +5,6 @@ import {useEffect, useRef, useState} from "react";
 import {invoke} from "@tauri-apps/api/tauri";
 import {listen} from '@tauri-apps/api/event';
 import webImg from './assets/web.svg';
-import systemAppName from "./assets/system_app_name.json";
-import {match} from 'pinyin-pro';
 import baseComponent from './baseComponent';
 import {useLocalStorage} from 'react-use';
 import {getMaterialFileIcon, getMaterialFolderIcon} from "file-extension-icon-js";
@@ -126,7 +124,6 @@ const App = () => {
             }
         } else if (event.code === "Space" && (event.target.value === "" || event.target.value === " ") && !component) {
             // 当空格键被按下时，如果输入框为空，则进入文件搜索模式
-            console.log("space");
             event.preventDefault();
             event.target.value = "";
             let icon = <img style={{height: "38px"}} {...insidePluginList.searchFileComponent.icon.props}/>
@@ -215,6 +212,7 @@ const App = () => {
         // 组件确认选择后
         let currentComponent = keywordComponent[index !== undefined ? index : selectedIndex];
         setSelectedIndex(0);
+        console.log(currentComponent)
         if (!currentComponent) return
         if (currentComponent.type === "component") {
             await updateAppHabit(inputValue, currentComponent.title);
@@ -242,7 +240,7 @@ const App = () => {
             await modifyWindowSize("big");
         } else if (currentComponent.type === "result") {
             await invoke("set_window_hide_macos", {});
-            await invoke("clipboard_control", {text: currentComponent.data.toString(), control: "copy", paste: true});
+            await invoke("clipboard_control", {text: currentComponent.data.toString(), control: "write", paste: true});
         } else if (currentComponent.type === "app") {
             if (!fnDown) {
                 await updateAppHabit(inputValue, currentComponent.title);
@@ -434,29 +432,18 @@ const App = () => {
                     }
                 }
                 // 如果是搜索app时，尝试获取缓存
-                console.log(window.searchFileCache);
                 let query_result;
-                if (searchType === "app" && appCache.length !== 0) {
-                    query_result = appCache;
-                } else if (searchType === "file" && Date.now() - (window.searchFileCache[inputValue]?.time || 0) < 10000) {
+
+                if (searchType === "file" && Date.now() - (window.searchFileCache[inputValue]?.time || 0) < 10000) {
                     query_result = window.searchFileCache[inputValue]?.data || [];
                 } else {
                     query_result = await invoke("search_keyword", {
                         componentName: componentInfo?.title || "",
                         inputValue,
                         offset: searchOffset,
-                        params:{}
+                        params: {}
                     });
-                    if (searchType === "app") {
-                        setAppCache(query_result);
-                    } else if (searchType === "file") {
-                        window.searchFileCache[inputValue] = {
-                            time: Date.now(),
-                            data: query_result
-                        };
-                        console.log(window.searchFileCache);
 
-                    }
                 }
                 const pinyinMatches = [];
                 const otherMatches = [];
@@ -471,6 +458,9 @@ const App = () => {
                     }
                     // 匹配自定义插件组件
                     for (let pluginName in pluginList) {
+                        if (pluginStatus[pluginName]?.enable === false) {
+                            continue;
+                        }
                         let plugin = pluginList[pluginName];
                         let workflows = plugin.workflow;
                         for (let workflow of workflows) {
@@ -485,91 +475,22 @@ const App = () => {
                 //* 匹配搜索结果
                 try {
                     for (let item of query_result) {
-                        if (item.title !== "") {
+                        if (item.title !== "" || item.File !== undefined) {
                             if (searchType === "app") {
-                                // 对于图标为icns的组件进行base64编码
-                                if (systemAppName[item.title]) {
-                                    item.title = systemAppName[item.title];
+                                item = item.File;
+                                if (typeof item.icon === "string") {
+                                    item.icon =
+                                        <img src={`data:image/png;base64,${item.icon}`} style={{width: "100%"}}></img>;
                                 }
-                                let match_key = "";
-                                let is_match = match(item.title, inputValue, {precision: 'start'});
-                                if (!is_match) {
-                                    let have_index = item.title.indexOf(inputValue);
-                                    if (have_index != -1) {
-                                        match_key = have_index;
-                                        is_match = true;
-                                    }
-                                } else {
-                                    match_key = "py";
-                                }
-                                if (!is_match) {
-                                    let have_index = item.data.toLowerCase().indexOf(inputValue.toLowerCase());
-                                    if (have_index != -1) {
-                                        match_key = have_index;
-                                        is_match = true;
-                                    }
-                                }
-
-                                if (is_match) {
-                                    let item_ = await getDbAppByName(item.title);
-                                    if (componentCache[item.title] && componentCache[item.title].data === item.data) {
-                                        item = componentCache[item.title];
-                                    } else if (searchType === "app" && item_?.data === item.data) {
-                                        item = item_;
-                                        item.icon = <img src={`data:image/png;base64,${item.icon}`}
-                                                         style={{width: "100%"}}></img>;
-                                    } else if (item.type === "app" && item.icon) {
-                                        await invoke("append_txt", {
-                                            filePath: "/Users/starsxu/Documents/test2.txt",
-                                            text: item.icon + "\n"
-                                        });
-                                        let icon_ = await invoke("read_app_info", {appPath: item.icon});
-                                        if (icon_ !== "文件不存在！") {
-                                            item.icon = icon_;
-                                            item.iconPath = icon_;
-                                        } else {
-                                            icon_ = await invoke("get_file_icon", {filePath: item.data});
-                                            if (icon_ !== "文件不存在！") {
-                                                item.icon = icon_;
-                                                addDbAppItem(item);
-                                                item.icon = <img src={`data:image/png;base64,${icon_}`}
-                                                                 style={{width: "100%"}}></img>;
-                                            }
-                                        }
-                                        if (typeof item.icon == "string" && item.icon.indexOf(".icns") !== -1) {
-                                            invoke('read_icns_to_base64', {path: item.icon})
-                                                .then((base64) => {
-                                                    item.icon = base64;
-                                                    addDbAppItem(item);
-                                                    item.icon = <img src={`data:image/png;base64,${base64}`}
-                                                                     style={{width: "100%"}}></img>;
-                                                })
-                                                .catch((error) => {
-                                                    console.error('Error reading file:', item.icon);
-                                                });
-                                        }
-                                    }
-
-                                    if (match_key === "py") {
-                                        pinyinMatches.push({item, index: is_match[0]});
-                                    } else {
-                                        otherMatches.push({item, index: match_key});
-                                    }
-                                    if (!componentCache[item.title]) {
-                                        setComponentCache(prevCache => ({
-                                            ...prevCache,
-                                            [item.title]: item,
-                                        }));
-                                    }
-                                }
-                                if (result.length >= 10) {
-                                    break;
-                                }
+                                item.data = item.path;
+                                item.type = "app";
+                                result.push(item);
                             }
                             if (searchType === "file") {
                                 item = item.File;
                                 item.data = item.path;
                                 item.desc = item.path;
+                                item.type = "file";
                                 if (item.file_type === "folder") {
                                     item.icon =
                                         <img src={getMaterialFolderIcon(item.file_type)} style={{width: "100%"}}></img>;
@@ -587,7 +508,6 @@ const App = () => {
                     pinyinMatches.sort((a, b) => a.index - b.index);
                     // 排序其他匹配项
                     otherMatches.sort((a, b) => a.index - b.index);
-                    console.log(pinyinMatches, otherMatches);
                     // 合并结果
                     result = [...result, ...pinyinMatches.map(match => match.item), ...otherMatches.map(match => match.item)].slice(0, 10);
 
@@ -601,12 +521,9 @@ const App = () => {
                             result.sort((a, b) => (habit[b.title] || 0) - (habit[a.title] || 0));
                         }
                     }
-                    console.log(result);
+
                 } catch (e) {
-                    await invoke("append_txt", {
-                        filePath: "/Users/starsxu/Documents/test.txt",
-                        text: JSON.stringify(e) + "\n"
-                    });
+                    console.log("错误:", e)
                 }
                 // 当前组件类型不为小窗组件时改变窗口大小
                 if (componentInfo.type !== "subpage") {
@@ -674,13 +591,18 @@ const App = () => {
         const initCache = async () => {
             if (!updateCacheTime) {
                 updateCacheTime = setTimeout(async () => {
-                    let query_result = await invoke("search_keyword", {componentName: "", inputValue,offset:searchOffset});
+                    let query_result = await invoke("search_keyword", {
+                        componentName: "",
+                        inputValue,
+                        offset: searchOffset,
+                        params: {}
+                    });
                     setAppCache(query_result);
                     updateCacheTime = null;
                 }, 3000);
             }
         };
-        initCache();
+        // initCache();
 
 
         // 读取本地组件库，查看注册状态

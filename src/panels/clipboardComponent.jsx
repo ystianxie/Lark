@@ -1,12 +1,11 @@
-import React, {useState, useRef, useEffect, useReducer, useLayoutEffect, useCallback} from 'react';
-import styled, {createGlobalStyle} from 'styled-components';
-import {Button, Input, InputNumber, Checkbox, Flex, List, Skeleton, Avatar, Divider} from 'antd';
+import React, {useState, useRef, useEffect, useCallback} from 'react';
+import {createGlobalStyle} from 'styled-components';
+import {List,  Avatar} from 'antd';
 import {invoke} from "@tauri-apps/api/tauri";
 import InfiniteScroll from 'react-infinite-scroll-component';
 import throttle from 'lodash/throttle';
-import {index} from "mathjs";
 import {getMaterialFileIcon, getMaterialFolderIcon} from "file-extension-icon-js";
-
+import baseComponent from "../baseComponent.jsx";
 
 const Wrapper = createGlobalStyle`
     a{
@@ -382,8 +381,7 @@ const ClipboardComponent = ({onKeyDown}) => {
                                         <List.Item.Meta
                                             avatar={
                                                 <Avatar
-                                                    src={`https://api.dicebear.com/7.x/miniavs/svg?seed=1`}/>
-                                                // <div>{item.source}</div>
+                                                    src={`data:image/png;base64,${item.app_icon}`}/>
                                             }
                                         />
                                         <div className={"clipboard-item-wrapper"}

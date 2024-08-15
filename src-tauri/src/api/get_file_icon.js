@@ -7,6 +7,7 @@ fileIconToBuffer(path)
     .then(icon => {
         console.log("ok");
         fs.writeFileSync("temp.txt", icon.toString('base64'), (err) => { });
+        // fs.writeFileSync("temp.png", icon, (err) => { });
         process.exit(0);
     })
     .catch(err => {

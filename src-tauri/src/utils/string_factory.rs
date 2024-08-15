@@ -38,7 +38,9 @@ pub fn text_to_pinyin(text: &str) -> (String, String) {
             None => {
                 let ori_char = text.chars().nth(i).unwrap();
                 pinyin.push_str(ori_char.to_string().as_str());
-                abb.push_str(ori_char.to_string().as_str());
+                if ori_char.is_ascii_uppercase(){
+                    abb.push_str(ori_char.to_string().as_str());
+                }
             }
         }
     }

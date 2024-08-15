@@ -15,6 +15,7 @@ use rayon::prelude::*;
 use walkdir::DirEntry;
 use std::path::Path;
 use std::thread;
+use libc::stat;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use crate::api::explorer::{create_app_index_to_sql, create_file_index_to_sql};
@@ -24,36 +25,31 @@ use crate::utils::database::{RecordSQL, IndexSQL, FileIndex};
 struct AppState {
     pub app_handle: AppHandle,
 }
-#[derive(Serialize,Deserialize)]
+#[derive(Serialize, Deserialize)]
 enum SearchResult {
     Map(HashMap<String, String>),
     File(FileIndex),
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn search_keyword(component_name: &str, input_value: &str, offset:i32, params: HashMap<String, String>) -> Vec<SearchResult>
+fn search_keyword(component_name: &str, input_value: &str, offset: i32, params: HashMap<String, String>) -> Vec<SearchResult>
 // where
 //     T: From<HashMap<String, String>> + From<FileIndex>,
 {
     println!("执行搜索 {:?} 关键词 {:?} 参数 {:?}", component_name, input_value, params);
     let comps: Vec<HashMap<String, String>> = Vec::new();
     if component_name == "" {
-        // return search_all_app(input_value);
         return api::explorer::search_app_index(input_value, offset)
             .into_iter().map(SearchResult::File).collect();
     } else if component_name == "文件搜索" {
-        // return api::explorer::search_files(input_value);
-        return api::explorer::search_file_index(input_value, offset)
-            .into_iter().map(SearchResult::File).collect();
+        let result = api::explorer::search_file_index(input_value, offset);
+        println!("文件搜索结果 {:?}", result.len());
+        let result = result.into_iter().map(SearchResult::File).collect();
+        return result;
     }
     return comps.into_iter().map(SearchResult::Map).collect();
 }
 
-#[tauri::command(rename_all = "camelCase")]
-fn search_all_app(input_value: &str) -> Vec<HashMap<String, String>> {
-    let applications = api::explorer::get_all_app(input_value);
-    return applications;
-}
 
 #[cfg(target_os = "macos")]
 pub fn set_window_show(main_window: &Window) {
@@ -81,12 +77,19 @@ fn create_app_index(state: State<'_, AppState>) {
     create_app_index_to_sql(app_handle);
 }
 
+#[tauri::command]
+fn rebuild_index(state: State<'_, AppState>) {
+    println!("rebuild index");
+    let _ = IndexSQL::new().clear_data("file");
+    create_file_index(state);
+}
 
 fn main() {
     ClipboardWatcher::start();
     IndexSQL::new();
     RecordSQL::new();
     let config = config::Config::read_local_config().unwrap();
+    let config_ = config.clone();
     tauri::Builder::default()
         .setup(move |app| {
             app.manage(AppState {
@@ -127,7 +130,7 @@ fn main() {
         .system_tray(
             SystemTray::new().with_menu(
                 SystemTrayMenu::new()
-                    .add_item(CustomMenuItem::new("show", "Show").accelerator("Option+Space")),
+                    .add_item(CustomMenuItem::new("show", "Show").accelerator(config_.base.hotkey_awaken.clone())),
             ),
         )
         .on_system_tray_event(|app, event| match event {
@@ -140,9 +143,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             search_keyword,
-            search_all_app,
             create_file_index,
             create_app_index,
+            rebuild_index,
             api::shell::open_app,
             api::shell::open_url,
             api::shell::get_file_icon,

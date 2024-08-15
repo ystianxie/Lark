@@ -5,6 +5,7 @@ use anyhow::Result;
 use rusqlite::{Connection, OpenFlags};
 use std::fs::File;
 use std::path::Path;
+use pinyin::ToPinyin;
 
 const RECORD_SQLITE_FILE: &str = "record_data_v1.sqlite";
 const APP_FILE_INDEX_FILE: &str = "index_data_v1.sqlite";
@@ -17,6 +18,7 @@ pub struct Record {
     pub data_type: String,
     pub md5: String,
     pub create_time: u64,
+    pub app_icon:String,
     pub source: String,
 }
 impl Default for Record {
@@ -28,6 +30,7 @@ impl Default for Record {
             data_type: "text".to_string(),
             md5: String::new(),
             create_time: 0,
+            app_icon: "".to_string(),
             source: "".to_string(),
         }
     }
@@ -159,6 +162,7 @@ impl RecordSQL {
                 md5: row.get(3)?,
                 create_time: row.get(4)?,
                 source: row.get(5)?,
+                app_icon:"".to_string()
             };
             res.push(r);
         }
@@ -181,6 +185,7 @@ impl RecordSQL {
                 md5: row.get(3)?,
                 create_time: row.get(4)?,
                 source: row.get(5)?,
+                app_icon:"".to_string()
             };
             res.push(r);
         }
@@ -219,6 +224,7 @@ impl RecordSQL {
                 md5: row.get(2)?,
                 create_time: row.get(3)?,
                 source: "".to_string(),
+                app_icon:"".to_string()
             };
             res.push(r);
         }
@@ -250,6 +256,7 @@ impl RecordSQL {
                 md5: row.get(2)?,
                 create_time: row.get(3)?,
                 source: row.get(5)?,
+                app_icon:"".to_string()
             };
             res.push(r);
         }
@@ -282,6 +289,7 @@ impl RecordSQL {
                 md5: row.get(3)?,
                 create_time: row.get(4)?,
                 source: row.get(5)?,
+                app_icon:"".to_string()
             })
         })?;
         Ok(r)
@@ -296,11 +304,11 @@ pub struct IndexSQL {
 impl IndexSQL {
     pub fn new() -> Self {
         // 创建数据库链接
-        // let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
-        let data_dir = "/Users/starsxu/.config/lark/data/index_data_v1.sqlite";
-        // if !Path::new(&data_dir).exists() {
-        //     Self::init()
-        // }
+        let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
+        // let data_dir = "/Users/starsxu/.config/lark/data/index_data_v1.sqlite";
+        if !Path::new(&data_dir).exists() {
+            Self::init()
+        }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
         IndexSQL { conn: c }
     }
@@ -407,7 +415,9 @@ impl IndexSQL {
                 let params = &[&r.title, &r.path, &r.desc, &r.icon, &r.pinyin, &r.abb, &md5];
                 let res = stmt.execute(params);
                 match res {
-                    Ok(row) => { println!("插入索引成功:{:?},{:?}", row, params); }
+                    Ok(_) => {
+                        // println!("插入索引成功");
+                    }
                     Err(e) => { println!("插入索引失败:{:?}", e); }
                 }
             }
@@ -439,6 +449,7 @@ impl IndexSQL {
                 path: row.get(2)?,
                 desc: row.get(3)?,
                 icon: row.get(4)?,
+                file_type: "app".to_string(),
                 ..Default::default()
             };
             res.push(r);
@@ -446,6 +457,18 @@ impl IndexSQL {
         Ok(res)
     }
 
+    pub fn find_app_icon(&self, app_name: &str) -> Result<FileIndex> {
+        let mut sql = "SELECT id, title, icon FROM app_index where title = ?1";
+        let r = self.conn.query_row(sql, [app_name], |row| {
+            Ok(FileIndex {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                icon: row.get(2)?,
+                ..Default::default()
+            })
+        }).unwrap_or(FileIndex::default());
+        Ok(r)
+    }
 
     pub fn find_by_id(&self, table: &str, id: i64) -> Result<FileIndex> {
         let sql = &format!("SELECT id, title, path, type FROM {}_index where id = ?1", table);
@@ -542,7 +565,7 @@ impl IndexSQL {
 #[allow(unused)]
 fn test_sqlite_insert() {
     RecordSQL::init();
-    println!("{:?}",IndexSQL::new().find_app("wec", 0));
+    println!("{:?}", IndexSQL::new().find_app("wec", 0));
     let r = Record {
         content: "1234567".to_string(),
         md5: "e10adc3949ba59abbe56e057f20f8823e".to_string(),

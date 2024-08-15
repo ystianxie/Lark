@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::utils::database::{self, Record};
 use crate::config::Config;
 use crate::utils::{img_factory, json_factory, string_factory, file_factory};
@@ -41,6 +42,19 @@ impl ClipboardOperator {
         let img_data = img_factory::base64_to_rgba8(&data.base64).unwrap();
         clipboard.set_image(img_data)?;
         Ok(())
+    }
+    pub fn get_image() -> Result<String> {
+        let mut clipboard = Clipboard::new()?;
+        let img = clipboard.get_image();
+        let data = img.map(|img| {
+            let base64 = img_factory::rgba8_to_base64(&img);
+            return base64;
+        });
+        if data.is_err() {
+            Ok("".to_string())
+        } else {
+            Ok(data.unwrap())
+        }
     }
 
     pub fn get_text() -> Result<String> {
@@ -244,7 +258,7 @@ impl ClipboardWatcher {
                             content,
                             content_preview: Some(content_preview),
                             data_type: "image".to_string(),
-                            source:current_app.clone(),
+                            source: current_app.clone(),
                             ..Default::default()
                         });
                         match res {
@@ -285,7 +299,20 @@ pub fn get_history_all() -> Vec<Record> {
 #[tauri::command(rename_all = "camelCase")]
 pub fn get_history_part(limit: i32, offset: i32) -> Vec<Record> {
     let db = database::RecordSQL::new();
-    db.find_part(limit, offset).unwrap()
+    let mut result: Vec<Record> = db.find_part(limit, offset).unwrap();
+    let mut app_icon_list: HashMap<String, String> = HashMap::new();
+    let db_app = database::IndexSQL::new();
+    for mut record in &mut result {
+        let icon = app_icon_list.get(&record.source);
+        if icon.is_none() {
+            let r = db_app.find_app_icon(&record.source).unwrap();
+            record.app_icon = r.icon.clone();
+            app_icon_list.insert(r.title, r.icon);
+        } else {
+            record.app_icon = icon.unwrap().clone();
+        }
+    }
+    result
 }
 
 #[tauri::command(rename_all = "camelCase")]

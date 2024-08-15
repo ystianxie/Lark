@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use walkdir::DirEntry;
 use crate::utils::database::Record;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BaseConfig {
     app_name: String,
     version: String,
@@ -94,6 +94,10 @@ impl Default for BaseConfig {
                 r"C:\Program Files\Common Files".to_string(),
                 r"C:\Windows\SoftwareDistribution".to_string(),
                 r"C:\Windows\Prefetch".to_string(),
+                "*/node_modules".to_string(),
+                "*/src-tauri/target".to_string(),
+                "*/venv".to_string(),
+                "*/dist".to_string(),
             ],
             local_file_search_exclude_types: vec![
                 "sys".to_string(),
@@ -128,7 +132,7 @@ enum ConfigUpdate {
     LocalFileSearchExcludeTypes(Vec<String>),
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ConfigData {
     pub base: BaseConfig,
     plugins: HashMap<String, Value>,
@@ -171,7 +175,7 @@ impl Config {
             match file_result {
                 Ok(mut file) => {
                     let config = ConfigData { ..Default::default() };
-                    let config_string = serde_json::to_string(&config).unwrap_or("".to_string());
+                    let config_string = serde_json::to_string_pretty(&config).unwrap_or("".to_string());
                     file.write_all(&config_string.as_bytes()).expect("写入失败!");
                     Ok(config)
                 }
@@ -207,7 +211,7 @@ impl Config {
     }
     pub fn save_local_config(&self) -> Result<()> {
         let mut file = std::fs::File::create(config_path()?)?;
-        let config = serde_json::to_string(&self.config).unwrap_or("".to_string());
+        let config = serde_json::to_string_pretty(&self.config).unwrap_or("".to_string());
         file.write_all(config.as_bytes()).expect("写入到文件失败！");
         Ok(())
     }

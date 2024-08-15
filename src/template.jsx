@@ -4,6 +4,7 @@ import calcImg from "./assets/calc.svg";
 import settingImg from "./assets/setting.svg";
 import clipboardImg from "./assets/clipboard.svg";
 import componentImg from "./assets/component.svg";
+import rebuildImg from "./assets/rebuild.svg";
 import {evaluate} from "mathjs";
 import {appWindow, LogicalSize} from "@tauri-apps/api/window";
 import {IndexDBCache} from "./indexedDB.jsx";
@@ -179,6 +180,15 @@ const clipboardPluginComponent = {
     type: "subpage",
     data: "clipboardComponent"
 };
+
+const FileIndexComponent = {
+    icon: <img src={rebuildImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
+    title: '重建索引',
+    desc: 'Rebuild Index',
+    type: "action",
+    action:"rebuildIndex",
+};
+
 const calcComponent = (result, input) => {
     return {
         title: result || "计算器",
@@ -192,7 +202,8 @@ const pluginsComponent = {
     searchFileComponent,
     showPluginComponent,
     settingPluginComponent,
-    clipboardPluginComponent
+    clipboardPluginComponent,
+    FileIndexComponent
 }
 
 function calculateExpression(expression) {
