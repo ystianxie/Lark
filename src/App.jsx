@@ -168,8 +168,16 @@ const App = () => {
                 setInputValue("");
             } else {
                 try {
-                    if (parseInt(event.key) <= keywordComponent.length && parseInt(event.key) > 0) {
-                        await confirmComponentSelected(parseInt(event.key) - 1);
+                    if (parseInt(event.key) <= 9 && parseInt(event.key) > 0) {
+                        let list_items = document.getElementsByClassName("templateComponent")
+                        let firstItem = 0;
+                        for (let i = 0; i < list_items.length; i++) {
+                            if (list_items[i].getBoundingClientRect().y === 60.5) {
+                                firstItem = i
+                                break
+                            }
+                        }
+                        await confirmComponentSelected(firstItem + parseInt(event.key) - 1, false);
                     }
                 } catch (e) {
                     console.log(e);
@@ -205,10 +213,11 @@ const App = () => {
         }
     };
     const initPoi = async () => {
-        await appWindow.setPosition(new LogicalPosition(windowPosition.current.x, windowPosition.current.y));
+        let window_position = await windowPosition.current
+        await appWindow.setPosition(new LogicalPosition(window_position.x, window_position.y));
     };
 
-    async function confirmComponentSelected(index) {
+    async function confirmComponentSelected(index, metaStatus) {
         // 组件确认选择后
         let currentComponent = keywordComponent[index !== undefined ? index : selectedIndex];
         setSelectedIndex(0);
@@ -239,10 +248,15 @@ const App = () => {
             setInputValue("");
             await modifyWindowSize("big");
         } else if (currentComponent.type === "result") {
-            await invoke("set_window_hide_macos", {});
-            await invoke("clipboard_control", {text: currentComponent.data.toString(), control: "write", paste: true});
+            await appWindow.hide();
+            await invoke("clipboard_control", {
+                text: currentComponent.data.toString(),
+                control: "write",
+                paste: true,
+                dataType: "text"
+            });
         } else if (currentComponent.type === "app") {
-            if (!fnDown) {
+            if (!fnDown || metaStatus === false) {
                 await updateAppHabit(inputValue, currentComponent.title);
                 await invoke("open_app", {appPath: currentComponent.data});
                 initStatus();
@@ -509,7 +523,7 @@ const App = () => {
                     // 排序其他匹配项
                     otherMatches.sort((a, b) => a.index - b.index);
                     // 合并结果
-                    result = [...result, ...pinyinMatches.map(match => match.item), ...otherMatches.map(match => match.item)].slice(0, 10);
+                    // result = [...result, ...pinyinMatches.map(match => match.item), ...otherMatches.map(match => match.item)].slice(0, 9);
 
                     if (result.length === 0 && searchType === "app") {
                         // 没有结果则进行web搜索

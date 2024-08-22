@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::process::Command;
 use crate::utils::database::{self, Record};
 use crate::config::Config;
 use crate::utils::{img_factory, json_factory, string_factory, file_factory};
@@ -37,12 +38,25 @@ impl ClipboardOperator {
         Ok(())
     }
 
+    pub fn get_text() -> Result<String> {
+        let mut clipboard = Clipboard::new()?;
+        let text = clipboard.get_text()?;
+        Ok(text)
+    }
+
+    pub fn paste_text(text: &str) -> Result<()> {
+        let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
+        let _ = enigo.text(text);
+        Ok(())
+    }
+
     pub fn set_image(data: ImageDataDB) -> Result<()> {
         let mut clipboard = Clipboard::new()?;
         let img_data = img_factory::base64_to_rgba8(&data.base64).unwrap();
         clipboard.set_image(img_data)?;
         Ok(())
     }
+
     pub fn get_image() -> Result<String> {
         let mut clipboard = Clipboard::new()?;
         let img = clipboard.get_image();
@@ -57,16 +71,29 @@ impl ClipboardOperator {
         }
     }
 
-    pub fn get_text() -> Result<String> {
-        let mut clipboard = Clipboard::new()?;
-        let text = clipboard.get_text()?;
-        Ok(text)
+    pub fn set_file(file_path: &str) {
+        // todo 多文件
+        #[cfg(target_os = "windows")]{
+            let output = Command::new("powershell").arg("src/utils/clipboard_file_win.ps1").arg(file_path).output().expect("");
+            thread::sleep(Duration::milliseconds(500).to_std().unwrap());
+            let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
+            enigo.key(Key::Control, enigo::Direction::Press).expect("error");
+            enigo.key(Key::Unicode('v'), enigo::Direction::Click).expect("error");
+            enigo.key(Key::Control, enigo::Direction::Release).expect("error");
+        }
+        #[cfg(target_os = "macos")]{
+            let command_data = format!("'set the clipboard to POSIX file \"'{}'\"'",file_path);
+            let _ = Command::new("osascript").arg("-e").arg(command_data).output().expect("");
+            thread::sleep(Duration::milliseconds(500).to_std().unwrap());
+            let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
+            enigo.key(Key::Meta, enigo::Direction::Press).expect("error");
+            enigo.key(Key::Unicode('v'), enigo::Direction::Click).expect("error");
+            enigo.key(Key::Meta, enigo::Direction::Release).expect("error");
+        }
     }
 
-    pub fn paste_text(text: &str) -> Result<()> {
-        let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
-        let _ = enigo.text(text);
-        Ok(())
+    pub fn get_file() -> Vec<(String, String)> {
+        file_factory::get_clipboard_files()
     }
 }
 
@@ -153,6 +180,70 @@ fn get_active_application() -> Option<String> {
 }
 
 
+#[cfg(target_os = "windows")]
+fn set_file_to_clipboard() {
+    use std::ffi::OsStr;
+    use std::iter::once;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+    use winapi::shared::windef::HWND;
+    use winapi::um::combaseapi::CoInitialize;
+    use winapi::um::winuser::{OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData};
+    use winapi::um::shellapi::{DragQueryFileW, HDROP, GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
+
+    unsafe fn create_hdrop(files: Vec<&str>) -> HDROP {
+        let file_paths: Vec<u16> = files
+            .iter()
+            .flat_map(|file| {
+                OsStr::new(file)
+                    .encode_wide()
+                    .chain(once(0))
+                    .collect::<Vec<u16>>()
+            })
+            .collect();
+
+        let size = (file_paths.len() * std::mem::size_of::<u16>()) as u32;
+        let hglobal = GlobalAlloc(GHND, size as usize);
+
+        if hglobal.is_null() {
+            return ptr::null_mut();
+        }
+
+        let locked_memory = GlobalLock(hglobal) as *mut u16;
+        if locked_memory.is_null() {
+            return ptr::null_mut();
+        }
+
+        // 复制文件路径到内存
+        ptr::copy_nonoverlapping(file_paths.as_ptr(), locked_memory, file_paths.len());
+
+        GlobalUnlock(hglobal);
+
+        hglobal as HDROP
+    }
+    unsafe {
+        // 初始化 COM 库
+        CoInitialize(ptr::null_mut());
+
+        // 打开剪贴板
+        if OpenClipboard(ptr::null_mut() as HWND) != 0 {
+            // 清空剪贴板
+            EmptyClipboard();
+
+            // 准备文件路径数据
+            let files = vec!["C:\\path\\to\\your\\file.txt"];
+            let hdrop = create_hdrop(files);
+
+            // 将文件放入剪贴板
+            if !hdrop.is_null() {
+                SetClipboardData(winapi::um::winuser::CF_HDROP, hdrop);
+            }
+
+            // 关闭剪贴板
+            CloseClipboard();
+        }
+    }
+}
 impl ClipboardWatcher {
     pub fn start() {
         tauri::async_runtime::spawn(async {

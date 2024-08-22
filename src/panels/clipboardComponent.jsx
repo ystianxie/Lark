@@ -1,6 +1,6 @@
 import React, {useState, useRef, useEffect, useCallback} from 'react';
 import {createGlobalStyle} from 'styled-components';
-import {List,  Avatar} from 'antd';
+import {List, Avatar} from 'antd';
 import {invoke} from "@tauri-apps/api/tauri";
 import InfiniteScroll from 'react-infinite-scroll-component';
 import throttle from 'lodash/throttle';
@@ -140,9 +140,9 @@ const ClipboardComponent = ({onKeyDown}) => {
     const closeDefault = useCallback(throttle((deltaY) => {
             // 滚动事件限制触发频率，并固定滚动距离
             const scrollContainer = scrollContainerRef.current;
-            if (deltaY > 0) {
+            if (deltaY > 5) {
                 scrollContainer.scrollTop = scrollContainer.scrollTop + 35;
-            } else {
+            } else if (deltaY < -5) {
                 scrollContainer.scrollTop = scrollContainer.scrollTop - 35;
             }
             let list_items = document.getElementsByClassName("ant-list-item")

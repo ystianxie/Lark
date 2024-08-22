@@ -433,9 +433,9 @@ impl IndexSQL {
         );
         let mut limit: usize = 30;
         let mut params: Vec<String> = vec![];
-        params.push(format!("%{}%", keyword));
         params.push(format!("{}%", keyword));
-        params.push(format!("%/{}%", keyword));
+        params.push(format!("{}%", keyword));
+        params.push(format!("%/Applications/{}%.app", keyword));
         params.push(limit.to_string());
         params.push(offset.to_string());
         let sql = format!("{} order by create_time desc limit ?4 offset ?5", sql);

@@ -126,7 +126,8 @@ body {
 .templateHint {
     font-size: 18px;
     color: #606060;
-
+    position: absolute;
+    right: 3%;
 }
 
 .activate {

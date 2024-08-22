@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from "react";
+import React, {useCallback, useEffect, useRef, useState} from "react";
 import fileImg from "./assets/file.svg";
 import calcImg from "./assets/calc.svg";
 import settingImg from "./assets/setting.svg";
@@ -8,8 +8,12 @@ import rebuildImg from "./assets/rebuild.svg";
 import {evaluate} from "mathjs";
 import {appWindow, LogicalSize} from "@tauri-apps/api/window";
 import {IndexDBCache} from "./indexedDB.jsx";
+import throttle from "lodash/throttle.js";
 
 const TemplateComponent = (components, selectedKey, setSelectedKey, confirmComponentSelected, fnDown) => {
+    const scrollContainerRef = useRef(null);
+    const [firstItemIndex, setFirstItemIndex] = useState(0);
+
     const handleMouseEnter = (index) => {
         setSelectedKey(index);
     };
@@ -23,50 +27,115 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
             return component.desc?.replace(/\n/g, " ");
         }
     };
+    let size = components.length > 9 ? 9 : components.length;
+    useEffect(() => {
+        const scrollContainer = scrollContainerRef?.current;
+        const selectedItem = scrollContainer?.querySelector(`[data-index="${selectedKey}"]`);
+        if (selectedItem) {
+            selectedItem.scrollIntoView({
+                behavior: 'smooth',
+                block: 'nearest'
+            });
+        }
+    }, [selectedKey])
+
+    const closeDefault = useCallback(throttle((deltaY) => {
+            // 滚动事件限制触发频率，并固定滚动距离
+            const scrollContainer = scrollContainerRef.current;
+            if (deltaY > 5) {
+                scrollContainer.scrollTop = scrollContainer.scrollTop + 50;
+            } else if (deltaY < -5) {
+                scrollContainer.scrollTop = scrollContainer.scrollTop - 50;
+            }
+        }, 100)
+        , [selectedKey])
+
+    const handleScroll = (e) => {
+        // 滚动事件处理，禁用原有滚动行为，并触发自定义滚动逻辑
+        e.preventDefault();
+        e.stopPropagation();
+        closeDefault(e.deltaY)
+    }
+    useEffect(() => {
+        if (components && scrollContainerRef.current) {
+            scrollContainerRef.current.addEventListener('wheel', handleScroll, {passive: false})
+        } else {
+            scrollContainerRef?.current?.removeEventListener("wheel", handleScroll)
+        }
+    }, [components])
+
+    function get_first_item() {
+        let list_items = document.getElementsByClassName("templateComponent")
+        for (let i = 0; i < list_items.length; i++) {
+            if (list_items[i].getBoundingClientRect().y === 60.5) {
+                return i
+            }
+        }
+    }
+
     return (
-        <>
+        <div style={{position: "relative"}}>
             {
-                components.map((component, index) => (
-                    <div className={`templateComponent ${selectedKey === index ? 'activate' : ''}`}
-                         key={index}
-                         onMouseEnter={() => handleMouseEnter(index)}
-                         onMouseLeave={handleMouseLeave}
-                         onClick={() => {
-                             confirmComponentSelected();
-                         }}
+                size !== 0 ? <>
+                    <div style={{height: "450px", overflowY: "scroll"}}
+                         ref={scrollContainerRef}
                     >
                         {
-                            typeof (component.icon) == "string" ?
-                                <div className="templateBaseIcon">
-                                    {component.icon.slice(0, 3)}
-                                </div> :
-                                <div className='templateImgIcon'>
-                                    {component.icon}
+                            components.map((component, index) => (
+                                <div className={`templateComponent ${selectedKey === index ? 'activate' : ''}`}
+                                     key={index}
+                                     data-index={index}
+                                     onMouseEnter={() => handleMouseEnter(index)}
+                                     onMouseLeave={handleMouseLeave}
+                                     onClick={() => {
+                                         confirmComponentSelected();
+                                     }}
+                                >
+                                    {
+                                        typeof (component.icon) == "string" ?
+                                            <div className="templateBaseIcon">
+                                                {component.icon.slice(0, 3)}
+                                            </div> :
+                                            <div className='templateImgIcon'>
+                                                {component.icon}
+                                            </div>
+                                    }
+                                    <div style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        width: "100%"
+                                    }}>
+                                        <div className="templateContent">
+                                            <div className="templateTitle">
+                                                {component.title}
+                                            </div>
+                                            <div className="templateDesc">
+                                                {displayDesc(component, selectedKey === index)}
+                                            </div>
+                                        </div>
+
+                                    </div>
+
                                 </div>
+                            ))
                         }
-                        <div style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            width: "100%"
-                        }}>
-                            <div className="templateContent">
-                                <div className="templateTitle">
-                                    {component.title}
-                                </div>
-                                <div className="templateDesc">
-                                    {displayDesc(component, selectedKey === index)}
-                                </div>
-                            </div>
-                            <div className='templateHint'>
-                                {selectedKey === index ? "⏎" : "⌘" + (index + 1)}
-                            </div>
-                        </div>
 
                     </div>
-                ))
+                    <div>
+                        {
+                            new Array(size).fill('').map((component, index) => (
+                                <div className='templateHint' key={"hint" + index}
+                                     style={{top: 3.5 + 11.1 * index + "%"}}>
+                                    {selectedKey - get_first_item() === index ? "⏎" : "⌘" + (index + 1)}
+                                </div>
+                            ))
+                        }
+
+                    </div>
+                </> : <></>
             }
-        </>
+        </div>
     );
 }
 
@@ -95,7 +164,8 @@ function SubpageComponent({component, keyDown}) {
     }
     return (
         <>
-            <div id="subPageFrame" style={component?.type === "subpage" ? {height: "calc(100vh - 75px)",marginTop:"5px"} : {}}>
+            <div id="subPageFrame"
+                 style={component?.type === "subpage" ? {height: "calc(100vh - 75px)", marginTop: "5px"} : {}}>
                 {RenderComponent ? <div style={subpageStyle}><RenderComponent onKeyDown={keyDown}/></div> : <div/>}
             </div>
         </>
@@ -186,7 +256,7 @@ const FileIndexComponent = {
     title: '重建索引',
     desc: 'Rebuild Index',
     type: "action",
-    action:"rebuildIndex",
+    action: "rebuildIndex",
 };
 
 const calcComponent = (result, input) => {
@@ -251,8 +321,11 @@ const modifyWindowSize = async (size) => {
         size = new LogicalSize(718, 71);
         document.getElementById("mainDiv").style.height = (size.height * 0.74) + "px";
     } else {
+        size > 9 ? size = 9 : size < 1 ? size = 1 : size;
+        let amend = [0, 5, 7, 8, 8, 8.5, 8.5, 9, 9]
         document.getElementById("mainDiv").style.height = ((1 + size) * 50) + "px";
-        size = new LogicalSize(718, 78 + size * 49);
+        size = new LogicalSize(718, 78 + size * (40 + amend[size - 1]));
+
     }
     try {
         await appWindow.setSize(size);
