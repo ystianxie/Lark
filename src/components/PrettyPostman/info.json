@@ -1,0 +1,30 @@
+{
+  "title": "PrettyPostman",
+  "description": "漂亮的格式化",
+  "workflow": [
+    {
+      "keyword": "dumps",
+      "title": "Json转Str",
+      "step": 0,
+      "action": "runScript",
+      "icon": "./icon.png",
+      "data": "./json2str.py",
+      "desc": "",
+      "next": []
+    },
+    {
+      "keyword": "loads",
+      "title": "Str转Json",
+      "step": 0,
+      "action": "runScript",
+      "icon": "./icon.png",
+      "data": "./str2json.py",
+      "desc": "",
+      "next": []
+    }
+  ],
+  "type": "component",
+  "icon": "icon-json",
+  "version": "1.0.0",
+  "author": "dmj"
+}

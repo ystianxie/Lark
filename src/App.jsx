@@ -18,9 +18,11 @@ import {
     modifyWindowSize,
     getWindowPosition,
     loadCustomComponent,
-    initAppDB, initAppHabitDB
+    initAppHabitDB
 } from "./template.jsx";
 import {divide} from "mathjs";
+import {result} from "lodash/object.js";
+import path from 'path';
 
 
 const App = () => {
@@ -41,12 +43,7 @@ const App = () => {
     const [isComposing, setIsComposing] = useState({status: false, ppos: 0});
     // 输入框组件
     const inputBox = useRef(null);
-    const isListening = useRef(false);
     const windowPosition = useRef(null);
-    // 组件缓存
-    const [componentCache, setComponentCache] = useState({});
-    // app缓存
-    const [appCache, setAppCache] = useState([]);
     // 功能键状态
     const [fnDown, setFnDown] = useState(false);
     // 按下按键
@@ -58,11 +55,11 @@ const App = () => {
     const [pluginList, setPluginList] = useLocalStorage("pluginList", []);
     const [dbList, setDbList] = useLocalStorage("dbList", []);
 
+    const [appDirectory, setAppDirectory] = useState({})
 
     const [insidePluginList, setInsidePluginList] = useState(pluginsComponent);
 
 
-    const [appDB, setAppDB] = useState(null);
     const [appHabitDB, setAppHabitDB] = useState(null);
 
 
@@ -270,7 +267,14 @@ const App = () => {
             await invoke("open_url", {url: currentComponent.data});
         } else if (currentComponent.type === "action") {
             const handle = async (component) => {
-                let result = await baseComponent['action_' + component.action](component.data);
+                // todo 修正脚本文件中的路径问题
+                let scriptPath = component.data;
+                if (component.data.startsWith("./")) {
+                    // scriptPath = appDirectory['plugins'] + component.data.replace(".", );
+                    scriptPath = `${appDirectory['plugins']}/${component.pluginName}/${component.data}`;
+                }
+                let result = await baseComponent['action_' + component.action](scriptPath, inputValue.split(" "));
+                console.log(result)
                 if (Object.prototype.toString.call(component.next) === '[object Object]') {
                     component.next = [component.next];
                 }
@@ -360,22 +364,6 @@ const App = () => {
             return urlPattern.test(url);
         }
 
-        const getDbAppByName = async (appName) => {
-            try {
-                const res = await appDB.getDataByKey(appName);
-                return res[0];
-            } catch (err) {
-                console.log('获取数据失败[appCacheDb]==>', err);
-                return null;
-            }
-        };
-        const addDbAppItem = (appItem) => {
-            try {
-                appDB.update(appItem);
-            } catch (err) {
-                console.log('更新数据失败[appCacheDb]==>', err);
-            }
-        };
         const fetchData = async () => {
             if (inputBox.current) {
                 inputBox.current.value = inputValue;
@@ -480,6 +468,17 @@ const App = () => {
                         for (let workflow of workflows) {
                             if (workflow.keyword.startsWith(inputValue)) {
                                 workflow.type = "action";
+                                workflow.pluginName = plugin.title
+                                if (typeof workflow.icon !== "object") {
+                                    let icon
+                                    if (workflow.icon.startsWith("./")) {
+                                        icon = workflow.icon.replace("./", "/")
+                                    } else {
+                                        icon = workflow.icon
+                                    }
+                                    workflow.icon = <img src={"src/components/" + plugin.title + icon} alt={"i"}
+                                                         style={{width: "100%"}}/>
+                                }
                                 result.push(workflow);
                             }
                         }
@@ -581,7 +580,6 @@ const App = () => {
 
         });
 
-        initAppDB(appDB, setAppDB)
 
         const unListenFileDrop = listen('tauri://file-drop', event => {
             const {payload} = event;
@@ -601,23 +599,8 @@ const App = () => {
 
         // 输入框获取焦点
         inputBox.current.focus();
-        // 初始化AppCache
-        const initCache = async () => {
-            if (!updateCacheTime) {
-                updateCacheTime = setTimeout(async () => {
-                    let query_result = await invoke("search_keyword", {
-                        componentName: "",
-                        inputValue,
-                        offset: searchOffset,
-                        params: {}
-                    });
-                    setAppCache(query_result);
-                    updateCacheTime = null;
-                }, 3000);
-            }
-        };
-        // initCache();
 
+        initAppHabitDB(appHabitDB, setAppHabitDB, dbList, setDbList);
 
         // 读取本地组件库，查看注册状态
         loadCustomComponent().then((result) => {
@@ -629,7 +612,9 @@ const App = () => {
         }
 
         window.searchFileCache = {};
-
+        invoke("get_app_dir", {}).then((result) => {
+            setAppDirectory(result)
+        })
 
         return () => {
             unListenFocusChanged.then((f) => f());
@@ -639,16 +624,9 @@ const App = () => {
 
     }, []);
 
-
     useEffect(() => {
-        // 初始化本地缓存数据库链接
-        initAppDB(appDB, setAppDB, appHabitDB, setAppHabitDB, dbList, setDbList);
-    }, [appDB]);
-
-    useEffect(() => {
-        initAppHabitDB(appDB, setAppDB, appHabitDB, dbList, setDbList);
-    }, [appHabitDB]);
-
+        initAppHabitDB(appHabitDB, setAppHabitDB, dbList, setDbList);
+    }, [appHabitDB])
     return (
         <div id="mainDiv" data-tauri-drag-region>
             <div style={{width: "100%", height: "51.5px", margin_bottom: "5px"}}>

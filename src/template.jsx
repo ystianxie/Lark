@@ -9,17 +9,19 @@ import {evaluate} from "mathjs";
 import {appWindow, LogicalSize} from "@tauri-apps/api/window";
 import {IndexDBCache} from "./indexedDB.jsx";
 import throttle from "lodash/throttle.js";
+import {debounce} from "lodash/function.js";
+import {invoke} from "@tauri-apps/api";
+import fs from "fs";
 
 const TemplateComponent = (components, selectedKey, setSelectedKey, confirmComponentSelected, fnDown) => {
     const scrollContainerRef = useRef(null);
-    const [firstItemIndex, setFirstItemIndex] = useState(0);
+    const [selectedIndex, setSelectedIndex] = useState(selectedKey || 1)
+    const handleMouseEnter = (e, index) => {
+        if (e.movementX !== 0 || e.movementY !== 0) {
+            setSelectedKey(index);
+        }
+    };
 
-    const handleMouseEnter = (index) => {
-        setSelectedKey(index);
-    };
-    const handleMouseLeave = () => {
-        setSelectedKey(-1);
-    };
     const displayDesc = (component, selected) => {
         if (fnDown && selected && (component.type === "app" || component.type === "file")) {
             return "Reveal file in Finder";
@@ -28,14 +30,50 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
         }
     };
     let size = components.length > 9 ? 9 : components.length;
+
     useEffect(() => {
-        const scrollContainer = scrollContainerRef?.current;
-        const selectedItem = scrollContainer?.querySelector(`[data-index="${selectedKey}"]`);
-        if (selectedItem) {
-            selectedItem.scrollIntoView({
-                behavior: 'smooth',
-                block: 'nearest'
-            });
+        if (components.length === 0) {
+            setSelectedIndex(1)
+            return
+        }
+
+        let activate_iter = document.getElementsByClassName("activate")
+        if (activate_iter) {
+            let data_y = activate_iter[0]?.getBoundingClientRect().y
+            let index = ((data_y - 60.5) / 50) + 1
+            index = index > 9 ? 9 : index
+            index = index < 1 ? 1 : index
+            setSelectedIndex(Math.round(index))
+        }
+
+        //  更改当前选择项时 将其滚动到可视区域
+        function visualItem() {
+            const scrollContainer = scrollContainerRef?.current;
+            const selectedItem = scrollContainer?.querySelector(`[data-index="${selectedKey}"]`);
+            if (selectedItem) {
+                selectedItem.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'nearest'
+                });
+            }
+        }
+
+        visualItem()
+
+        // 防止因快速切换导致行元素对齐出现偏移
+        function standardizedDisplay() {
+            let index = get_first_item()
+            let item = document.getElementsByClassName("templateComponent")[index]
+            if (item.getBoundingClientRect().y !== 60.5) {
+                scrollContainerRef.current.scrollTop -= 60.5 - item.getBoundingClientRect().y
+                visualItem()
+            }
+        }
+
+        const debouncedStandardizedDisplay = debounce(standardizedDisplay, 100)
+        debouncedStandardizedDisplay()
+        return () => {
+            debouncedStandardizedDisplay.cancel()
         }
     }, [selectedKey])
 
@@ -43,34 +81,53 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
             // 滚动事件限制触发频率，并固定滚动距离
             const scrollContainer = scrollContainerRef.current;
             if (deltaY > 5) {
-                scrollContainer.scrollTop = scrollContainer.scrollTop + 50;
+                scrollContainer.scrollTop += 50;
             } else if (deltaY < -5) {
-                scrollContainer.scrollTop = scrollContainer.scrollTop - 50;
+                scrollContainer.scrollTop += -50;
             }
         }, 100)
-        , [selectedKey])
+        , [])
 
-    const handleScroll = (e) => {
+    const handleScroll = useCallback((e) => {
         // 滚动事件处理，禁用原有滚动行为，并触发自定义滚动逻辑
         e.preventDefault();
         e.stopPropagation();
         closeDefault(e.deltaY)
-    }
+    }, [closeDefault])
     useEffect(() => {
-        if (components && scrollContainerRef.current) {
-            scrollContainerRef.current.addEventListener('wheel', handleScroll, {passive: false})
-        } else {
-            scrollContainerRef?.current?.removeEventListener("wheel", handleScroll)
+        const scrollContainer = scrollContainerRef.current;
+        if (components && scrollContainer) {
+            scrollContainer.addEventListener('wheel', handleScroll, {passive: false});
         }
+        return () => {
+            if (scrollContainer) {
+                scrollContainer.removeEventListener('wheel', handleScroll);
+            }
+        };
     }, [components])
 
     function get_first_item() {
         let list_items = document.getElementsByClassName("templateComponent")
+        let cache = -1;
         for (let i = 0; i < list_items.length; i++) {
             if (list_items[i].getBoundingClientRect().y === 60.5) {
                 return i
+            } else if (list_items[i].getBoundingClientRect().y > 0 && cache === -1) {
+                cache = i
             }
         }
+        return cache !== -1 ? cache : 0
+    }
+
+    const showHotkeys = (index) => {
+        // 快捷键提示文本
+        if (index + 1 === selectedIndex) {
+            return "⏎"
+        }
+        if (index + 1 < 10) {
+            return "⌘" + (index + 1)
+        }
+        return ""
     }
 
     return (
@@ -85,8 +142,7 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
                                 <div className={`templateComponent ${selectedKey === index ? 'activate' : ''}`}
                                      key={index}
                                      data-index={index}
-                                     onMouseEnter={() => handleMouseEnter(index)}
-                                     onMouseLeave={handleMouseLeave}
+                                     onMouseEnter={(event) => handleMouseEnter(event, index)}
                                      onClick={() => {
                                          confirmComponentSelected();
                                      }}
@@ -127,7 +183,7 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
                             new Array(size).fill('').map((component, index) => (
                                 <div className='templateHint' key={"hint" + index}
                                      style={{top: 3.5 + 11.1 * index + "%"}}>
-                                    {selectedKey - get_first_item() === index ? "⏎" : "⌘" + (index + 1)}
+                                    {showHotkeys(index)}
                                 </div>
                             ))
                         }
@@ -231,7 +287,7 @@ const searchFileComponent = {
     type: "component",
 };
 const showPluginComponent = {
-    icon: <img src={componentImg} alt="component" className='activateComponent' data-tauri-drag-region/>,
+    icon: <img src={componentImg} alt="components" className='activateComponent' data-tauri-drag-region/>,
     title: '组件库',
     desc: 'show component',
     type: "subpage"
@@ -252,7 +308,7 @@ const clipboardPluginComponent = {
 };
 
 const FileIndexComponent = {
-    icon: <img src={rebuildImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
+    icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
     title: '重建索引',
     desc: 'Rebuild Index',
     type: "action",
@@ -342,12 +398,10 @@ const getWindowPosition = async () => {
 
 // 读取本地组件库，查看注册状态
 const loadCustomComponent = async () => {
+    let plugins = await invoke("load_plugins",{})
     const files = {};
-    const importAll = import.meta.glob('./components/*.json');
-    for (const path in importAll) {
-        const module = await importAll[path]();
-        const fileName = path.replace('./components/', '').replace(".json", "");
-        files[fileName] = module;
+    for (const plugin_name in plugins) {
+        files[plugin_name] = JSON.parse(plugins[plugin_name]);
     }
     return files;
 };
@@ -367,34 +421,14 @@ const initIndexDB = async (db, version, dbList, setDbList) => {
     });
 };
 
-function initAppDB(appDB, setAppDB, appHabitDB, setAppHabitDB, dbList, setDbList) {
-    if (appDB && !appDB._db) {
-        let version = dbList.includes(appDB._cacheTableName) ? dbList.length : dbList.length + 1;
-        initIndexDB(appDB, version, dbList, setDbList).then(() => {
-            if (!appHabitDB) {
-                setTimeout(() => {
-                    setAppHabitDB(new IndexDBCache(db_app_habit_params));
-                }, 1000);
-            }
-        });
-    } else if (!appDB) {
-        setAppDB(new IndexDBCache(db_app_params));
-    }
-}
 
-function initAppHabitDB(appDB, setAppDB, appHabitDB, dbList, setDbList) {
+function initAppHabitDB(appHabitDB, setAppHabitDB, dbList, setDbList) {
     if (appHabitDB && !appHabitDB._db) {
         let version = dbList.includes(appHabitDB._cacheTableName) ? dbList.length : dbList.length + 1;
-        if (appDB && appDB._dbversion < version) {
-            appDB.closeDB();
-        }
         initIndexDB(appHabitDB, version, dbList, setDbList).then(() => {
-            if (!appDB) {
-                setTimeout(() => {
-                    setAppDB(new IndexDBCache(db_app_params));
-                }, 1000);
-            }
         });
+    } else if (!appHabitDB) {
+        setAppHabitDB(new IndexDBCache(db_app_habit_params))
     }
 }
 
@@ -409,6 +443,5 @@ export {
     modifyWindowSize,
     getWindowPosition,
     loadCustomComponent,
-    initAppDB,
     initAppHabitDB
 };

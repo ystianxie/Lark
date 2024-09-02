@@ -10,8 +10,9 @@ async function action_openUrl(url) {
 }
 
 async function action_runScript(script_path, params) {
-    if (script_path.endsWitch("py")) {
-        return await invoke("run_python_script", {script_path, params});
+    console.log("run script", script_path, params)
+    if (script_path.endsWith("py")) {
+        return await invoke("run_python_script", {scriptPath: script_path, params: params || []});
     }
 }
 

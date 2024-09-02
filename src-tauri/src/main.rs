@@ -164,6 +164,8 @@ fn main() {
             api::clipboard::get_history_id,
             api::clipboard::get_history_part,
             api::clipboard::get_history_search,
+            config::plugins::load_plugins,
+            utils::dirs::get_app_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

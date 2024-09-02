@@ -6,6 +6,7 @@ import InfiniteScroll from 'react-infinite-scroll-component';
 import throttle from 'lodash/throttle';
 import {getMaterialFileIcon, getMaterialFolderIcon} from "file-extension-icon-js";
 import baseComponent from "../baseComponent.jsx";
+import {debounce} from "lodash/function.js";
 
 const Wrapper = createGlobalStyle`
     a{
@@ -137,6 +138,18 @@ const ClipboardComponent = ({onKeyDown}) => {
         selectIndexRef.current = selectIndex;
     }, [selectIndex]);
 
+    const get_first_item = () => {
+        let list_items = document.getElementsByClassName("ant-list-item")
+        let cache = -1
+        for (let i = 0; i < list_items.length; i++) {
+            if (list_items[i].getBoundingClientRect().y > 32) {
+                return [i, -1]
+            } else if (list_items[i].getBoundingClientRect().y > 0 && cache === -1) {
+                cache = i
+            }
+        }
+        return [-1, cache !== -1 ? cache : 0]
+    }
     const closeDefault = useCallback(throttle((deltaY) => {
             // 滚动事件限制触发频率，并固定滚动距离
             const scrollContainer = scrollContainerRef.current;
@@ -145,22 +158,20 @@ const ClipboardComponent = ({onKeyDown}) => {
             } else if (deltaY < -5) {
                 scrollContainer.scrollTop = scrollContainer.scrollTop - 35;
             }
-            let list_items = document.getElementsByClassName("ant-list-item")
-            for (let i = 0; i < list_items.length; i++) {
-                if (list_items[i].getBoundingClientRect().y > 32) {
-                    setFirstItemIndex(i);
-                    break
-                }
+            let index = get_first_item()
+            if (index[0] !== -1) {
+                setFirstItemIndex(index[0])
             }
         }, 100)
         , [selectIndex])
 
-    const handleScroll = (e) => {
+    const handleScroll = useCallback((e) => {
         // 滚动事件处理，禁用原有滚动行为，并触发自定义滚动逻辑
         e.preventDefault();
         e.stopPropagation();
         closeDefault(e.deltaY)
-    }
+    }, [closeDefault])
+
     useEffect(() => {
         // 初始化剪贴板内容
         invoke("get_history_part", {limit: 30, offset: 0})
@@ -204,13 +215,17 @@ const ClipboardComponent = ({onKeyDown}) => {
                 }
             }
         }
-        console.log("未找到")
     }
 
     function confirmClipboardContent() {
         // 确认剪贴板内容
         if (data) {
-            invoke("clipboard_control", {text: data[selectIndex]?.content || "", control: "copy", paste: true})
+            invoke("clipboard_control", {
+                text: data[selectIndex]?.content || "",
+                control: "copy",
+                paste: true,
+                dataType: ""
+            })
                 .then((res) => {
                     console.log('确认剪贴板内容', res)
                 });
@@ -241,6 +256,20 @@ const ClipboardComponent = ({onKeyDown}) => {
             });
         }
 
+        // 防止因快速切换导致行元素对齐出现偏移
+        function standardizedDisplay() {
+            let index = get_first_item()
+            let item = document.getElementsByClassName("ant-list-item")[index[1]]
+            if (item && item.getBoundingClientRect().y !== 32) {
+                scrollContainerRef.current.scrollTop -= 32 - item.getBoundingClientRect().y
+            }
+        }
+
+        const debouncedStandardizedDisplay = debounce(standardizedDisplay, 100)
+        debouncedStandardizedDisplay()
+        return () => {
+            debouncedStandardizedDisplay.cancel()
+        }
     }, [selectIndex]);
 
 
@@ -291,8 +320,10 @@ const ClipboardComponent = ({onKeyDown}) => {
         }
     }
 
-    const handleMouseEnter = (index) => {
-        setSelectIndex(index);
+    const handleMouseEnter = (e, index) => {
+        if (e.movementX !== 0 || e.movementY !== 0) {
+            setSelectIndex(index);
+        }
     };
 
     function timestampToTime(timestamp) {
@@ -385,7 +416,7 @@ const ClipboardComponent = ({onKeyDown}) => {
                                             }
                                         />
                                         <div className={"clipboard-item-wrapper"}
-                                             onMouseEnter={() => handleMouseEnter(index)}
+                                             onMouseEnter={(event) => handleMouseEnter(event, index)}
                                              onClick={confirmClipboardContent}>
                                             <div className="clipboard-item"> {handleContentOption(item)}</div>
 

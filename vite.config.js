@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import nodeResolve from "@rollup/plugin-node-resolve"; // 导入插件
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
@@ -16,6 +17,17 @@ export default defineConfig(async () => ({
     watch: {
       // 3. tell vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
+    },
+  },
+  build: {
+    rollupOptions: {
+      plugins: [
+        // ... other plugins
+        nodeResolve({
+          browser: true,
+          preferBuiltins: true,
+        }),
+      ],
     },
   },
 }));

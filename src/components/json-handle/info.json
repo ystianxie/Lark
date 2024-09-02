@@ -1,5 +1,5 @@
 {
-    "title": "JSON",
+    "title": "json-handle",
     "description": "JSON格式化",
     "workflow": [
         {
@@ -7,7 +7,7 @@
             "title": "JSON格式化",
             "step": 0,
             "action": "openUrl",
-            "icon": "",
+            "icon": "./icon.png",
             "data": "chrome-extension://pogcfcgaeocmmoadpbcfnponnlidodjn/JSON-handle/JSON-handle.html",
             "desc": "",
             "next": []
