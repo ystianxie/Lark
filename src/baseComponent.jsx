@@ -39,10 +39,13 @@ async function action_readFile(file_path) {
     return await invoke("read_txt", {filePath: file_path});
 }
 
-async function action_rebuildIndex() {
+async function action_rebuildFileIndex() {
     return await invoke("rebuild_index", {});
 }
 
+async function action_rebuildAppIndex() {
+    return await invoke("create_app_index", {})
+}
 export default {
     action_openApp,
     action_openUrl,
@@ -51,6 +54,7 @@ export default {
     action_writeClipboard,
     action_writeFile,
     action_readFile,
-    action_rebuildIndex,
+    action_rebuildFileIndex,
+    action_rebuildAppIndex,
     action_result,
 };

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Cursor, Read};
+use std::panic;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use base64::encode;
-use base64::engine::general_purpose;
+use base64::engine::{general_purpose, Engine};
 use encoding_rs::{UTF_16BE, UTF_16LE, UTF_8};
 use encoding_rs_io::DecodeReaderBytesBuilder;
 use icns::{IconFamily, IconType};
@@ -15,11 +16,13 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use log::{debug, info};
 use tauri::{AppHandle, Manager};
 use walkdir::{WalkDir, DirEntry};
 use crate::config;
 use crate::utils::database::{FileIndex, IndexSQL};
 use crate::utils::string_factory::text_to_pinyin;
+use crate::utils::icons;
 
 pub fn to_pinyin(hans: &str) -> Vec<String> {
     let mut ret = Vec::new();
@@ -99,12 +102,82 @@ pub fn search_app_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
     return vec![FileIndex { ..Default::default() }];
 }
 
+#[derive(Debug)]
+enum ApplicationError {
+    UnsupportedExtension,
+    NotFoundExecutable,
+    LnkParseError,
+}
 
-pub fn get_app(path: &str) -> Vec<HashMap<String, String>> {
-    // println!("开始检索目录： {:?}", path);
+// 从 lnk 文件总获取应用配置
+fn get_app_from_lnk(lnk_path: &str) -> Result<HashMap<String, String>, ApplicationError> {
+    // println!("快捷方式路径：{}",lnk_path);
+
+    let result = panic::catch_unwind(|| {
+        if let Ok(res) = lnk::ShellLink::open(lnk_path) {
+            return res;
+        }
+        return Default::default();
+    });
+    match result {
+        Ok(shortcut) => match shortcut.link_info() {
+            Some(link_info) => {
+                if let [Some(path), Some(target)] =
+                    [shortcut.working_dir(), link_info.local_base_path()]
+                {
+                    if !target.ends_with(".exe") {
+                        return Err(ApplicationError::UnsupportedExtension);
+                    }
+
+                    let mut app = HashMap::from([
+                        (
+                            "icon".to_string(),
+                            path.to_string(),
+                        ),
+                        ("title".to_string(),
+                         Regex::new(r"\.lnk$").unwrap().replace(
+                             std::path::Path::new(&lnk_path)
+                                 .file_name()
+                                 .unwrap()
+                                 .to_string_lossy()
+                                 .to_string()
+                                 .as_str(),
+                             "",
+                         ).to_string()),
+                        (
+                            "desc".to_string(),
+                            target.to_string(),
+                        ),
+                        (
+                            "data".to_string(),
+                            path.to_string(),
+                        ),
+                        ("type".to_string(), "app".to_string()),
+                    ]);
+
+                    // if let Some(arguments) = shortcut.arguments() {
+                    //     app.arguments = arguments.to_string();
+                    // }
+                    Ok(app)
+                } else {
+                    Err(ApplicationError::NotFoundExecutable)
+                }
+            }
+            _ => Err(ApplicationError::LnkParseError),
+        },
+        Err(_) => Err(ApplicationError::LnkParseError),
+    }
+}
+
+
+pub fn get_apps(path: &str) -> Vec<HashMap<String, String>> {
+    println!("开始检索目录： {:?}", path.replace("\\", "/"));
     let mut applications = Vec::new();
-    let entries = fs::read_dir(path).unwrap();
-    for entry in entries {
+    let entries = fs::read_dir(path);
+    if entries.is_err() {
+        return vec![];
+    }
+    for entry in entries.unwrap() {
         let entry = match entry {
             Ok(entry) => entry,
             Err(_) => continue,
@@ -117,10 +190,11 @@ pub fn get_app(path: &str) -> Vec<HashMap<String, String>> {
                 continue;
             }
         };
-
+        #[cfg(target_os = "macos")]
         if !file_type.is_dir() {
             continue;
         }
+
         let file_name = entry.file_name();
 
         let app_name = match file_name.to_str() {
@@ -131,7 +205,7 @@ pub fn get_app(path: &str) -> Vec<HashMap<String, String>> {
         #[cfg(target_os = "macos")]{
             if !app_name.ends_with(".app") {
                 // println!("文件夹：{:?}", entry.path().to_str().unwrap());
-                applications.extend(get_app(entry.path().to_str().unwrap()));
+                applications.extend(get_apps(entry.path().to_str().unwrap()));
                 continue;
             }
 
@@ -198,8 +272,19 @@ pub fn get_app(path: &str) -> Vec<HashMap<String, String>> {
 
         // TODO Windows下检查目录程序
         #[cfg(target_os = "windows")]{
-            if !app_name.ends_with(".exe") {
+            if entry.path().is_dir() {
+                println!("文件夹：{:?}", entry.path().to_str().unwrap().replace("\\", "/"));
+                applications.extend(get_apps(entry.path().to_str().unwrap()));
                 continue;
+            }
+
+            if entry.path().extension().unwrap() == "lnk" && !app_name.starts_with("卸载"){
+                if let Ok(app) = get_app_from_lnk(entry.path().to_str().unwrap()) {
+                    applications.push(app);
+                }
+                continue;
+            } else if entry.path().extension().unwrap() != "ext" {
+                continue
             }
         }
         println!("应用：{}，路径：{}", app_title, entry.path().to_str().unwrap());
@@ -282,6 +367,14 @@ pub fn read_icns_to_base64(path: &str) -> Result<String, String> {
     Ok(base64_image)
 }
 
+// 获取文件图标
+#[tauri::command]
+fn read_icon_to_base64(path: String) -> String {
+    if let Ok(buffer) = icons::get_icon(&path, 128) {
+        return base64::encode(buffer);
+    }
+    String::from("")
+}
 #[tauri::command(rename_all = "camelCase")]
 pub fn read_app_info(app_path: &str) -> String {
     println!("app_path: {}", app_path);
@@ -454,22 +547,26 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
 pub fn create_app_index_to_sql(app_handle: AppHandle) {
     let config = config::Config::read_local_config().unwrap().base;
     let mut index_db = IndexSQL::new();
+    index_db.clear_data("app");
     let mut result = Vec::new();
     #[cfg(target_os = "macos")]{
-        result.extend(get_app("/System/Applications"));
-        result.extend(get_app("/Applications/"));
-        result.extend(get_app(
+        result.extend(get_apps("/System/Applications"));
+        result.extend(get_apps("/Applications/"));
+        result.extend(get_apps(
             "/System/Volumes/Preboot/Cryptexes/App/System/Applications"
         ));
     }
     #[cfg(target_os = "windows")]{
         //  todo 添加到库
         let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
-        result.extend(get_app(r"C:\Program Files\"));
-        result.extend(get_app(r"C:\Program Files (x86)\"));
-        result.extend(get_app(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\"));
-        result.extend(get_app(format!(r"C:\Users\{}\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\", home_dir)));
-        result.extend(get_app(format!(r"C:\Users\{}\Desktop\", home_dir)));
+        // result.extend(get_apps(r"C:\Program Files\"));
+        // result.extend(get_apps(r"C:\Program Files (x86)\"));
+        result.extend(get_apps(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\"));
+        result.extend(get_apps(&format!(r"{}\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\", home_dir.as_str())));
+        result.extend(get_apps(&format!(r"{}\Desktop\", home_dir)));
+        // result.extend();
+        // result.extend(&std::env::var_os("USERPROFILE").unwrap().join("Desktop"));
+        // result.extend(&std::env::var_os("ProgramData").unwrap().join(r"Microsoft\Windows\Start Menu\Programs"));
     }
     let items = result.into_iter().map(|app| {
         let title = app.get("title").unwrap().to_string();
@@ -493,6 +590,8 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
         }
         #[cfg(target_os = "windows")]{
             //todo 获取应用图标
+            icon_base64 = read_icon_to_base64(app.get("desc").unwrap().to_string());
+            println!("{:?}",format!("{:?}/{:?}",app.get("data"),title));
         }
         FileIndex {
             title: title.clone(),
@@ -545,16 +644,19 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
 
     #[cfg(target_os = "windows")]{
         let drivers = get_drives();
+        println!("扫描所有分区: {:?}", drivers);
         for driver in drivers {
             if driver.1 != "Fixed Drive" {
                 continue;
             }
+            println!("扫描到分区: {:?}", driver.0);
             let skip_paths = config.local_file_search_exclude_paths.clone();
             let skip_extensions = config.local_file_search_exclude_types.clone();
             file_scanning(app_handle.clone(), &driver.0, skip_paths, skip_extensions);
         }
     }
 }
+
 
 #[test]
 #[allow(unused)]

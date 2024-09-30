@@ -75,7 +75,7 @@ impl Default for BaseConfig {
         Self {
             app_name: "lark".to_string(),
             version: "1.0.0".to_string(),
-            hotkey_awaken: "Ctrl+Space".to_string(),
+            hotkey_awaken: "Alt+Space".to_string(),
             hotkey_clipboard: "Shift+Alt+V".to_string(),
             clipboard_record_count_switch: false,
             clipboard_record_count: Some(100),
@@ -170,6 +170,7 @@ impl Config {
     pub fn read_local_config() -> Result<ConfigData> {
         let config_file_path = config_path()?;
         let config = ConfigData { ..Default::default() };
+        println!("配置文件路径{:?}",config_file_path);
         if !config_file_path.exists() {
             let file_result = std::fs::File::create(config_file_path);
             match file_result {

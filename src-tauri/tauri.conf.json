@@ -47,14 +47,15 @@
     "windows": [
       {
         "title": "lark",
+        "label": "skylark",
         "width": 718,
-        "height": 71,
+        "fullscreen": false,
         "resizable": false,
+        "center": true,
         "transparent": true,
         "hiddenTitle": true,
         "decorations": false,
         "skipTaskbar": false,
-        "label": "skylark",
         "alwaysOnTop": true
       }
     ],

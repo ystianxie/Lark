@@ -269,7 +269,7 @@ const App = () => {
             const handle = async (component) => {
                 // todo 修正脚本文件中的路径问题
                 let scriptPath = component.data;
-                if (component.data.startsWith("./")) {
+                if (component.data?.startsWith("./")) {
                     // scriptPath = appDirectory['plugins'] + component.data.replace(".", );
                     scriptPath = `${appDirectory['plugins']}/${component.pluginName}/${component.data}`;
                 }
@@ -292,7 +292,7 @@ const App = () => {
             } else {
                 await invoke("open_explorer", {path: keywordComponent[selectedIndex].data});
             }
-
+            initStatus();
         }
         setKeywordComponent([])
     }
@@ -610,6 +610,7 @@ const App = () => {
         if (!windowPosition.current) {
             windowPosition.current = getWindowPosition();
         }
+
 
         window.searchFileCache = {};
         invoke("get_app_dir", {}).then((result) => {

@@ -1,8 +1,9 @@
 use super::string_factory;
 use anyhow::Result;
 use arboard::ImageData;
-use image::{ExtendedColorType, ImageEncoder};
+use image::{ColorType, ExtendedColorType, ImageEncoder};
 use std::io::{BufReader, BufWriter, Cursor};
+use image::ColorType::Rgba8;
 
 pub fn rgba8_to_base64(img: &ImageData) -> String {
     let mut bytes: Vec<u8> = Vec::new();
@@ -11,7 +12,8 @@ pub fn rgba8_to_base64(img: &ImageData) -> String {
             &img.bytes,
             img.width as u32,
             img.height as u32,
-            ExtendedColorType::from(image::ColorType::Rgba8),
+            // ExtendedColorType::from(image::ColorType::Rgba8),
+            Rgba8
         )
         .unwrap();
     string_factory::base64_encode(bytes.as_slice())
@@ -27,10 +29,11 @@ pub fn rgba8_to_jpeg_base64(img: &ImageData, quality: u8) -> String {
         // 丢弃 alpha 通道 chunk[3]
     }
     let mut bytes: Vec<u8> = Vec::new();
-    let cursor = Cursor::new(&mut bytes);
-    let writer = BufWriter::new(cursor);
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
-    encoder.write_image(&rgb_bytes, img.width as u32, img.height as u32, ExtendedColorType::Rgb8).unwrap();
+    let mut cursor = Cursor::new(&mut bytes);
+    // let writer = BufWriter::new(cursor);
+    // let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
+    // encoder.write_image(&rgb_bytes, img.width as u32, img.height as u32, ExtendedColorType::Rgb8).unwrap();
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
     string_factory::base64_encode(&bytes)
 }
 

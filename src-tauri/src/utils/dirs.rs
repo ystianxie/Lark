@@ -79,7 +79,7 @@ pub fn get_app_dir() -> HashMap<String,String> {
     let log_dir = app_logs_dir().unwrap();
     let data_dir = app_data_dir().unwrap();
     let plugins_dir = app_plugins_dir().unwrap();
-    let clipboard_img_dir = app_clipboard_img_dir().unwrap()
+    let clipboard_img_dir = app_clipboard_img_dir().unwrap();
 
     let mut map = HashMap::new();
     map.insert("log".to_string(), log_dir.to_str().unwrap().to_string());

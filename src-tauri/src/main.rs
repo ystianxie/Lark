@@ -85,12 +85,27 @@ fn rebuild_index(state: State<'_, AppState>) {
 }
 
 fn main() {
-    ClipboardWatcher::start();
-    IndexSQL::new();
-    RecordSQL::new();
+    // ClipboardWatcher::start();
+    // IndexSQL::new();
+    // RecordSQL::new();
     let config = config::Config::read_local_config().unwrap();
     let config_ = config.clone();
+
     tauri::Builder::default()
+        .system_tray(
+            SystemTray::new().with_menu(
+                SystemTrayMenu::new()
+                    .add_item(CustomMenuItem::new("show", "Show").accelerator(config_.base.hotkey_awaken.clone())),
+            ),
+        )
+        .on_system_tray_event(|app, event| match event {
+            SystemTrayEvent::MenuItemClick { id, .. } => {
+                if id.as_str() == "show" {
+                    utils::window::set_window_show();
+                }
+            }
+            _ => {}
+        })
         .setup(move |app| {
             app.manage(AppState {
                 app_handle: app.handle(),
@@ -100,8 +115,9 @@ fn main() {
 
             let mut shortcut_manager = app.global_shortcut_manager();
             let main_window = app.get_window("skylark").unwrap();
-
-            // Register global shortcut
+            let position = main_window.outer_position().unwrap();
+            println!("{:?}",position);
+            // 注册快捷键
             shortcut_manager.register(&config.base.hotkey_awaken, move || {
                 let main_window_clone = main_window.clone();
                 set_window_show(&main_window_clone);
@@ -126,20 +142,6 @@ fn main() {
                 }
             });
             Ok(())
-        })
-        .system_tray(
-            SystemTray::new().with_menu(
-                SystemTrayMenu::new()
-                    .add_item(CustomMenuItem::new("show", "Show").accelerator(config_.base.hotkey_awaken.clone())),
-            ),
-        )
-        .on_system_tray_event(|app, event| match event {
-            SystemTrayEvent::MenuItemClick { id, .. } => {
-                if id.as_str() == "show" {
-                    utils::window::set_window_show();
-                }
-            }
-            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             search_keyword,

@@ -11,13 +11,18 @@ import {IndexDBCache} from "./indexedDB.jsx";
 import throttle from "lodash/throttle.js";
 import {debounce} from "lodash/function.js";
 import {invoke} from "@tauri-apps/api";
-import fs from "fs";
+import {isMacOs, isWindows} from 'react-device-detect';
 
 const TemplateComponent = (components, selectedKey, setSelectedKey, confirmComponentSelected, fnDown) => {
     const scrollContainerRef = useRef(null);
     const [selectedIndex, setSelectedIndex] = useState(selectedKey || 1)
     const handleMouseEnter = (e, index) => {
-        if (e.movementX !== 0 || e.movementY !== 0) {
+        console.log("触发", index, e,isMacOs,isWindows)
+        if (isMacOs) {
+            if (e.movementX !== 0 || e.movementY !== 0) {
+                setSelectedKey(index);
+            }
+        } else {
             setSelectedKey(index);
         }
     };
@@ -134,7 +139,7 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
         <div style={{position: "relative"}}>
             {
                 size !== 0 ? <>
-                    <div style={{height: "450px", overflowY: "scroll"}}
+                    <div id="scrollableDiv" style={{height: "450px", overflowY: "scroll"}}
                          ref={scrollContainerRef}
                     >
                         {
@@ -309,10 +314,17 @@ const clipboardPluginComponent = {
 
 const FileIndexComponent = {
     icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
-    title: '重建索引',
+    title: '重建文件索引',
     desc: 'Rebuild Index',
     type: "action",
-    action: "rebuildIndex",
+    action: "rebuildFileIndex",
+};
+const AppIndexComponent = {
+    icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
+    title: '重建应用索引',
+    desc: 'Rebuild Index',
+    type: "action",
+    action: "rebuildAppIndex",
 };
 
 const calcComponent = (result, input) => {
@@ -329,7 +341,8 @@ const pluginsComponent = {
     showPluginComponent,
     settingPluginComponent,
     clipboardPluginComponent,
-    FileIndexComponent
+    FileIndexComponent,
+    AppIndexComponent
 }
 
 function calculateExpression(expression) {
@@ -393,12 +406,13 @@ const getWindowPosition = async () => {
     const factor = await appWindow.scaleFactor();
     const position = await appWindow.innerPosition();
     const logical = position.toLogical(factor);
+    console.log(logical.x,logical.y)
     return {x: logical.x, y: logical.y};
 };
 
 // 读取本地组件库，查看注册状态
 const loadCustomComponent = async () => {
-    let plugins = await invoke("load_plugins",{})
+    let plugins = await invoke("load_plugins", {})
     const files = {};
     for (const plugin_name in plugins) {
         files[plugin_name] = JSON.parse(plugins[plugin_name]);

@@ -390,7 +390,7 @@ const ClipboardComponent = ({onKeyDown}) => {
                          width: "50%",
                          overflow: 'auto',
                          borderTopLeftRadius: "10px",
-                         borderBottomLeftRadius: "10px"
+                         borderBottomLeftRadius: "10px",
                      }}
                      ref={scrollContainerRef}
                 >
@@ -417,6 +417,7 @@ const ClipboardComponent = ({onKeyDown}) => {
                                         />
                                         <div className={"clipboard-item-wrapper"}
                                              onMouseEnter={(event) => handleMouseEnter(event, index)}
+                                             onMouse
                                              onClick={confirmClipboardContent}>
                                             <div className="clipboard-item"> {handleContentOption(item)}</div>
 

@@ -9,8 +9,10 @@ use tauri::{Manager, Runtime};
 use window_shadows::set_shadow;
 
 pub fn set_window_shadow<R: Runtime>(app: &tauri::App<R>) {
-    let window: tauri::Window<R> = app.get_window("skylark").unwrap();
-    set_shadow(&window, true).expect("Unsupported platform!");
+    #[cfg(target_os = "macos")]{
+        let window: tauri::Window<R> = app.get_window("skylark").unwrap();
+        set_shadow(&window, true).expect("Unsupported platform!");
+    }
 }
 
 #[cfg(target_os = "macos")]

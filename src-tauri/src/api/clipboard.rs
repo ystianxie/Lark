@@ -180,70 +180,6 @@ fn get_active_application() -> Option<String> {
 }
 
 
-#[cfg(target_os = "windows")]
-fn set_file_to_clipboard() {
-    use std::ffi::OsStr;
-    use std::iter::once;
-    use std::os::windows::ffi::OsStrExt;
-    use std::ptr;
-    use winapi::shared::windef::HWND;
-    use winapi::um::combaseapi::CoInitialize;
-    use winapi::um::winuser::{OpenClipboard, CloseClipboard, EmptyClipboard, SetClipboardData};
-    use winapi::um::shellapi::{DragQueryFileW, HDROP, GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
-
-    unsafe fn create_hdrop(files: Vec<&str>) -> HDROP {
-        let file_paths: Vec<u16> = files
-            .iter()
-            .flat_map(|file| {
-                OsStr::new(file)
-                    .encode_wide()
-                    .chain(once(0))
-                    .collect::<Vec<u16>>()
-            })
-            .collect();
-
-        let size = (file_paths.len() * std::mem::size_of::<u16>()) as u32;
-        let hglobal = GlobalAlloc(GHND, size as usize);
-
-        if hglobal.is_null() {
-            return ptr::null_mut();
-        }
-
-        let locked_memory = GlobalLock(hglobal) as *mut u16;
-        if locked_memory.is_null() {
-            return ptr::null_mut();
-        }
-
-        // 复制文件路径到内存
-        ptr::copy_nonoverlapping(file_paths.as_ptr(), locked_memory, file_paths.len());
-
-        GlobalUnlock(hglobal);
-
-        hglobal as HDROP
-    }
-    unsafe {
-        // 初始化 COM 库
-        CoInitialize(ptr::null_mut());
-
-        // 打开剪贴板
-        if OpenClipboard(ptr::null_mut() as HWND) != 0 {
-            // 清空剪贴板
-            EmptyClipboard();
-
-            // 准备文件路径数据
-            let files = vec!["C:\\path\\to\\your\\file.txt"];
-            let hdrop = create_hdrop(files);
-
-            // 将文件放入剪贴板
-            if !hdrop.is_null() {
-                SetClipboardData(winapi::um::winuser::CF_HDROP, hdrop);
-            }
-
-            // 关闭剪贴板
-            CloseClipboard();
-        }
-    }
-}
 impl ClipboardWatcher {
     pub fn start() {
         tauri::async_runtime::spawn(async {
@@ -258,7 +194,7 @@ impl ClipboardWatcher {
                 let mut need_notify = false;
                 let db = database::RecordSQL::new();
                 let files = file_factory::get_clipboard_files();
-                let current_app = get_active_application().unwrap();
+                let current_app = get_active_application().unwrap_or("".to_string());
                 if !files.is_empty() {
                     let files_string = json_factory::stringify(&files).unwrap();
                     let md5 = string_factory::md5(&files_string);
