@@ -1,7 +1,9 @@
+use std::any::type_name;
+use std::ascii::escape_default;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Cursor, Read};
-use std::panic;
+use std::{default, panic};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use base64::encode;
@@ -23,6 +25,18 @@ use crate::config;
 use crate::utils::database::{FileIndex, IndexSQL};
 use crate::utils::string_factory::text_to_pinyin;
 use crate::utils::icons;
+
+use std::ffi::{OsStr, OsString};
+use std::ops::Index;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::ptr;
+use winapi::um::winuser::{GetWindowTextLengthW, GetWindowTextW, EnumWindows, FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
+use winapi::um::processthreadsapi::{STARTUPINFOW, CreateProcessW, PROCESS_INFORMATION};
+use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32};
+use winapi::shared::ntdef::HANDLE;
+use winapi::shared::windef::HWND;
+use winapi::shared::minwindef::LPARAM;
+use std::os::windows::process::CommandExt;
 
 pub fn to_pinyin(hans: &str) -> Vec<String> {
     let mut ret = Vec::new();
@@ -110,7 +124,7 @@ enum ApplicationError {
 }
 
 // 从 lnk 文件总获取应用配置
-fn get_app_from_lnk(lnk_path: &str) -> Result<HashMap<String, String>, ApplicationError> {
+fn get_app_from_lnk(lnk_path: &str) -> Result<Vec<String>, ApplicationError> {
     // println!("快捷方式路径：{}",lnk_path);
 
     let result = panic::catch_unwind(|| {
@@ -122,39 +136,74 @@ fn get_app_from_lnk(lnk_path: &str) -> Result<HashMap<String, String>, Applicati
     match result {
         Ok(shortcut) => match shortcut.link_info() {
             Some(link_info) => {
-                if let [Some(path), Some(target)] =
+                if let [Some(working_dir), Some(target)] =
                     [shortcut.working_dir(), link_info.local_base_path()]
                 {
-                    if !target.ends_with(".exe") {
+                    if !target.ends_with(".exe") && !target.ends_with("rdp") {
                         return Err(ApplicationError::UnsupportedExtension);
                     }
 
-                    let mut app = HashMap::from([
-                        (
-                            "icon".to_string(),
-                            path.to_string(),
-                        ),
-                        ("title".to_string(),
-                         Regex::new(r"\.lnk$").unwrap().replace(
-                             std::path::Path::new(&lnk_path)
-                                 .file_name()
-                                 .unwrap()
-                                 .to_string_lossy()
-                                 .to_string()
-                                 .as_str(),
-                             "",
-                         ).to_string()),
-                        (
-                            "desc".to_string(),
-                            target.to_string(),
-                        ),
-                        (
-                            "data".to_string(),
-                            path.to_string(),
-                        ),
-                        ("type".to_string(), "app".to_string()),
-                    ]);
-
+                    // let mut app = HashMap::from([
+                    //     (
+                    //         "icon".to_string(),
+                    //         path.to_string(),
+                    //     ),
+                    //     ("title".to_string(),
+                    //      Regex::new(r"\.lnk$").unwrap().replace(
+                    //          std::path::Path::new(&lnk_path)
+                    //              .file_name()
+                    //              .unwrap()
+                    //              .to_string_lossy()
+                    //              .to_string()
+                    //              .as_str(),
+                    //          "",
+                    //      ).to_string()),
+                    //     (
+                    //         "desc".to_string(),
+                    //         target.to_string(),
+                    //     ),
+                    //     (
+                    //         "data".to_string(),
+                    //         path.to_string(),
+                    //     ),
+                    //     ("type".to_string(), "app".to_string()),
+                    // ]);
+                    let app_title = Regex::new(r"\.lnk$").unwrap().replace(
+                        Path::new(&lnk_path)
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string()
+                            .as_str(),
+                        "",
+                    ).to_string();
+                    println!("应用target:{target}");
+                    let app_software_name: Vec<_> = target.rsplitn(2, "\\").collect();
+                    let mut app_software_name = app_software_name.index(0).to_string();
+                    if !working_dir.ends_with("\\") {
+                        app_software_name = "\\".to_string() + &app_software_name
+                    }
+                    let mut app_path_data = target.to_string();
+                    // if working_dir.contains("%HOMEPATH%") || working_dir.contains("%%"){
+                    //     app_path_data = target.to_string();
+                    // }
+                    if target.contains("�") && !app_software_name.contains("�"){
+                        app_path_data = working_dir.to_string() + &app_software_name;
+                    }else if app_software_name.contains("�"){
+                        let extensions: Vec<_> = target.rsplitn(2, ".").collect();
+                        let extensions = extensions.index(0);
+                        app_software_name = "\\".to_string() + &app_title + "." + extensions;
+                        app_path_data = working_dir.to_string() + &app_software_name;
+                    }
+                    // if app_software_name.contains("�") {
+                    //     let extensions: Vec<_> = target.rsplitn(2, ".").collect();
+                    //     let extensions = extensions.index(0);
+                    //     app_software_name = "\\".to_string() + app_title.as_str() + "." + extensions;
+                    // }
+                    let app = vec![
+                        app_title,
+                        app_path_data
+                    ];
                     // if let Some(arguments) = shortcut.arguments() {
                     //     app.arguments = arguments.to_string();
                     // }
@@ -183,16 +232,18 @@ pub fn get_apps(path: &str) -> Vec<HashMap<String, String>> {
             Err(_) => continue,
         };
 
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(_) => {
-                println!("类型获取失败{:?}", entry.path());
+
+        #[cfg(target_os = "macos")]{
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => {
+                    println!("类型获取失败{:?}", entry.path());
+                    continue;
+                }
+            };
+            if !file_type.is_dir() {
                 continue;
             }
-        };
-        #[cfg(target_os = "macos")]
-        if !file_type.is_dir() {
-            continue;
         }
 
         let file_name = entry.file_name();
@@ -202,6 +253,7 @@ pub fn get_apps(path: &str) -> Vec<HashMap<String, String>> {
             None => continue,
         };
         let mut app_title: String = String::new();
+        let mut app_path: String = entry.path().to_str().unwrap().to_string();
         #[cfg(target_os = "macos")]{
             if !app_name.ends_with(".app") {
                 // println!("文件夹：{:?}", entry.path().to_str().unwrap());
@@ -278,30 +330,27 @@ pub fn get_apps(path: &str) -> Vec<HashMap<String, String>> {
                 continue;
             }
 
-            if entry.path().extension().unwrap() == "lnk" && !app_name.starts_with("卸载"){
+            if entry.path().extension().unwrap() == "lnk" && !app_name.starts_with("卸载") {
                 if let Ok(app) = get_app_from_lnk(entry.path().to_str().unwrap()) {
-                    applications.push(app);
+                    // applications.push(app);
+                    app_title = app.get(0).unwrap().clone();
+                    app_path = app.get(1).unwrap().clone();
+                    println!("获取到应用:{app_title}--->{app_path}");
+                } else {
+                    continue;
                 }
-                continue;
-            } else if entry.path().extension().unwrap() != "ext" {
+                // continue;
+            } else if entry.path().extension().unwrap() != "hhhh" {
+                // 无法命中不存在的后缀名，始终跳过
                 continue
             }
         }
         println!("应用：{}，路径：{}", app_title, entry.path().to_str().unwrap());
         let map: HashMap<String, String> = HashMap::from([
-            (
-                "icon".to_string(),
-                entry.path().to_str().unwrap().to_string(),
-            ),
-            ("title".to_string(), app_title.to_string()),
-            (
-                "desc".to_string(),
-                entry.path().to_str().unwrap().to_string(),
-            ),
-            (
-                "data".to_string(),
-                entry.path().to_str().unwrap().to_string(),
-            ),
+            ("icon".to_string(), app_path.clone(),),
+            ("title".to_string(), app_title.clone()),
+            ("desc".to_string(), app_path.clone(),),
+            ("data".to_string(), app_path.clone(),),
             ("type".to_string(), "app".to_string()),
         ]);
         applications.push(map);
@@ -547,7 +596,7 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
 pub fn create_app_index_to_sql(app_handle: AppHandle) {
     let config = config::Config::read_local_config().unwrap().base;
     let mut index_db = IndexSQL::new();
-    index_db.clear_data("app");
+    let _ = index_db.clear_data("app");
     let mut result = Vec::new();
     #[cfg(target_os = "macos")]{
         result.extend(get_apps("/System/Applications"));
@@ -591,7 +640,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
         #[cfg(target_os = "windows")]{
             //todo 获取应用图标
             icon_base64 = read_icon_to_base64(app.get("desc").unwrap().to_string());
-            println!("{:?}",format!("{:?}/{:?}",app.get("data"),title));
+            println!("{}===>{}", app.get("data").unwrap(), title);
         }
         FileIndex {
             title: title.clone(),
@@ -658,22 +707,158 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
 }
 
 
+pub(crate) fn is_process_running(process_name: &str) -> bool {
+    let mut snapshot: HANDLE = unsafe { CreateToolhelp32Snapshot(0x2, 0) }; // TH32CS_SNAPALL
+    let mut process_entry: PROCESSENTRY32 = unsafe { std::mem::zeroed() };
+    process_entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+
+    if unsafe { Process32First(snapshot, &mut process_entry) } == 0 {
+        return false;
+    }
+
+    loop {
+        let name2 = unsafe { std::ffi::CStr::from_ptr(process_entry.szExeFile.as_ptr()) };
+        let name = unsafe { std::ffi::CStr::from_ptr(process_entry.szExeFile.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        if name == process_name {
+            return true;
+        }
+        if unsafe { Process32Next(snapshot, &mut process_entry) } == 0 {
+            break;
+        }
+    }
+    false
+}
+
+fn open_or_activate_app(process_name: &str, app_name: &str) {
+    let current_dir = Path::new(process_name).parent().unwrap();
+    let program = process_name.split("\\").last().expect("aa.exe");
+    let window_name = process_name.strip_suffix(".exe").unwrap_or(process_name);
+
+    if is_process_running(program) {
+        // 激活窗口
+        println!("Process {} is already running.", process_name);
+        find_windows_with_partial_title(app_name);
+    } else {
+        if current_dir.to_string_lossy().to_uppercase().contains(r"C:\WINDOWS\SYSTEM32") {
+            let result = Command::new("cmd")
+                .arg("/c")
+                .arg("start")
+                .raw_arg("\"\"")
+                .arg("/d")
+                .raw_arg(format!("\"{}\"", current_dir.to_string_lossy()))
+                .raw_arg(format!("\"{}\"", process_name))
+                // .args(args)
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .spawn()
+                .expect("failed to start process");
+            println!("打开程序[cmd]:{:?}", result);
+        } else {
+            let wide_application_name: Vec<u16> = OsStr::new(process_name)
+                .encode_wide()
+                .chain(Some(0).into_iter())
+                .collect();
+            let current_dir: Vec<u16> = current_dir
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let mut startup_info: STARTUPINFOW = unsafe { std::mem::zeroed() };
+            startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+
+            let mut process_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+
+            let result = unsafe {
+                CreateProcessW(
+                    wide_application_name.as_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    0,
+                    0,
+                    ptr::null_mut(),
+                    current_dir.as_ptr(),
+                    &mut startup_info,
+                    &mut process_info,
+                )
+            };
+            println!("打开程序[api]:{:?}", result);
+        }
+    }
+}
+
+unsafe extern "system" fn enum_window_proc(hwnd: HWND, l_param: LPARAM) -> i32 {
+    let search_text = l_param as *const u16;
+    let search_osstr = OsString::from_wide(std::slice::from_raw_parts(search_text, 20)); // 假设长度为 20
+    let binding = search_osstr.to_string_lossy().clone();
+    // 无法确定字符串长度，预先添加###作为终止符
+    let search_str = binding.split("###").collect::<Vec<_>>()[0];
+    // println!("{}",search_str);
+
+    let length = GetWindowTextLengthW(hwnd);
+    if length > 0 {
+        let mut title = vec![0u16; 256]; // 创建缓冲区
+        GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32);
+
+        let title_str = OsString::from_wide(&title);
+        let title_str = title_str.to_string_lossy().replace("\0", ""); // 剔除不可见字符
+        if title_str.to_string().contains(&search_str.to_string()) {
+            println!("匹配到应用: {}", title_str.replace(" ", ""));
+            // 将 Rust 字符串转换为宽字符
+            let wide_window_name: Vec<u16> = OsStr::new(&title_str)
+                .encode_wide()
+                .chain(std::iter::once(0)) // 添加 null 终止符
+                .collect();
+            let hwnd = unsafe { FindWindowW(ptr::null_mut(), wide_window_name.as_ptr()) };
+            if hwnd.is_null() {
+                println!("Window not found.");
+            } else {
+                // 先恢复窗口（如果被最小化）
+                unsafe {
+                    ShowWindow(hwnd, SW_RESTORE); // 恢复窗口
+                    SetForegroundWindow(hwnd); // 激活窗口
+                }
+                println!("Activated window for {}", search_str);
+            }
+            return 0;
+        }
+    }
+    1 // 继续枚举
+}
+pub(crate) fn find_windows_with_partial_title(partial_title: &str) {
+    let partial_title = &(partial_title.to_owned() + "###");
+    let wide_partial_title: Vec<u16> = OsStr::new(partial_title)
+        .encode_wide()
+        .chain(std::iter::once(0)) // 添加 null 终止符
+        .collect();
+
+    unsafe {
+        EnumWindows(Some(enum_window_proc), wide_partial_title.as_ptr() as LPARAM);
+    }
+}
 #[test]
 #[allow(unused)]
 fn test1() {
-    use chrono::Duration;
-    use std::thread;
-    // let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
-    // let config = config::Config::read_local_config().unwrap().base;
-    // println!("主目录:{}", home_dir);
-    // let drivers = vec![("D:\\nssm-2.24-101-g897c7ad", "Fixed Drive")];
-    // for driver in drivers {
-    //     if driver.1 != "Fixed Drive" {
-    //         continue;
-    //     }
-    //     let skip_paths = config.local_file_search_exclude_paths.clone();
-    //     let skip_extensions = config.local_file_search_exclude_types.clone();
-    //     // file_scanning(&driver.0, skip_paths, skip_extensions);
-    // }
-    // thread::sleep(Duration::milliseconds(10).to_std().unwrap());
+    // use chrono::Duration;
+    // use std::thread;
+
+    // let process_name = r"C:\windows\system32\notepad.exe";
+    // open_or_activate_app(process_name, "记事本");
+
+    let link = lnk::ShellLink::open(r"C:\Users\admin\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\百度翻译.lnk").expect("无法打开链接");
+    // 获取目标路径
+    println!("{}", link.working_dir().clone().unwrap_or("aa".to_string()));
+    println!("{}", link.relative_path().clone().unwrap_or("bb".to_string()));
+    println!("{}", link.link_info().clone().unwrap().local_base_path().clone().unwrap());
+    println!("{}", read_icon_to_base64(r"C:\Users\admin\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\百度翻译.lnk".to_string()));
+    use std::env;
+    let home_drive = env::var("HOMEDRIVE").unwrap_or_else(|_| String::from(""));
+    let home_path = env::var("HOMEPATH").unwrap_or_else(|_| String::from(""));
+
+    // 组合两个变量
+    let home_directory = format!("{}{}", home_drive, home_path);
+
+    println!("用户主目录: {}", home_directory);
 }

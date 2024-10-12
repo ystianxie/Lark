@@ -12,13 +12,17 @@ use super::clipboard::{ClipboardOperator, ImageDataDB};
 use open;
 use open::that;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path;
+use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
+use std::{path, ptr};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use webbrowser;
 use anyhow::Result;
+use winapi::um::processthreadsapi::{CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW};
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn run_python_script(script_path: &str, params: Vec<String>) -> HashMap<&str, String> {
@@ -48,7 +52,7 @@ pub fn run_python_script(script_path: &str, params: Vec<String>) -> HashMap<&str
 
 #[tauri::command(rename_all = "camelCase")]
 #[cfg(target_os = "macos")]
-pub fn open_app(app_path: &str) {
+pub fn open_app(app_path: &str, app_name: &str) {
     unsafe {
         let pool: id = NSAutoreleasePool::new(nil);
 
@@ -67,7 +71,62 @@ pub fn open_app(app_path: &str) {
 }
 #[tauri::command(rename_all = "camelCase")]
 #[cfg(target_os = "windows")]
-pub fn open_app(app_path: &str) {}
+pub fn open_app(app_path: &str, app_name: &str) {
+    let current_dir = Path::new(app_path).parent().unwrap();
+    let program = app_path.split("\\").last().expect("aa.exe");
+    println!("打开app:{:?}", app_path);
+    if crate::api::explorer::is_process_running(program) {
+        // 激活窗口
+        println!("Process {} is already running.", app_name);
+        crate::api::explorer::find_windows_with_partial_title(app_name);
+    } else {
+        if current_dir.to_string_lossy().to_uppercase().contains(r"C:\WINDOWS\SYSTEM32") {
+            let result = Command::new("cmd")
+                .arg("/c")
+                .arg("start")
+                .raw_arg("\"\"")
+                .arg("/d")
+                .raw_arg(format!("\"{}\"", current_dir.to_string_lossy()))
+                .raw_arg(format!("\"{}\"", app_path))
+                // .args(args)
+                .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                .spawn()
+                .expect("failed to start process");
+            println!("打开程序[cmd]:{:?}", result);
+        } else {
+            let wide_application_name: Vec<u16> = OsStr::new(app_path)
+                .encode_wide()
+                .chain(Some(0).into_iter())
+                .collect();
+            let current_dir: Vec<u16> = current_dir
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let mut startup_info: STARTUPINFOW = unsafe { std::mem::zeroed() };
+            startup_info.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+
+            let mut process_info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+
+            let result = unsafe {
+                CreateProcessW(
+                    wide_application_name.as_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    0,
+                    0,
+                    ptr::null_mut(),
+                    current_dir.as_ptr(),
+                    &mut startup_info,
+                    &mut process_info,
+                )
+            };
+            println!("打开程序[api]:{:?}", result);
+        }
+    }
+}
 
 
 #[tauri::command(rename_all = "camelCase")]
@@ -96,12 +155,12 @@ pub fn clipboard_control(text: &str, control: &str, paste: bool, data_type: &str
     println!("剪贴板控制：{:?}", text);
     if control == "write" {
         if data_type == "file" {
-           Ok("暂不支持文件复制".to_string())
-        }else if data_type=="image" {
-            let img = ImageDataDB {base64: text.to_string(),..Default::default()};
+            Ok("暂不支持文件复制".to_string())
+        } else if data_type == "image" {
+            let img = ImageDataDB { base64: text.to_string(), ..Default::default() };
             let _ = ClipboardOperator::set_image(img);
             Ok("写入剪贴板成功".to_string())
-        }else {
+        } else {
             let _ = ClipboardOperator::set_text(text);
             if paste {
                 let _ = ClipboardOperator::paste_text(text);

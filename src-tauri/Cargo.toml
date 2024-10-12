@@ -78,7 +78,7 @@ objc = "0.2.7"
 #    "Win32_System_LibraryLoader",
 #    "Win32_System",
 #] }
-winapi = { version = "0.3.9", features = ["winuser", "shellapi", 'winnt', 'psapi', 'windef', 'combaseapi'] }
+winapi = { version = "0.3.9", features = ["winuser", "shellapi", 'winnt', 'psapi', 'windef', 'combaseapi','tlhelp32','processenv'] }
 dunce = "1.0.5"
 libsqlite3-sys = { version = "0.28.0", features = ["bundled"] }
 clipboard-win = "5.4.0"

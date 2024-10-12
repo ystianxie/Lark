@@ -1,7 +1,7 @@
 import {invoke} from "@tauri-apps/api";
 
-async function action_openApp(app_path) {
-    await invoke("open_app", {appPath: app_path});
+async function action_openApp(app_path, app_name) {
+    await invoke("open_app", {appPath: app_path, appName: app_name});
 }
 
 
@@ -46,6 +46,7 @@ async function action_rebuildFileIndex() {
 async function action_rebuildAppIndex() {
     return await invoke("create_app_index", {})
 }
+
 export default {
     action_openApp,
     action_openUrl,

@@ -255,7 +255,8 @@ const App = () => {
         } else if (currentComponent.type === "app") {
             if (!fnDown || metaStatus === false) {
                 await updateAppHabit(inputValue, currentComponent.title);
-                await invoke("open_app", {appPath: currentComponent.data});
+                console.log(currentComponent)
+                await invoke("open_app", {appPath: currentComponent.data, appName: currentComponent.title});
                 initStatus();
             } else {
                 await invoke("open_explorer", {path: keywordComponent[selectedIndex].data});
