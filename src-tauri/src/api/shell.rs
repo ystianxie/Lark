@@ -27,7 +27,8 @@ use winapi::um::processthreadsapi::{CreateProcessW, PROCESS_INFORMATION, STARTUP
 #[tauri::command(rename_all = "camelCase")]
 pub fn run_python_script(script_path: &str, params: Vec<String>) -> HashMap<&str, String> {
     // 使用 `Command` 运行 Python 脚本
-    let output = Command::new("python3")
+    println!("{:?}",script_path);
+    let output = Command::new("python")
         .arg(script_path)
         .args(params)
         .output()
@@ -240,7 +241,9 @@ pub fn append_txt(file_path: &str, text: &str) -> Result<String, String> {
 
 #[test]
 fn test() {
-    let file_path = "/System/Applications/Utilities/Migration Assistant.app";
-    let base64 = get_file_icon(file_path).unwrap();
-    println!("{}", base64)
+    // let file_path = "/System/Applications/Utilities/Migration Assistant.app";
+    // let base64 = get_file_icon(file_path).unwrap();
+    // println!("{}", base64)
+    let output = run_python_script("D:/Project/Lark/src-tauri/target/debug/config/lark/data/plugins/PrettyPostman/str2json.py",vec![]);
+    print!("{:?}",output);
 }

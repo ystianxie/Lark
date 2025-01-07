@@ -9,6 +9,7 @@
             "action": "openUrl",
             "icon": "./icon.png",
             "data": "chrome-extension://pogcfcgaeocmmoadpbcfnponnlidodjn/JSON-handle/JSON-handle.html",
+            "style": "",
             "desc": "",
             "next": []
         }

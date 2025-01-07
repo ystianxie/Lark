@@ -7,6 +7,8 @@ import throttle from 'lodash/throttle';
 import {getMaterialFileIcon, getMaterialFolderIcon} from "file-extension-icon-js";
 import baseComponent from "../baseComponent.jsx";
 import {debounce} from "lodash/function.js";
+import {appWindow} from "@tauri-apps/api/window";
+import {modifyWindowSize} from "../template.jsx";
 
 const Wrapper = createGlobalStyle`
     a{
@@ -217,12 +219,14 @@ const ClipboardComponent = ({onKeyDown}) => {
         }
     }
 
-    function confirmClipboardContent() {
+    async function confirmClipboardContent() {
         // 确认剪贴板内容
         if (data) {
+            await appWindow.hide();
+            await modifyWindowSize("small");
             invoke("clipboard_control", {
                 text: data[selectIndex]?.content || "",
-                control: "copy",
+                control: "write",
                 paste: true,
                 dataType: ""
             })

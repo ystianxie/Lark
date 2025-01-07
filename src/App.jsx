@@ -1,8 +1,8 @@
 import './app.css';
-import React, {Suspense} from 'react';
+import React, {lazy, Suspense} from 'react';
 import {appWindow, LogicalPosition, LogicalSize} from '@tauri-apps/api/window';
 import {useEffect, useRef, useState} from "react";
-import {invoke} from "@tauri-apps/api/tauri";
+import {convertFileSrc, invoke} from "@tauri-apps/api/tauri";
 import {listen} from '@tauri-apps/api/event';
 import webImg from './assets/web.svg';
 import baseComponent from './baseComponent';
@@ -11,8 +11,8 @@ import {getMaterialFileIcon, getMaterialFolderIcon} from "file-extension-icon-js
 import {
     calcComponent,
     pluginsComponent,
-    SubpageComponent,
-    TemplateComponent,
+    // SubpageComponent,
+    // TemplateComponent,
     webSearchComponent,
     calculateExpression,
     modifyWindowSize,
@@ -20,10 +20,13 @@ import {
     loadCustomComponent,
     initAppHabitDB
 } from "./template.jsx";
-import {divide} from "mathjs";
-import {result} from "lodash/object.js";
-import path from 'path';
 
+const SubpageComponent = React.lazy(() =>
+    import("./template.jsx").then((mod) => ({default: mod.SubpageComponent}))
+);
+const TemplateComponent = React.lazy(() =>
+    import("./template.jsx").then((mod) => ({default: mod.TemplateComponent}))
+);
 
 const App = () => {
     // 键入值
@@ -59,30 +62,35 @@ const App = () => {
 
     const [insidePluginList, setInsidePluginList] = useState(pluginsComponent);
 
-
     const [appHabitDB, setAppHabitDB] = useState(null);
 
+    const [actionParent, setActionParent] = useState({})
 
-    function initStatus() {
+    function initStatus(components) {
         setPistol("");
-        setInputValue("");
+        setSelectedIndex(-1);
+        if (!components) {
+            setInputValue("");
+        } else {
+            modifyWindowSize(components.length)
+            setSelectedIndex(0)
+        }
         setComponent(null);
         setComponentInfo("");
-        setKeywordComponent([]);
-        setSelectedIndex(-1);
+        setKeywordComponent(components || []);
         setIsComposing({status: false, ppos: 0});
         setFnDown(false);
     }
 
 
     async function handleKeyDown(event) {
-        // 处理
+        // 处理键盘按下
         setKeyDown(event)
         if (!event.metaKey && event.key === "Enter") {
             if (keywordComponent) {
                 await confirmComponentSelected();
             }
-        } else if (event.key === "Tab") {
+        } else if (event.key === "Tab" && component) {
             // 当按下TAB键时，将焦点移动到下一个输入框
             event.preventDefault();
             let inputs = document.querySelectorAll("input");
@@ -119,8 +127,8 @@ const App = () => {
                 setComponentInfo("");
                 await modifyWindowSize('small');
             }
-        } else if (event.code === "Space" && (event.target.value === "" || event.target.value === " ") && !component) {
-            // 当空格键被按下时，如果输入框为空，则进入文件搜索模式
+        } else if (event.code === "Tab" && (event.target.value === "" || event.target.value === " ") && !component) {
+            // 当Tab被按下时，如果输入框为空，则进入文件搜索模式
             event.preventDefault();
             event.target.value = "";
             let icon = <img style={{height: "38px"}} {...insidePluginList.searchFileComponent.icon.props}/>
@@ -156,9 +164,9 @@ const App = () => {
             } else {
                 setSelectedIndex(selectedIndex + 1);
             }
-        } else if ((event.metaKey || event.ctrlKey)) {
+        } else if ((event.metaKey || event.altKey)) {
             console.log(event.metaKey, event.key);
-            if (event.key === "Meta") {
+            if (event.key === "Meta" || event.code === "AltLeft") {
                 setFnDown(true);
             } else if (event.key === "Enter") {
                 await confirmComponentSelected();
@@ -234,11 +242,12 @@ const App = () => {
             inputBox.current.focus();
         } else if (currentComponent.type === "subpage") {
             await updateAppHabit(inputValue, currentComponent.title);
+            // 设置子页面的图标
             if (typeof currentComponent.icon == "string") {
                 setComponent(<div className='activateComponent'
                                   data-tauri-drag-region>{currentComponent.icon.slice(0, 4)}</div>);
             } else {
-                let icon = <img style={{height: "38px"}} {...currentComponent.icon.props}/>
+                let icon = <img style={{height: "38px", width: "38px"}} {...currentComponent.icon.props}/>
                 setComponent(icon);
             }
             setComponentInfo(currentComponent);
@@ -268,25 +277,60 @@ const App = () => {
             await invoke("open_url", {url: currentComponent.data});
         } else if (currentComponent.type === "action") {
             const handle = async (component) => {
-                // todo 修正脚本文件中的路径问题
-                let scriptPath = component.data;
-                if (component.data?.startsWith("./")) {
-                    // scriptPath = appDirectory['plugins'] + component.data.replace(".", );
-                    scriptPath = `${appDirectory['plugins']}/${component.pluginName}/${component.data}`;
+                let scriptPath = component.data, scriptParams, result
+                if (component.script) {
+                    scriptPath = component.script.data
+                    scriptParams = component.data || ""
+                    component.action = component.script.action
+                    component.params = component.script.params || {}
                 }
-                let result = await baseComponent['action_' + component.action](scriptPath, inputValue.split(" "));
-                console.log(result)
-                if (Object.prototype.toString.call(component.next) === '[object Object]') {
-                    component.next = [component.next];
+                if (scriptPath && (scriptPath?.startsWith("./") || scriptPath?.[1] !== ":")) {
+                    scriptPath = scriptPath.replace("./", "")
+                    scriptPath = scriptPath[0] === "/" ? scriptPath.substring(1, scriptPath.length) : scriptPath
+                    scriptPath = `${appDirectory['plugins']}/${component.pluginName}/${scriptPath}`;
                 }
-                for (let child of component.next) {
-                    if (child.resolve === result.resolve) {
-                        await handle(child);
+                try {
+                    if (scriptPath) {
+                        result = await baseComponent['action_' + component.action](scriptPath, scriptParams || inputValue.split(" "));
+                    } else {
+                        let input_value = scriptParams
+                        if (!input_value) {
+                            let kg_index = input_value.indexOf(" ") !== -1 ? input_value.indexOf(" ") : 0
+                            input_value = inputValue.substring(kg_index + 1)
+                        }
+                        result = await baseComponent['action_' + component.action](input_value, component.params);
                     }
+                } catch (e) {
+                    let res = {
+                        type: "result",
+                        title: e.toString(),
+                        desc: e,
+                        icon: "ERROR",
+                        data: e,
+                    }
+                    return initStatus([res])
                 }
+                if (!result) {
+                    return initStatus()
+                }
+                result.data = JSON.parse(result.data)
+                let items = []
+                for (let info of result.data.items) {
+                    let item = {
+                        type: component.next?.type || "result",
+                        title: info.title,
+                        desc: info.subtitle,
+                        icon: component.icon,
+                        data: info.arg,
+                        script: component.next
+                    }
+                    items.push(item)
+                }
+                initStatus(items);
+                console.log(items)
+
             };
-            handle(currentComponent);
-            initStatus();
+            handle(currentComponent)
         } else if (currentComponent.type === "file") {
             if (!fnDown) {
                 await invoke("open_file", {filePath: currentComponent.data});
@@ -467,18 +511,26 @@ const App = () => {
                         let plugin = pluginList[pluginName];
                         let workflows = plugin.workflow;
                         for (let workflow of workflows) {
-                            if (workflow.keyword.startsWith(inputValue)) {
-                                workflow.type = "action";
+                            if (workflow.keyword?.startsWith(inputValue)) {
+                                // workflow.type = "action";
                                 workflow.pluginName = plugin.title
                                 if (typeof workflow.icon !== "object") {
-                                    let icon
-                                    if (workflow.icon.startsWith("./")) {
-                                        icon = workflow.icon.replace("./", "/")
+                                    let icon, src
+                                    if (workflow.icon?.startsWith("./")) {
+                                        icon = workflow.icon.replace("./", "")
                                     } else {
-                                        icon = workflow.icon
+                                        icon = workflow.icon || ""
+                                        icon = icon[0] === "/" ? icon.substring(1, icon.length) : icon
                                     }
-                                    workflow.icon = <img src={"src/components/" + plugin.title + icon} alt={"i"}
-                                                         style={{width: "100%"}}/>
+                                    if (icon[1] === ":") {
+                                        src = convertFileSrc(icon)
+                                    } else {
+                                        src = convertFileSrc(`${appDirectory['plugins']}/${pluginName}/${icon}`)
+                                    }
+                                    workflow.icon =
+                                        <img alt={"i"} src={src} className={"activateComponent"}
+                                             data-tauri-drag-region/>
+                                    workflow.parent = pluginName
                                 }
                                 result.push(workflow);
                             }
@@ -547,6 +599,7 @@ const App = () => {
             } else if (componentInfo.type !== "subpage") {
                 await modifyWindowSize('small');
             }
+            console.log(result)
             setKeywordComponent(result);
             setSelectedIndex(0);
         };
@@ -661,8 +714,19 @@ const App = () => {
                                setInputValue(event.target.value);
                            }}/>
                 </div>
-                {TemplateComponent(keywordComponent, selectedIndex, setSelectedIndex, confirmComponentSelected, fnDown)}
-                <SubpageComponent component={componentInfo} keyDown={keyDown}/>
+                {/*{keywordComponent ? TemplateComponent(keywordComponent, selectedIndex, setSelectedIndex, confirmComponentSelected, fnDown) : null}*/}
+                {keywordComponent ?
+                    <Suspense fallback={<div>Loading...</div>}>
+                        <TemplateComponent {...{
+                            components: keywordComponent,
+                            selectedKey: selectedIndex,
+                            setSelectedKey: setSelectedIndex,
+                            confirmComponentSelected,
+                            fnDown
+                        }}/>
+                    </Suspense>
+                    : null}
+                {componentInfo ? <SubpageComponent component={componentInfo} keyDown={keyDown}/> : null}
             </div>
         </div>
     );

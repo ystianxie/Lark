@@ -1,11 +1,11 @@
 import {invoke} from "@tauri-apps/api";
 
-async function action_openApp(app_path, app_name) {
+async function open_app(app_path, app_name) {
     await invoke("open_app", {appPath: app_path, appName: app_name});
 }
 
 
-async function action_openUrl(url) {
+async function open_url(url) {
     await invoke("open_url", {url});
 }
 
@@ -22,8 +22,14 @@ async function action_readClipboard() {
 }
 
 
-async function action_writeClipboard(text, paste, type) {
-    await invoke("clipboard_control", {text, control: "write", paste, data_type: type});
+async function action_writeClipboard(content, kwargs) {
+    if (!content) return
+    await invoke("clipboard_control", {
+        text: content,
+        control: "write",
+        paste: kwargs.paste || false,
+        dataType: kwargs.type || "text"
+    });
 }
 
 async function action_result(text, paste) {
@@ -35,7 +41,7 @@ async function action_writeFile(file_path, text) {
     await invoke("write_txt", {filePath: file_path, text});
 }
 
-async function action_readFile(file_path) {
+export async function action_readFile(file_path) {
     return await invoke("read_txt", {filePath: file_path});
 }
 
@@ -48,8 +54,8 @@ async function action_rebuildAppIndex() {
 }
 
 export default {
-    action_openApp,
-    action_openUrl,
+    action_openApp: open_app,
+    action_openUrl: open_url,
     action_runScript,
     action_readClipboard,
     action_writeClipboard,

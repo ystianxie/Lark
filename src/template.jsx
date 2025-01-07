@@ -12,12 +12,15 @@ import throttle from "lodash/throttle.js";
 import {debounce} from "lodash/function.js";
 import {invoke} from "@tauri-apps/api";
 import {isMacOs, isWindows} from 'react-device-detect';
+import {convertFileSrc} from "@tauri-apps/api/tauri";
+import {action_readFile} from "./baseComponent.jsx"
+import ReactDOM from 'react-dom';
 
-const TemplateComponent = (components, selectedKey, setSelectedKey, confirmComponentSelected, fnDown) => {
+function TemplateComponent({components, selectedKey, setSelectedKey, confirmComponentSelected: confirmSelected, fnDown}) {
     const scrollContainerRef = useRef(null);
     const [selectedIndex, setSelectedIndex] = useState(selectedKey || 1)
     const handleMouseEnter = (e, index) => {
-        console.log("触发", index, e,isMacOs,isWindows)
+        console.log("触发", index, e, isMacOs, isWindows)
         if (isMacOs) {
             if (e.movementX !== 0 || e.movementY !== 0) {
                 setSelectedKey(index);
@@ -69,7 +72,7 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
         function standardizedDisplay() {
             let index = get_first_item()
             let item = document.getElementsByClassName("templateComponent")[index]
-            if (item.getBoundingClientRect().y !== 60.5) {
+            if (item && item.getBoundingClientRect().y !== 60.5) {
                 scrollContainerRef.current.scrollTop -= 60.5 - item.getBoundingClientRect().y
                 visualItem()
             }
@@ -100,6 +103,7 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
         closeDefault(e.deltaY)
     }, [closeDefault])
     useEffect(() => {
+        window.ReactDOM = ReactDOM;
         const scrollContainer = scrollContainerRef.current;
         if (components && scrollContainer) {
             scrollContainer.addEventListener('wheel', handleScroll, {passive: false});
@@ -149,7 +153,7 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
                                      data-index={index}
                                      onMouseEnter={(event) => handleMouseEnter(event, index)}
                                      onClick={() => {
-                                         confirmComponentSelected();
+                                         confirmSelected();
                                      }}
                                 >
                                     {
@@ -202,10 +206,47 @@ const TemplateComponent = (components, selectedKey, setSelectedKey, confirmCompo
 
 function SubpageComponent({component, keyDown}) {
     const [RenderComponent, setRenderComponent] = useState(false);
+    const [appDirectory, setAppDirectory] = useState({});
+    const styleHexRef = useRef(null);
+
+    // 文件内容变更热更新
+    const hotReplacement = () => {
+        action_readFile(component.style).then(value => {
+            document.body.querySelectorAll("link").forEach(node => node.remove());
+            const link = document.createElement("link");
+            link.rel = "stylesheet";
+            link.href = convertFileSrc(component.style);
+            document.body.appendChild(link);
+        });
+        // setTimeout(hotReplacement, 500);
+    };
+    useEffect(() => {
+        invoke("get_app_dir", {}).then((result) => {
+            setAppDirectory(result)
+        })
+    }, [])
     useEffect(() => {
         const loadDynamicComponent = async () => {
-            const module = await import(`./panels/${component.data}.jsx`);
-            setRenderComponent(() => module.default);
+            if (component.data.endsWith("js")) {
+                if (component.data?.startsWith("./") || component.data?.[1] !== ":") {
+                    component.data = `${appDirectory['plugins']}/${component.parent}/${component.data}`;
+                }
+                if (component.style?.startsWith("./") || component.style?.[1] !== ":") {
+                    component.style = `${appDirectory['plugins']}/${component.parent}/${component.style}`;
+                }
+
+                document.body.querySelectorAll("script").forEach(node => node.remove());
+                const script = document.createElement("script");
+                document.body.appendChild(script);
+                script.src = convertFileSrc(component.data);
+                if (component.style) {
+                    hotReplacement();
+                }
+            } else {
+                const module = await import(`./panels/${component.data}.jsx`);
+                setRenderComponent(() => module.default);
+            }
+
         }
         if (component?.type === "subpage" && component.data) {
             console.log("更新子页面：", component.data)
@@ -223,6 +264,7 @@ function SubpageComponent({component, keyDown}) {
         borderWidth: "0px",
         overflow: 'hidden'
     }
+
     return (
         <>
             <div id="subPageFrame"
@@ -406,7 +448,7 @@ const getWindowPosition = async () => {
     const factor = await appWindow.scaleFactor();
     const position = await appWindow.innerPosition();
     const logical = position.toLogical(factor);
-    console.log(logical.x,logical.y)
+    console.log(logical.x, logical.y)
     return {x: logical.x, y: logical.y};
 };
 

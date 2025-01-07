@@ -86,7 +86,7 @@ impl Default for BaseConfig {
             clipboard_record_file_switch: false,
             clipboard_record_file_time: Some(1),
             local_file_search_exclude_paths: vec![
-                r"C:\Windows\System32".to_string(),
+                r"C:\Windows".to_string(),
                 r"C:\ProgramData".to_string(),
                 "C:$Recycle.Bin".to_string(),
                 r"C:\Users\Public".to_string(),

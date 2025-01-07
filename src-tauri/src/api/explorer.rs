@@ -98,7 +98,7 @@ pub fn search_files(keyword: &str) -> Vec<HashMap<String, String>> {
         eprintln!("Command failed");
     }
 
-    return result;
+    result
 }
 
 pub fn search_file_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
@@ -538,13 +538,17 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
     fn is_hidden(entry: &DirEntry) -> bool {
         entry.file_name().to_str().map_or(false, |s| s.starts_with('.'))
     }
+
     fn should_skip_file(entry: &DirEntry, skip_extensions: &[String]) -> bool {
-        entry.path().extension().and_then(|ext| ext.to_str()).map_or(false, |ext| skip_extensions.contains(&ext.to_string()))
+        entry.path().extension().and_then(|ext| ext.to_str()).map_or(false, |ext| skip_extensions.contains(&ext.to_lowercase()))
     }
 
     fn should_skip_dir(entry: &DirEntry, skip_dirs: &[String]) -> bool {
         let mut is_skip = false;
         is_skip = skip_dirs.iter().any(|dir| entry.path().starts_with(dir));
+        if entry.file_name().to_str().unwrap().starts_with("$") {
+            return true;
+        }
         if !is_skip {
             is_skip = skip_dirs.iter().any(|dir| {
                 if dir.starts_with("*/") {
@@ -558,6 +562,7 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
         is_skip
     }
 
+    println!("开始扫描文件夹:{:?}", root_dir);
     let skip_extensions_data = Arc::new(skip_extensions);
     let skip_dirs_data = Arc::new(skip_dirs);
     let files = Arc::new(Mutex::new(Vec::new()));
@@ -578,15 +583,21 @@ fn file_scanning(app_handle: AppHandle, root_dir: &str, skip_dirs: Vec<String>, 
                 } else {
                     entry.path().extension().and_then(|ext| ext.to_str()).unwrap_or("").to_string()
                 };
-                println!("获取到文件 {:?}", &title);
                 let mut files = files.lock().unwrap();
-                main_window.emit("file_index_count", &title).unwrap();
+                let (pinyin, abb) = text_to_pinyin(&title);
                 files.push(FileIndex {
                     title,
                     path: file_path,
+                    pinyin,
+                    abb,
                     file_type: file_type.to_string(),
                     ..Default::default()
                 });
+                if files.len() >= 200 {
+                    let _ = index_db.insert_file_indexes(files.clone());
+                    files.clear();
+                    main_window.emit("file_index_count", 200).unwrap();
+                }
             });
         let files = files.lock().unwrap().clone();
         index_db.insert_file_indexes(files).unwrap();

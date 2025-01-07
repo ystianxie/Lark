@@ -33,8 +33,9 @@
       "fs": {
         "all": true,
         "scope": [
-          "*",
-          "$DOWNLOAD/*"
+          "**/*",
+          "$DOWNLOAD/*",
+          "$APP/*", "$APP/scripts/*"
         ]
       },
       "window": {
@@ -42,6 +43,10 @@
       },
       "globalShortcut": {
         "all": true
+      },
+      "protocol": {
+        "asset": true,
+        "assetScope": ["/usr/share/icons/**/*.svg"]
       }
     },
     "windows": [

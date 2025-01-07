@@ -85,9 +85,9 @@ fn rebuild_index(state: State<'_, AppState>) {
 }
 
 fn main() {
-    // ClipboardWatcher::start();
-    // IndexSQL::new();
-    // RecordSQL::new();
+    ClipboardWatcher::start();
+    IndexSQL::new();
+    RecordSQL::new();
     let config = config::Config::read_local_config().unwrap();
     let config_ = config.clone();
 
