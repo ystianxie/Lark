@@ -1,4 +1,5 @@
 use image::ImageFormat;
+use std::io::Cursor;
 use std::{mem, ptr, time};
 use winapi::{
     shared::{
@@ -40,10 +41,10 @@ pub fn get_icon(ext: &str, size: i32) -> Result<Vec<u8>, image::ImageError> {
                         | SHGFI_USEFILEATTRIBUTES
                         | SHGFI_TYPENAME
                         | if size > 16 {
-                        SHGFI_LARGEICON
-                    } else {
-                        SHGFI_SMALLICON
-                    },
+                            SHGFI_LARGEICON
+                        } else {
+                            SHGFI_SMALLICON
+                        },
                 );
                 if file_info.hIcon != ptr::null_mut() {
                     break;
@@ -220,13 +221,32 @@ pub fn get_icon(ext: &str, size: i32) -> Result<Vec<u8>, image::ImageError> {
         );
 
         let im = image::load_from_memory(&bytes)?;
+        // let cursor = Cursor::new(&bytes[..pos]);
+        // let im = image::load(cursor, ImageFormat::Bmp)?; // 假设输入格式是 BMP
         let mut png_bytes: Vec<u8> = Vec::new();
-        im.write_to(&mut png_bytes, ImageFormat::Png)?;
+        let mut png_cursor = Cursor::new(&mut png_bytes);
+        im.write_to(&mut png_cursor, ImageFormat::Png)?;
 
         DeleteObject(icon_info.hbmColor as HGDIOBJ);
         DeleteObject(icon_info.hbmMask as HGDIOBJ);
 
         Ok(png_bytes)
+    }
+}
+
+/// Returns true only when the executable contains at least one icon resource.
+/// Unlike `get_icon`, this does not fall back to Windows' generic executable icon.
+#[cfg(target_os = "windows")]
+pub fn has_embedded_icon(path: &str) -> bool {
+    let path = utf_16_null_terminiated(path);
+    unsafe {
+        ExtractIconExW(
+            path.as_ptr(),
+            -1,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            0,
+        ) > 0
     }
 }
 
@@ -295,5 +315,3 @@ fn write_icon_data_to_memory(
         }
     }
 }
-
-

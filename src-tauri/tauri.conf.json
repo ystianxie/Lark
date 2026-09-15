@@ -1,54 +1,14 @@
 {
+  "productName": "lark",
+  "version": "0.1.0",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
-    "devPath": "http://localhost:1421",
-    "distDir": "../dist"
+    "devUrl": "http://localhost:1421",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "lark",
-    "version": "0.1.0"
-  },
-  "tauri": {
+  "app": {
     "macOSPrivateApi": true,
-    "allowlist": {
-      "all": true,
-      "clipboard": {
-        "all": true,
-        "readText": true,
-        "writeText": true
-      },
-      "shell": {
-        "all": false,
-        "open": true,
-        "sidecar": true,
-        "scope": []
-      },
-      "http": {
-        "scope": [
-          "http://**",
-          "https://**"
-        ]
-      },
-      "fs": {
-        "all": true,
-        "scope": [
-          "**/*",
-          "$DOWNLOAD/*",
-          "$APP/*", "$APP/scripts/*"
-        ]
-      },
-      "window": {
-        "all": true
-      },
-      "globalShortcut": {
-        "all": true
-      },
-      "protocol": {
-        "asset": true,
-        "assetScope": ["/usr/share/icons/**/*.svg"]
-      }
-    },
     "windows": [
       {
         "title": "lark",
@@ -56,33 +16,70 @@
         "width": 718,
         "fullscreen": false,
         "resizable": false,
+        "focus": true,
         "center": true,
         "transparent": true,
         "hiddenTitle": true,
         "decorations": false,
         "skipTaskbar": false,
-        "alwaysOnTop": true
+        "alwaysOnTop": true,
+        "shadow": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**",
+          "$RESOURCE/**",
+          "D:/Project/Lark/plugins/**"
+        ]
+      },
+      "capabilities": [
+        {
+          "identifier": "application-permissions",
+          "windows": [
+            "*"
+          ],
+          "permissions": [
+            "core:window:allow-show",
+            "core:window:allow-hide",
+            "core:window:allow-set-size",
+            "core:window:allow-set-focus",
+            "core:webview:allow-set-webview-focus",
+            "core:window:allow-set-position",
+            "core:window:allow-start-dragging",
+            "core:default",
+            "core:window:allow-create",
+            "core:window:allow-center",
+            "core:window:allow-request-user-attention",
+            "core:window:allow-set-resizable",
+            "core:window:allow-set-decorations",
+            "global-shortcut:allow-is-registered",
+            "global-shortcut:allow-register",
+            "global-shortcut:allow-unregister",
+            "core:window:allow-get-all-windows"
+          ]
+        }
+      ]
     },
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.starsxu.lark",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ],
-      "externalBin": []
-    },
-    "systemTray": {
+    "trayIcon": {
       "iconPath": "icons/logo.png",
       "iconAsTemplate": true
     }
-  }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": []
+  },
+  "identifier": "com.starsxu.lark"
 }

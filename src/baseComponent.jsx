@@ -1,4 +1,13 @@
-import {invoke} from "@tauri-apps/api";
+import {invoke} from "@tauri-apps/api/core";
+
+async function run_python_plugin(scriptPath, request, interpreter) {
+    return await invoke("run_python_plugin", {
+        scriptPath,
+        request,
+        interpreter: interpreter || null,
+        timeoutMs: 30000,
+    });
+}
 
 async function open_app(app_path, app_name) {
     await invoke("open_app", {appPath: app_path, appName: app_name});
@@ -50,6 +59,7 @@ async function action_rebuildFileIndex() {
 }
 
 async function action_rebuildAppIndex() {
+    console.log("重建app缓存")
     return await invoke("create_app_index", {})
 }
 
@@ -64,4 +74,5 @@ export default {
     action_rebuildFileIndex,
     action_rebuildAppIndex,
     action_result,
+    run_python_plugin,
 };

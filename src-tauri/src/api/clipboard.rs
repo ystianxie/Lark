@@ -1,20 +1,79 @@
+use crate::config::Config;
+use crate::utils::database::{self, Record};
+#[cfg(target_os = "windows")]
+use crate::utils::icons;
+use crate::utils::{file_factory, img_factory, json_factory, string_factory};
+use anyhow::Result;
+use arboard::Clipboard;
+use chrono::Duration;
+use enigo::{Enigo, Key, Keyboard, Settings};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Command;
-use crate::utils::database::{self, Record};
-use crate::config::Config;
-use crate::utils::{img_factory, json_factory, string_factory, file_factory};
-use anyhow::Result;
-use chrono::Duration;
-use serde::{Deserialize, Serialize};
-use enigo::{Enigo, Key, Keyboard, Settings};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
-use arboard::Clipboard;
-
-const CHANGE_DEFAULT_MSG: &str = "ok";
+use std::time::{Duration as StdDuration, Instant};
 
 pub struct ClipboardWatcher;
 
 pub struct ClipboardOperator;
+
+#[derive(Default, Clone)]
+struct ActiveApplication {
+    name: String,
+    path: String,
+}
+
+// 文本结果粘贴会先写系统剪贴板，而剪贴板监听器也会读取它。
+// 记录一次短时的“由 Lark 主动写入”的文本，避免这次内部写入回流到历史库。
+struct InternalClipboardText {
+    text: String,
+    marked_at: Instant,
+    sequence: u32,
+}
+
+static INTERNAL_CLIPBOARD_TEXT: OnceLock<Mutex<Option<InternalClipboardText>>> = OnceLock::new();
+const INTERNAL_CLIPBOARD_TTL: StdDuration = StdDuration::from_secs(3);
+
+fn set_internal_clipboard_text(text: &str) -> Result<()> {
+    let state = INTERNAL_CLIPBOARD_TEXT.get_or_init(|| Mutex::new(None));
+    let mut pending = state
+        .lock()
+        .map_err(|_| anyhow::anyhow!("internal clipboard state is poisoned"))?;
+    *pending = None;
+    let mut clipboard = Clipboard::new()?;
+    clipboard.set_text(text)?;
+    #[cfg(target_os = "windows")]
+    let sequence = get_clipboard_sequence_number();
+    #[cfg(not(target_os = "windows"))]
+    let sequence = 0;
+    *pending = Some(InternalClipboardText {
+        text: text.to_string(),
+        marked_at: Instant::now(),
+        sequence,
+    });
+    Ok(())
+}
+
+fn consume_internal_clipboard_text(text: &str) -> Option<u32> {
+    let Some(state) = INTERNAL_CLIPBOARD_TEXT.get() else {
+        return None;
+    };
+    let Ok(mut pending) = state.lock() else {
+        return None;
+    };
+    let Some(marked) = pending.as_ref() else {
+        return None;
+    };
+    if marked.marked_at.elapsed() > INTERNAL_CLIPBOARD_TTL {
+        *pending = None;
+        return None;
+    }
+    if marked.text == text {
+        return pending.take().map(|marked| marked.sequence);
+    }
+    None
+}
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize)]
 pub struct ImageDataDB {
@@ -30,12 +89,15 @@ pub struct FileDataDB {
     pub title: String,
 }
 
-
 impl ClipboardOperator {
     pub fn set_text(text: &str) -> Result<()> {
         let mut clipboard = Clipboard::new()?;
         clipboard.set_text(text)?;
         Ok(())
+    }
+
+    pub fn set_text_for_paste(text: &str) -> Result<()> {
+        set_internal_clipboard_text(text)
     }
 
     pub fn get_text() -> Result<String> {
@@ -44,15 +106,31 @@ impl ClipboardOperator {
         Ok(text)
     }
 
-    pub fn paste_text(text: &str) -> Result<()> {
-        let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
-        let _ = enigo.text(text);
+    pub fn paste_text() -> Result<()> {
+        // 窗口隐藏后，系统需要短暂时间把焦点还给唤醒前的窗口。
+        thread::sleep(Duration::milliseconds(50).to_std()?);
+
+        let mut enigo: Enigo = Enigo::new(&Settings::default())?;
+        // 文本已经由调用方写入系统剪贴板，这里只发送一次粘贴快捷键。
+        // enigo.text(...) 会逐字符模拟输入，长文本会明显变慢，且容易被目标应用截断。
+        #[cfg(target_os = "macos")]
+        let modifier = Key::Meta;
+        #[cfg(not(target_os = "macos"))]
+        let modifier = Key::Control;
+
+        enigo.key(modifier, enigo::Direction::Press)?;
+        let paste_result = enigo.key(Key::Unicode('v'), enigo::Direction::Click);
+        let release_result = enigo.key(modifier, enigo::Direction::Release);
+        paste_result?;
+        release_result?;
         Ok(())
     }
 
     pub fn set_image(data: ImageDataDB) -> Result<()> {
+        print!("????");
         let mut clipboard = Clipboard::new()?;
-        let img_data = img_factory::base64_to_rgba8(&data.base64).unwrap();
+        let img_data = img_factory::base64_to_rgba8(&data.base64).expect("error");
+        println!("{:?}", img_data);
         clipboard.set_image(img_data)?;
         Ok(())
     }
@@ -67,28 +145,50 @@ impl ClipboardOperator {
         if data.is_err() {
             Ok("".to_string())
         } else {
-            Ok(data.unwrap())
+            Ok(data?)
         }
     }
 
     pub fn set_file(file_path: &str) {
         // todo 多文件
-        #[cfg(target_os = "windows")]{
-            let output = Command::new("powershell").arg("src/utils/clipboard_file_win.ps1").arg(file_path).output().expect("");
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("powershell")
+                .arg("src/utils/clipboard_file_win.ps1")
+                .arg(file_path)
+                .output()
+                .expect("");
             thread::sleep(Duration::milliseconds(500).to_std().unwrap());
             let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
-            enigo.key(Key::Control, enigo::Direction::Press).expect("error");
-            enigo.key(Key::Unicode('v'), enigo::Direction::Click).expect("error");
-            enigo.key(Key::Control, enigo::Direction::Release).expect("error");
+            enigo
+                .key(Key::Control, enigo::Direction::Press)
+                .expect("error");
+            enigo
+                .key(Key::Unicode('v'), enigo::Direction::Click)
+                .expect("error");
+            enigo
+                .key(Key::Control, enigo::Direction::Release)
+                .expect("error");
         }
-        #[cfg(target_os = "macos")]{
-            let command_data = format!("'set the clipboard to POSIX file \"'{}'\"'",file_path);
-            let _ = Command::new("osascript").arg("-e").arg(command_data).output().expect("");
+        #[cfg(target_os = "macos")]
+        {
+            let command_data = format!("'set the clipboard to POSIX file \"'{}'\"'", file_path);
+            let _ = Command::new("osascript")
+                .arg("-e")
+                .arg(command_data)
+                .output()
+                .expect("");
             thread::sleep(Duration::milliseconds(500).to_std().unwrap());
             let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
-            enigo.key(Key::Meta, enigo::Direction::Press).expect("error");
-            enigo.key(Key::Unicode('v'), enigo::Direction::Click).expect("error");
-            enigo.key(Key::Meta, enigo::Direction::Release).expect("error");
+            enigo
+                .key(Key::Meta, enigo::Direction::Press)
+                .expect("error");
+            enigo
+                .key(Key::Unicode('v'), enigo::Direction::Click)
+                .expect("error");
+            enigo
+                .key(Key::Meta, enigo::Direction::Release)
+                .expect("error");
         }
     }
 
@@ -98,7 +198,7 @@ impl ClipboardOperator {
 }
 
 #[cfg(target_os = "macos")]
-pub fn get_active_application() -> Option<String> {
+fn get_active_application() -> Option<ActiveApplication> {
     use objc::runtime::{Class, Object};
     use objc::{msg_send, sel, sel_impl};
 
@@ -116,20 +216,22 @@ pub fn get_active_application() -> Option<String> {
         }
 
         let app_name_str: *const libc::c_char = msg_send![app_name, UTF8String];
-        Some(std::ffi::CStr::from_ptr(app_name_str).to_string_lossy().into_owned())
+        Some(ActiveApplication {
+            name: std::ffi::CStr::from_ptr(app_name_str)
+                .to_string_lossy()
+                .into_owned(),
+            path: String::new(),
+        })
     }
 }
 #[cfg(target_os = "windows")]
-// fn get_active_application() -> Option<(String, String)> {
-fn get_active_application() -> Option<String> {
+fn get_active_application() -> Option<ActiveApplication> {
     use std::ffi::OsString;
-    use std::iter::once;
     use std::os::windows::ffi::OsStringExt;
-    use std::ptr::null_mut;
-    use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
+    use std::path::Path;
     use winapi::um::processthreadsapi::OpenProcess;
-    use winapi::um::psapi::GetModuleBaseNameW;
-    use winapi::um::winnt::PROCESS_QUERY_INFORMATION;
+    use winapi::um::winnt::PROCESS_QUERY_LIMITED_INFORMATION;
+    use winapi::um::winuser::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
 
     unsafe {
         // 获取前台窗口句柄
@@ -154,17 +256,25 @@ fn get_active_application() -> Option<String> {
         GetWindowThreadProcessId(hwnd, &mut process_id);
 
         // 打开进程
-        let process_handle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, process_id);
+        let process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
         if process_handle.is_null() {
-            // return Some((window_title, String::new()));
-            return Some(window_title);
+            return Some(ActiveApplication {
+                name: window_title,
+                path: String::new(),
+            });
         }
 
-        // 获取可执行文件名
-        let mut exe_name: [u16; 512] = [0; 512];
-        let length = GetModuleBaseNameW(process_handle, null_mut(), exe_name.as_mut_ptr(), exe_name.len() as u32);
-        let exe_name = if length > 0 {
-            OsString::from_wide(&exe_name[..length as usize])
+        // 获取完整可执行文件路径，作为稳定的应用身份。
+        let mut exe_path: [u16; 32768] = [0; 32768];
+        let mut length = exe_path.len() as u32;
+        let success = kernel32::QueryFullProcessImageNameW(
+            process_handle,
+            0,
+            exe_path.as_mut_ptr(),
+            &mut length,
+        );
+        let executable_path = if success != 0 && length > 0 {
+            OsString::from_wide(&exe_path[..length as usize])
                 .to_string_lossy()
                 .into_owned()
         } else {
@@ -174,11 +284,26 @@ fn get_active_application() -> Option<String> {
         // 关闭进程句柄
         kernel32::CloseHandle(process_handle);
 
-        // Some((window_title, exe_name))
-        Some(window_title)
+        let name = Path::new(&executable_path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&window_title)
+            .to_string();
+
+        Some(ActiveApplication {
+            name,
+            path: executable_path,
+        })
     }
 }
 
+#[cfg(target_os = "windows")]
+fn get_clipboard_sequence_number() -> u32 {
+    use winapi::um::winuser::GetClipboardSequenceNumber;
+
+    unsafe { GetClipboardSequenceNumber() }
+}
 
 impl ClipboardWatcher {
     pub fn start() {
@@ -187,31 +312,54 @@ impl ClipboardWatcher {
             let wait_millis = 1000i64;
             let mut last_content_md5 = String::new();
             let mut last_img_md5 = String::new();
+            #[cfg(target_os = "windows")]
+            let mut last_clipboard_sequence = 0;
             let mut clipboard = Clipboard::new().unwrap();
             let limit = Config::new().get_clipboard_record_limit();
             println!("start clipboard watcher");
             loop {
+                #[cfg(target_os = "windows")]
+                let current_clipboard_sequence = get_clipboard_sequence_number();
+                #[cfg(target_os = "windows")]
+                let clipboard_changed = current_clipboard_sequence != 0
+                    && current_clipboard_sequence != last_clipboard_sequence;
+                #[cfg(not(target_os = "windows"))]
+                let clipboard_changed = false;
+                #[cfg(target_os = "windows")]
+                let mut clipboard_snapshot_read = false;
+                #[cfg(target_os = "windows")]
+                let mut internal_sequence = None;
                 let mut need_notify = false;
                 let db = database::RecordSQL::new();
                 let files = file_factory::get_clipboard_files();
-                let current_app = get_active_application().unwrap_or("".to_string());
+                let current_app = get_active_application().unwrap_or_default();
                 if !files.is_empty() {
+                    #[cfg(target_os = "windows")]
+                    {
+                        clipboard_snapshot_read = true;
+                    }
                     let files_string = json_factory::stringify(&files).unwrap();
                     let md5 = string_factory::md5(&files_string);
-                    if md5 != last_content_md5 {
+                    if clipboard_changed || md5 != last_content_md5 {
                         let files_string = json_factory::stringify(&files).unwrap();
                         println!("获取到新文件: {:?}", files);
                         let content_db = FileDataDB {
                             file_count: files.len(),
                             files: files_string,
-                            title: format!("{} File{}: {}", files.len(), if files.len() > 1 { "s" } else { "" }, files[0].0.split("/").last().unwrap()),
+                            title: format!(
+                                "{} File{}: {}",
+                                files.len(),
+                                if files.len() > 1 { "s" } else { "" },
+                                files[0].0.split("/").last().unwrap()
+                            ),
                         };
                         let content = json_factory::stringify(&content_db).unwrap();
                         let res = db.insert_if_not_exist(&Record {
                             content: content.clone(),
                             content_preview: Some(content.clone()),
                             data_type: "file".to_string(),
-                            source: current_app.clone(),
+                            source: current_app.name.clone(),
+                            source_path: current_app.path.clone(),
                             ..Default::default()
                         });
                         match res {
@@ -227,41 +375,60 @@ impl ClipboardWatcher {
                 } else {
                     let text = clipboard.get_text();
                     let _ = text.map(|text| {
+                        #[cfg(target_os = "windows")]
+                        {
+                            clipboard_snapshot_read = true;
+                        }
                         let content_origin = text.clone();
                         let content = text.trim();
                         let md5 = string_factory::md5(&content_origin);
-                        if !content.is_empty() && md5 != last_content_md5 {
-                            // 说明有新内容
-                            println!("获取到新文本: {}", content);
-                            let content_preview = if content.len() > 1000 {
-                                Some(content.chars().take(1000).collect())
+                        if !content.is_empty() && (clipboard_changed || md5 != last_content_md5) {
+                            if let Some(sequence) = consume_internal_clipboard_text(&content_origin)
+                            {
+                                #[cfg(target_os = "windows")]
+                                {
+                                    internal_sequence = Some(sequence);
+                                }
+                                // 仍然推进去重游标，避免下一轮轮询再次落库。
+                                last_content_md5 = md5;
                             } else {
-                                Some(content.to_string())
-                            };
-                            let res = db.insert_if_not_exist(&Record {
-                                content: content_origin,
-                                content_preview,
-                                source: current_app.clone(),
-                                ..Default::default()
-                            });
-                            match res {
-                                Ok(_) => {
-                                    need_notify = true;
+                                // 说明有新内容
+                                println!("获取到新文本: {}", content);
+                                let content_preview = if content.len() > 1000 {
+                                    Some(content.chars().take(1000).collect())
+                                } else {
+                                    Some(content.to_string())
+                                };
+                                let res = db.insert_if_not_exist(&Record {
+                                    content: content_origin,
+                                    content_preview,
+                                    source: current_app.name.clone(),
+                                    source_path: current_app.path.clone(),
+                                    ..Default::default()
+                                });
+                                match res {
+                                    Ok(_) => {
+                                        need_notify = true;
+                                    }
+                                    Err(e) => {
+                                        println!("insert record error: {}", e);
+                                    }
                                 }
-                                Err(e) => {
-                                    println!("insert record error: {}", e);
-                                }
+                                last_content_md5 = md5;
                             }
-                            last_content_md5 = md5;
                         }
                     });
                 }
 
                 let img = clipboard.get_image();
                 let _ = img.map(|img| {
+                    #[cfg(target_os = "windows")]
+                    {
+                        clipboard_snapshot_read = true;
+                    }
                     let img_md5 = string_factory::md5_by_bytes(&img.bytes);
                     let img_size = (img.bytes.len() as f64) / 1024.0;
-                    if img_md5 != last_img_md5 {
+                    if clipboard_changed || img_md5 != last_img_md5 {
                         // 有新图片产生
                         println!("获取到新图片md5: {}", img_md5);
                         let base64 = img_factory::rgba8_to_base64(&img);
@@ -269,15 +436,18 @@ impl ClipboardWatcher {
                             width: img.width,
                             height: img.height,
                             base64,
-                            title: format!("Image:{}×{}({:.2}kb)", img.width, img.height, img_size).to_string(),
+                            title: format!("Image:{}×{}({:.2}kb)", img.width, img.height, img_size)
+                                .to_string(),
                         };
                         // 压缩画质作为预览图，防止渲染时非常卡顿
                         let jpeg_base64 = img_factory::rgba8_to_jpeg_base64(&img, 70);
+                        println!("获取到新图片: {}", jpeg_base64);
                         let content_preview_db = ImageDataDB {
                             width: img.width,
                             height: img.height,
                             base64: jpeg_base64,
-                            title: format!("Image:{}×{}({:.2}kb)", img.width, img.height, img_size).to_string(),
+                            title: format!("Image:{}×{}({:.2}kb)", img.width, img.height, img_size)
+                                .to_string(),
                         };
                         let content = json_factory::stringify(&content_db).unwrap();
                         let content_preview = json_factory::stringify(&content_preview_db).unwrap();
@@ -285,7 +455,8 @@ impl ClipboardWatcher {
                             content,
                             content_preview: Some(content_preview),
                             data_type: "image".to_string(),
-                            source: current_app.clone(),
+                            source: current_app.name.clone(),
+                            source_path: current_app.path.clone(),
                             ..Default::default()
                         });
                         match res {
@@ -311,6 +482,16 @@ impl ClipboardWatcher {
                     //TODO 显示通知窗口
                     println!("通知一下");
                 }
+                #[cfg(target_os = "windows")]
+                {
+                    if let Some(sequence) = internal_sequence {
+                        last_clipboard_sequence = sequence;
+                    } else if clipboard_snapshot_read
+                        && get_clipboard_sequence_number() == current_clipboard_sequence
+                    {
+                        last_clipboard_sequence = current_clipboard_sequence;
+                    }
+                }
                 thread::sleep(Duration::milliseconds(wait_millis).to_std().unwrap());
             }
         });
@@ -329,12 +510,26 @@ pub fn get_history_part(limit: i32, offset: i32) -> Vec<Record> {
     let mut result: Vec<Record> = db.find_part(limit, offset).unwrap();
     let mut app_icon_list: HashMap<String, String> = HashMap::new();
     let db_app = database::IndexSQL::new();
-    for mut record in &mut result {
-        let icon = app_icon_list.get(&record.source);
+    for record in &mut result {
+        let cache_key = if record.source_path.is_empty() {
+            record.source.to_lowercase()
+        } else {
+            record.source_path.to_lowercase()
+        };
+        let icon = app_icon_list.get(&cache_key);
         if icon.is_none() {
-            let r = db_app.find_app_icon(&record.source).unwrap();
-            record.app_icon = r.icon.clone();
-            app_icon_list.insert(r.title, r.icon);
+            let r = db_app
+                .find_app_icon(&record.source, &record.source_path)
+                .unwrap();
+            let mut resolved_icon = r.icon;
+            #[cfg(target_os = "windows")]
+            if resolved_icon.is_empty() && !record.source_path.is_empty() {
+                resolved_icon = icons::get_icon(&record.source_path, 128)
+                    .map(base64::encode)
+                    .unwrap_or_default();
+            }
+            record.app_icon = resolved_icon.clone();
+            app_icon_list.insert(cache_key, resolved_icon);
         } else {
             record.app_icon = icon.unwrap().clone();
         }
@@ -353,4 +548,3 @@ pub fn get_history_id(id: u64) -> Record {
     let db = database::RecordSQL::new();
     db.find_by_id(id).unwrap()
 }
-

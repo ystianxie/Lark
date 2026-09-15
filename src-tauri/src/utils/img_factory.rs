@@ -1,9 +1,13 @@
 use super::string_factory;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use arboard::ImageData;
-use image::{ColorType, ExtendedColorType, ImageEncoder};
-use std::io::{BufReader, BufWriter, Cursor};
+use base64::engine::general_purpose;
+use base64::Engine;
+use image::codecs::bmp::BmpDecoder;
 use image::ColorType::Rgba8;
+use image::{ColorType, DynamicImage, ExtendedColorType, ImageEncoder};
+use std::borrow::Cow;
+use std::io::{BufReader, BufWriter, Cursor};
 
 pub fn rgba8_to_base64(img: &ImageData) -> String {
     let mut bytes: Vec<u8> = Vec::new();
@@ -12,8 +16,8 @@ pub fn rgba8_to_base64(img: &ImageData) -> String {
             &img.bytes,
             img.width as u32,
             img.height as u32,
-            // ExtendedColorType::from(image::ColorType::Rgba8),
-            Rgba8
+            ExtendedColorType::from(image::ColorType::Rgba8),
+            // Rgba8,
         )
         .unwrap();
     string_factory::base64_encode(bytes.as_slice())
@@ -26,31 +30,29 @@ pub fn rgba8_to_jpeg_base64(img: &ImageData, quality: u8) -> String {
         rgb_bytes.push(chunk[0]); // R
         rgb_bytes.push(chunk[1]); // G
         rgb_bytes.push(chunk[2]); // B
-        // 丢弃 alpha 通道 chunk[3]
+                                  // 丢弃 alpha 通道 chunk[3]
     }
     let mut bytes: Vec<u8> = Vec::new();
-    let mut cursor = Cursor::new(&mut bytes);
-    // let writer = BufWriter::new(cursor);
-    // let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
-    // encoder.write_image(&rgb_bytes, img.width as u32, img.height as u32, ExtendedColorType::Rgb8).unwrap();
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, quality);
+    let cursor = Cursor::new(&mut bytes);
+    let writer = BufWriter::new(cursor);
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(writer, quality);
+    encoder
+        .write_image(
+            &rgb_bytes,
+            img.width as u32,
+            img.height as u32,
+            ExtendedColorType::Rgb8,
+        )
+        .unwrap();
     string_factory::base64_encode(&bytes)
 }
 
-pub fn base64_to_rgba8(base64: &str) -> Result<ImageData> {
-    let bytes = string_factory::base64_decode(base64);
-    let reader =
-        image::io::Reader::with_format(BufReader::new(Cursor::new(bytes)), image::ImageFormat::Png);
-    match reader.decode() {
-        Ok(img) => {
-            let rgba = img.into_rgba8();
-            let (width, height) = rgba.dimensions();
-            Ok(ImageData {
-                width: width as usize,
-                height: height as usize,
-                bytes: rgba.into_raw().into(),
-            })
-        }
-        Err(_) => Err(anyhow::anyhow!("decode image error")),
-    }
+pub fn base64_to_rgba8(base64_str: &str) -> Result<ImageData<'_>> {
+    let slice = general_purpose::STANDARD.decode(base64_str)?;
+    let img = image::load_from_memory(&slice).expect("Error");
+    Ok(ImageData {
+        width: img.width() as usize,
+        height: img.height() as usize,
+        bytes: Cow::from(img.into_rgba8().into_raw()),
+    })
 }

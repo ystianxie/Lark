@@ -2,32 +2,34 @@
 extern crate cocoa;
 #[cfg(target_os = "macos")]
 extern crate objc;
+use super::clipboard::{ClipboardOperator, ImageDataDB};
+use anyhow::Result;
 #[cfg(target_os = "macos")]
 use cocoa::base::{id, nil};
 #[cfg(target_os = "macos")]
 use cocoa::foundation::{NSAutoreleasePool, NSString};
 #[cfg(target_os = "macos")]
 use objc::{class, msg_send, sel, sel_impl};
-use super::clipboard::{ClipboardOperator, ImageDataDB};
 use open;
 use open::that;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::process::CommandExt;
-use std::{path, ptr};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+use std::{path, ptr};
 use webbrowser;
-use anyhow::Result;
 use winapi::um::processthreadsapi::{CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW};
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn run_python_script(script_path: &str, params: Vec<String>) -> HashMap<&str, String> {
     // 使用 `Command` 运行 Python 脚本
-    println!("{:?}",script_path);
+    println!("{:?}", script_path);
     let output = Command::new("python")
         .arg(script_path)
         .args(params)
@@ -52,6 +54,59 @@ pub fn run_python_script(script_path: &str, params: Vec<String>) -> HashMap<&str
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub fn run_python_plugin(
+    interpreter: Option<String>,
+    script_path: String,
+    request: Value,
+    timeout_ms: Option<u64>,
+) -> Result<Value, String> {
+    let executable = interpreter
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "windows") {
+                "python.exe".into()
+            } else {
+                "python3".into()
+            }
+        });
+    let mut child = Command::new(executable)
+        .arg(script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to start python: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let body = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
+        stdin.write_all(&body).map_err(|e| e.to_string())?;
+    }
+    let limit = Duration::from_millis(timeout_ms.unwrap_or(30_000));
+    let started = Instant::now();
+    loop {
+        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+            break;
+        }
+        if started.elapsed() >= limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("python execution timed out".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        return Err(format!(
+            "python exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    serde_json::from_str(stdout.trim()).map_err(|e| format!("invalid python response: {e}"))
+}
+
+#[tauri::command(rename_all = "camelCase")]
 #[cfg(target_os = "macos")]
 pub fn open_app(app_path: &str, app_name: &str) {
     unsafe {
@@ -73,6 +128,18 @@ pub fn open_app(app_path: &str, app_name: &str) {
 #[tauri::command(rename_all = "camelCase")]
 #[cfg(target_os = "windows")]
 pub fn open_app(app_path: &str, app_name: &str) {
+    // Some entries are indexed as "apps" for launcher purposes even though
+    // they are files opened by a registered default application. Delegate
+    // those paths to the file association handler instead of CreateProcessW.
+    let extension = Path::new(app_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+    if matches!(extension.as_deref(), Some("rdp" | "url")) {
+        open_file(app_path);
+        return;
+    }
+
     let current_dir = Path::new(app_path).parent().unwrap();
     let program = app_path.split("\\").last().expect("aa.exe");
     println!("打开app:{:?}", app_path);
@@ -81,7 +148,11 @@ pub fn open_app(app_path: &str, app_name: &str) {
         println!("Process {} is already running.", app_name);
         crate::api::explorer::find_windows_with_partial_title(app_name);
     } else {
-        if current_dir.to_string_lossy().to_uppercase().contains(r"C:\WINDOWS\SYSTEM32") {
+        if current_dir
+            .to_string_lossy()
+            .to_uppercase()
+            .contains(r"C:\WINDOWS\SYSTEM32")
+        {
             let result = Command::new("cmd")
                 .arg("/c")
                 .arg("start")
@@ -129,7 +200,6 @@ pub fn open_app(app_path: &str, app_name: &str) {
     }
 }
 
-
 #[tauri::command(rename_all = "camelCase")]
 pub fn open_url(url: &str) {
     // 使用默认浏览器打开 URL
@@ -152,19 +222,35 @@ pub fn open_file(file_path: &str) {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn clipboard_control(text: &str, control: &str, paste: bool, data_type: &str) -> Result<String, String> {
-    println!("剪贴板控制：{:?}", text);
+pub fn clipboard_control(
+    text: &str,
+    control: &str,
+    paste: bool,
+    data_type: &str,
+) -> Result<String, String> {
+    // 按字符截取预览，避免中文等多字节字符在 byte index 处切片导致 panic。
+    let preview: String = text.chars().take(100).collect();
+    println!("[{}]剪贴板控制：{:?}", data_type, preview);
     if control == "write" {
         if data_type == "file" {
             Ok("暂不支持文件复制".to_string())
         } else if data_type == "image" {
-            let img = ImageDataDB { base64: text.to_string(), ..Default::default() };
+            let img = ImageDataDB {
+                base64: text.to_string(),
+                ..Default::default()
+            };
             let _ = ClipboardOperator::set_image(img);
+            println!("写入剪贴板成功");
             Ok("写入剪贴板成功".to_string())
         } else {
-            let _ = ClipboardOperator::set_text(text);
             if paste {
-                let _ = ClipboardOperator::paste_text(text);
+                ClipboardOperator::set_text_for_paste(text)
+            } else {
+                ClipboardOperator::set_text(text)
+            }
+            .map_err(|error| error.to_string())?;
+            if paste {
+                ClipboardOperator::paste_text().map_err(|error| error.to_string())?;
             }
             Ok("写入剪贴板成功".to_string())
         }
@@ -244,6 +330,9 @@ fn test() {
     // let file_path = "/System/Applications/Utilities/Migration Assistant.app";
     // let base64 = get_file_icon(file_path).unwrap();
     // println!("{}", base64)
-    let output = run_python_script("D:/Project/Lark/src-tauri/target/debug/config/lark/data/plugins/PrettyPostman/str2json.py",vec![]);
-    print!("{:?}",output);
+    let output = run_python_script(
+        "D:/Project/Lark/src-tauri/target/debug/config/lark/data/plugins/PrettyPostman/str2json.py",
+        vec![],
+    );
+    print!("{:?}", output);
 }

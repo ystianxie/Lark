@@ -1,13 +1,13 @@
 import React, {useState, useRef, useEffect, useCallback} from 'react';
 import {createGlobalStyle} from 'styled-components';
 import {List, Avatar} from 'antd';
-import {invoke} from "@tauri-apps/api/tauri";
+import {invoke} from "@tauri-apps/api/core";
 import InfiniteScroll from 'react-infinite-scroll-component';
 import throttle from 'lodash/throttle';
 import {getMaterialFileIcon, getMaterialFolderIcon} from "file-extension-icon-js";
 import baseComponent from "../baseComponent.jsx";
 import {debounce} from "lodash/function.js";
-import {appWindow} from "@tauri-apps/api/window";
+import {getCurrentWindow} from "@tauri-apps/api/window";
 import {modifyWindowSize} from "../template.jsx";
 
 const Wrapper = createGlobalStyle`
@@ -221,14 +221,27 @@ const ClipboardComponent = ({onKeyDown}) => {
 
     async function confirmClipboardContent() {
         // 确认剪贴板内容
-        if (data) {
-            await appWindow.hide();
+        const item = data?.[selectIndex];
+        if (item) {
+            await getCurrentWindow().hide();
             await modifyWindowSize("small");
+
+            // 历史列表使用 content_preview；粘贴时必须按 id 读取完整 content。
+            const fullItem = await invoke("get_history_id", {id: item.id});
+            let content = fullItem?.content || "";
+            const dataType = fullItem?.data_type || item.data_type || "";
+
+            if (dataType === "image") {
+                content = JSON.parse(content).base64
+            } else if (dataType === "file") {
+                let files = JSON.parse(content).files
+                content = files[0][0]
+            }
             invoke("clipboard_control", {
-                text: data[selectIndex]?.content || "",
+                text: content,
                 control: "write",
                 paste: true,
-                dataType: ""
+                dataType
             })
                 .then((res) => {
                     console.log('确认剪贴板内容', res)
@@ -347,6 +360,7 @@ const ClipboardComponent = ({onKeyDown}) => {
         if (content.data_type === "text") {
             return <div style={{overflow: "hidden", textOverflow: "ellipsis"}}>{content.content}</div>
         } else if (content.data_type === "image") {
+            console.log(content)
             return (<img src={"data:image/jpeg;base64," + JSON.parse(content.content)?.base64}
                          style={{maxWidth: "100%", maxHeight: "100%"}}></img>)
         } else if (content.data_type === "file") {

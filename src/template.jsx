@@ -6,17 +6,25 @@ import clipboardImg from "./assets/clipboard.svg";
 import componentImg from "./assets/component.svg";
 import rebuildImg from "./assets/rebuild.svg";
 import {evaluate} from "mathjs";
-import {appWindow, LogicalSize} from "@tauri-apps/api/window";
+import {getCurrentWindow} from "@tauri-apps/api/window";
+import {LogicalSize} from "@tauri-apps/api/dpi";
 import {IndexDBCache} from "./indexedDB.jsx";
 import throttle from "lodash/throttle.js";
 import {debounce} from "lodash/function.js";
-import {invoke} from "@tauri-apps/api";
+import {invoke, convertFileSrc} from '@tauri-apps/api/core';
 import {isMacOs, isWindows} from 'react-device-detect';
-import {convertFileSrc} from "@tauri-apps/api/tauri";
 import {action_readFile} from "./baseComponent.jsx"
 import ReactDOM from 'react-dom';
 
-function TemplateComponent({components, selectedKey, setSelectedKey, confirmComponentSelected: confirmSelected, fnDown}) {
+const appWindow = getCurrentWindow();
+
+function TemplateComponent({
+                               components,
+                               selectedKey,
+                               setSelectedKey,
+                               confirmSelected,
+                               fnDown
+                           }) {
     const scrollContainerRef = useRef(null);
     const [selectedIndex, setSelectedIndex] = useState(selectedKey || 1)
     const handleMouseEnter = (e, index) => {
@@ -248,7 +256,7 @@ function SubpageComponent({component, keyDown}) {
             }
 
         }
-        if (component?.type === "subpage" && component.data) {
+        if (component?.type === "panel" && component.data) {
             console.log("更新子页面：", component.data)
             loadDynamicComponent()
         } else {
@@ -268,7 +276,7 @@ function SubpageComponent({component, keyDown}) {
     return (
         <>
             <div id="subPageFrame"
-                 style={component?.type === "subpage" ? {height: "calc(100vh - 75px)", marginTop: "5px"} : {}}>
+                 style={component?.type === "panel" ? {height: "calc(100vh - 75px)", marginTop: "5px"} : {}}>
                 {RenderComponent ? <div style={subpageStyle}><RenderComponent onKeyDown={keyDown}/></div> : <div/>}
             </div>
         </>
@@ -331,26 +339,26 @@ const searchFileComponent = {
     icon: <img src={fileImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
     title: '文件搜索',
     desc: 'search file',
-    type: "component",
+    type: "input-panel",
 };
 const showPluginComponent = {
     icon: <img src={componentImg} alt="components" className='activateComponent' data-tauri-drag-region/>,
     title: '组件库',
     desc: 'show component',
-    type: "subpage"
+    type: "panel"
 };
 const settingPluginComponent = {
     icon: <img src={settingImg} alt="setting" className='activateComponent' data-tauri-drag-region/>,
     title: '应用设置',
     desc: 'app setting',
-    type: "subpage",
+    type: "panel",
     data: "settingComponent"
 };
 const clipboardPluginComponent = {
     icon: <img src={clipboardImg} alt="clipboard" className='activateComponent' data-tauri-drag-region/>,
     title: '剪贴板',
     desc: 'clipboard',
-    type: "subpage",
+    type: "panel",
     data: "clipboardComponent"
 };
 
@@ -425,10 +433,10 @@ const db_app_habit_params = {
 };
 
 const modifyWindowSize = async (size) => {
-    if (size === "big") {
+    if (size === "expanded") {
         size = new LogicalSize(718, 600);
         document.getElementById("mainDiv").style.height = (size.height * 0.97) + "px";
-    } else if (size === "small") {
+    } else if (size === "compact") {
         size = new LogicalSize(718, 71);
         document.getElementById("mainDiv").style.height = (size.height * 0.74) + "px";
     } else {
@@ -454,10 +462,14 @@ const getWindowPosition = async () => {
 
 // 读取本地组件库，查看注册状态
 const loadCustomComponent = async () => {
-    let plugins = await invoke("load_plugins", {})
+    const records = await invoke("load_plugins", {});
     const files = {};
-    for (const plugin_name in plugins) {
-        files[plugin_name] = JSON.parse(plugins[plugin_name]);
+    for (const record of records || []) {
+        if (record.error || !record.manifest || !record.manifest.id) {
+            console.warn("跳过无效插件", record);
+            continue;
+        }
+        files[record.id] = { ...record.manifest, __root: record.root, __pluginId: record.id };
     }
     return files;
 };

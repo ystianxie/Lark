@@ -103,9 +103,9 @@ body {
     justify-content: center;
     align-items: center;
     width: 32px;
-    height: 32px;
+    /*height: 32px;*/
     border-radius: 10px;
-    background-color: #797979;
+    background-color: #dc7d7d;
     font-size: 12px;
     padding: 0 5px 0 5px;
     margin: 2px 10px 2px 0;
@@ -147,10 +147,10 @@ body {
 
 .templateDesc {
     font-size: 13px;
-    color: #606060;
+    color: #9a9797;
     width: 100%;
     max-width: 590px;
-    height: 15px;
+    height: 16px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -165,6 +165,14 @@ body {
 
 .activate {
     background-color: #3a7f87;
+}
+
+.activate .templateTitle {
+    color: #023005;
+}
+
+.activate .templateDesc {
+    color: #cdbb7c;
 }
 
 .activateComponent {
@@ -186,6 +194,11 @@ body {
     /* Internet Explorer/Edge */
     cursor: default;
     font-size: 21px;
+}
+
+/* 结果列表使用 28px；进入交互式插件后，主输入前的激活图标使用更大的尺寸。 */
+.activateComponent--active {
+    height: 38px;
 }
 
 .pistol {

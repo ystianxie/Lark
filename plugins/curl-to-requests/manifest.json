@@ -1,0 +1,20 @@
+{
+  "id": "curl-to-requests",
+  "name": "Curl 转 Python Requests",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "将 curl 命令转换为 Python requests 代码",
+  "entry": { "type": "js", "path": "dist/main.js" },
+  "workflows": [
+    {
+      "id": "open-curl-to-requests",
+      "title": "Curl 转 Python Requests",
+      "description": "输入 curl，实时生成 Python 代码",
+      "keywords": ["curl", "curl-to-requests"],
+      "type": "panel",
+      "handler": "open",
+      "icon": "./assets/icon.svg"
+    }
+  ],
+  "permissions": ["python.execute"]
+}

@@ -2,14 +2,15 @@
 extern crate winapi;
 
 #[cfg(target_os = "macos")]
-use objc::{msg_send,sel,sel_impl};
-#[cfg(target_os = "macos")]
 use objc::runtime::{Class, Object};
-use tauri::{Manager, Runtime};
+#[cfg(target_os = "macos")]
+use objc::{msg_send, sel, sel_impl};
+use tauri::{Emitter, Manager, Runtime, Window};
 use window_shadows::set_shadow;
 
 pub fn set_window_shadow<R: Runtime>(app: &tauri::App<R>) {
-    #[cfg(target_os = "macos")]{
+    #[cfg(target_os = "macos")]
+    {
         let window: tauri::Window<R> = app.get_window("skylark").unwrap();
         set_shadow(&window, true).expect("Unsupported platform!");
     }
@@ -47,13 +48,6 @@ pub fn set_window_show() -> String {
     "".to_string()
 }
 
-#[cfg(target_os = "windows")]
-#[tauri::command(rename_all = "camelCase")]
-pub fn set_window_show() -> String {
-
-    "".to_string()
-}
-
 #[cfg(target_os = "macos")]
 pub fn register_global_hotkey() {
     unsafe {
@@ -62,8 +56,17 @@ pub fn register_global_hotkey() {
         let _: () = msg_send![app, activateIgnoringOtherApps: true];
     }
 }
-
-
+#[cfg(target_os = "windows")]
+#[tauri::command(rename_all = "camelCase")]
+pub fn set_window_show(app: tauri::AppHandle) {
+    if let Some(main_window) = app.get_window("skylark") {
+        main_window
+            .emit("window-show-request", ())
+            .expect("Failed to emit event");
+    } else {
+        eprintln!("Window not found");
+    }
+}
 
 #[cfg(target_os = "windows")]
 fn set_cursor_pos(x: i32, y: i32) -> bool {

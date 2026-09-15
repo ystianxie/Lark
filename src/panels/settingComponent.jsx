@@ -2,7 +2,7 @@ import React, {useState, useRef, useEffect, useReducer} from 'react';
 import styled, {createGlobalStyle} from 'styled-components';
 import {distance} from "mathjs";
 import {Button, Input, InputNumber, Checkbox, Flex} from 'antd';
-import {invoke} from "@tauri-apps/api/tauri";
+import {invoke} from "@tauri-apps/api/core";
 import {event} from "@tauri-apps/api";
 
 const Wrapper = createGlobalStyle`

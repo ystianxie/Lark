@@ -1,14 +1,16 @@
-use std::fmt::format;
 use crate::utils::dirs::app_data_dir;
 use crate::utils::string_factory;
 use anyhow::Result;
+use pinyin::ToPinyin;
 use rusqlite::{Connection, OpenFlags};
+use std::fmt::format;
 use std::fs::File;
 use std::path::Path;
-use pinyin::ToPinyin;
+use std::sync::OnceLock;
 
 const RECORD_SQLITE_FILE: &str = "record_data_v1.sqlite";
 const APP_FILE_INDEX_FILE: &str = "index_data_v1.sqlite";
+static RECORD_SCHEMA_READY: OnceLock<()> = OnceLock::new();
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 pub struct Record {
@@ -18,8 +20,9 @@ pub struct Record {
     pub data_type: String,
     pub md5: String,
     pub create_time: u64,
-    pub app_icon:String,
+    pub app_icon: String,
     pub source: String,
+    pub source_path: String,
 }
 impl Default for Record {
     fn default() -> Self {
@@ -32,6 +35,7 @@ impl Default for Record {
             create_time: 0,
             app_icon: "".to_string(),
             source: "".to_string(),
+            source_path: "".to_string(),
         }
     }
 }
@@ -62,11 +66,8 @@ pub struct RecordSQL {
 #[allow(unused)]
 impl RecordSQL {
     pub fn new() -> Self {
-        // 创建数据库链接
+        RECORD_SCHEMA_READY.get_or_init(Self::init);
         let data_dir = app_data_dir().unwrap().join(RECORD_SQLITE_FILE);
-        if !Path::new(&data_dir).exists() {
-            Self::init()
-        }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
         RecordSQL { conn: c }
     }
@@ -87,35 +88,72 @@ impl RecordSQL {
             data_type   VARCHAR(20) DEFAULT '',
             md5         VARCHAR(200) DEFAULT '',
             source      VARCHAR(20) DEFAULT '',
+            source_path TEXT NOT NULL DEFAULT '',
             create_time INTEGER
         );
         "#;
         c.execute(sql, ()).unwrap();
+        let has_source_path = {
+            let mut stmt = c.prepare("PRAGMA table_info(record)").unwrap();
+            let columns = stmt.query_map([], |row| row.get::<_, String>(1)).unwrap();
+            let has_column = columns
+                .filter_map(std::result::Result::ok)
+                .any(|column| column == "source_path");
+            has_column
+        };
+        if !has_source_path {
+            // Add source identity to older databases without deleting or
+            // rewriting their clipboard history.
+            c.execute(
+                "ALTER TABLE record ADD COLUMN source_path TEXT NOT NULL DEFAULT ''",
+                (),
+            )
+            .unwrap();
+        }
     }
 
     pub fn insert_record(&self, r: &Record) -> Result<i64> {
-        let sql = "insert into record (content,md5,create_time,data_type,content_preview,source) values (?1,?2,?3,?4,?5,?6)";
+        let sql = "insert into record (content,md5,create_time,data_type,content_preview,source,source_path) values (?1,?2,?3,?4,?5,?6,?7)";
         let md5 = string_factory::md5(r.content.as_str());
-        let now = chrono::Local::now().timestamp_millis() as u64;
+        // SQLite INTEGER is a signed 64-bit value, which is the type rusqlite
+        // accepts for integer parameters.
+        let now = chrono::Local::now().timestamp_millis();
         let content_preview = r.content_preview.as_deref().unwrap_or("");
-        let res = self.conn.execute(sql, (&r.content, md5, now, &r.data_type, content_preview, &r.source))?;
+        let res = self.conn.execute(
+            sql,
+            (
+                &r.content,
+                md5,
+                now,
+                &r.data_type,
+                content_preview,
+                &r.source,
+                &r.source_path,
+            ),
+        )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     fn find_record_by_md5(&self, md5: &str, data_type: &str) -> Result<Record> {
         let sql = "SELECT id FROM record WHERE md5 = ?1 and data_type = ?2";
         let r = self.conn.query_row(sql, [md5, data_type], |row| {
-            Ok(Record { id: row.get(0)?, ..Default::default() })
+            Ok(Record {
+                id: row.get::<_, i64>(0)? as u64,
+                ..Default::default()
+            })
         })?;
         Ok(r)
     }
 
     // 更新时间
     fn update_record_create_time(&self, r: &Record) -> Result<()> {
-        let sql = "update record set create_time = ?2 where id = ?1";
+        let sql = "update record set create_time = ?2, source = ?3, source_path = ?4 where id = ?1";
         // 获取当前毫秒级时间戳
-        let now = chrono::Local::now().timestamp_millis() as u64;
-        self.conn.execute(sql, [&r.id, &now])?;
+        let now = chrono::Local::now().timestamp_millis();
+        self.conn.execute(
+            sql,
+            rusqlite::params![r.id as i64, now, &r.source, &r.source_path],
+        )?;
         Ok(())
     }
 
@@ -123,7 +161,9 @@ impl RecordSQL {
     pub fn insert_if_not_exist(&self, r: &Record) -> Result<()> {
         let md5 = string_factory::md5(r.content.as_str());
         match self.find_record_by_md5(&md5, &r.data_type) {
-            Ok(res) => {
+            Ok(mut res) => {
+                res.source = r.source.clone();
+                res.source_path = r.source_path.clone();
                 self.update_record_create_time(&res)?;
             }
             Err(_e) => {
@@ -147,7 +187,7 @@ impl RecordSQL {
     }
 
     pub fn find_all(&self) -> Result<Vec<Record>> {
-        let sql = "SELECT id, content_preview, data_type, md5, create_time, source FROM record order by create_time desc";
+        let sql = "SELECT id, content_preview, data_type, md5, create_time, source, source_path FROM record order by create_time desc";
         let mut stmt = self.conn.prepare(sql)?;
         let mut rows = stmt.query([])?;
         let mut res = vec![];
@@ -155,14 +195,15 @@ impl RecordSQL {
             let data_type: String = row.get(2)?;
             let content: String = row.get(1)?;
             let r = Record {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 content,
                 content_preview: None,
                 data_type,
                 md5: row.get(3)?,
-                create_time: row.get(4)?,
+                create_time: row.get::<_, i64>(4)? as u64,
                 source: row.get(5)?,
-                app_icon:"".to_string()
+                source_path: row.get(6)?,
+                app_icon: "".to_string(),
             };
             res.push(r);
         }
@@ -170,7 +211,7 @@ impl RecordSQL {
     }
 
     pub fn find_part(&self, limit: i32, offset: i32) -> Result<Vec<Record>> {
-        let sql = "SELECT id, content_preview, data_type, md5, create_time, source FROM record order by create_time desc limit ?1 offset ?2";
+        let sql = "SELECT id, content_preview, data_type, md5, create_time, source, source_path FROM record order by create_time desc limit ?1 offset ?2";
         let mut stmt = self.conn.prepare(sql)?;
         let mut rows = stmt.query([limit, offset])?;
         let mut res = vec![];
@@ -178,14 +219,15 @@ impl RecordSQL {
             let data_type: String = row.get(2)?;
             let content: String = row.get(1)?;
             let r = Record {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 content,
                 content_preview: None,
                 data_type,
                 md5: row.get(3)?,
-                create_time: row.get(4)?,
+                create_time: row.get::<_, i64>(4)? as u64,
                 source: row.get(5)?,
-                app_icon:"".to_string()
+                source_path: row.get(6)?,
+                app_icon: "".to_string(),
             };
             res.push(r);
         }
@@ -217,14 +259,15 @@ impl RecordSQL {
             let data_type: String = row.get(4)?;
             let content: String = row.get(1)?;
             let r = Record {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 content,
                 content_preview: None,
                 data_type,
                 md5: row.get(2)?,
-                create_time: row.get(3)?,
+                create_time: row.get::<_, i64>(3)? as u64,
                 source: "".to_string(),
-                app_icon:"".to_string()
+                source_path: "".to_string(),
+                app_icon: "".to_string(),
             };
             res.push(r);
         }
@@ -234,7 +277,7 @@ impl RecordSQL {
     pub fn find_by_keyword(&self, keyword: &str, offset: i32) -> Result<Vec<Record>> {
         let mut sql: String = String::new();
         sql.push_str(
-            "SELECT id, content_preview, md5, create_time, data_type, source FROM record where and content like ?1",
+            "SELECT id, content_preview, md5, create_time, data_type, source, source_path FROM record where and content like ?1",
         );
         let mut limit: usize = 30;
         let mut params: Vec<String> = vec![];
@@ -249,14 +292,15 @@ impl RecordSQL {
             let data_type: String = row.get(4)?;
             let content: String = row.get(1)?;
             let r = Record {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 content,
                 content_preview: None,
                 data_type,
                 md5: row.get(2)?,
-                create_time: row.get(3)?,
+                create_time: row.get::<_, i64>(3)? as u64,
                 source: row.get(5)?,
-                app_icon:"".to_string()
+                source_path: row.get(6)?,
+                app_icon: "".to_string(),
             };
             res.push(r);
         }
@@ -268,7 +312,9 @@ impl RecordSQL {
         // 先查询count，如果数量超过limit 10个以上了就删除多余的部分 主要是防止频繁重建数据库
         let mut stmt = self.conn.prepare("SELECT count(id) FROM record")?;
         let mut rows = stmt.query([])?;
-        let count: usize = rows.next()?.unwrap().get(0).unwrap();
+        // SQLite INTEGER maps to a signed 64-bit integer in rusqlite.
+        let count: i64 = rows.next()?.unwrap().get(0)?;
+        let limit = i64::try_from(limit)?;
         if count < 10 + limit {
             return Ok(false);
         }
@@ -279,17 +325,19 @@ impl RecordSQL {
     }
 
     pub fn find_by_id(&self, id: u64) -> Result<Record> {
-        let sql = "SELECT id, content, data_type, md5, create_time, source FROM record where id = ?1";
-        let r = self.conn.query_row(sql, [&id], |row| {
+        let sql =
+            "SELECT id, content, data_type, md5, create_time, source, source_path FROM record where id = ?1";
+        let r = self.conn.query_row(sql, [id as i64], |row| {
             Ok(Record {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 content: row.get(1)?,
                 content_preview: None,
                 data_type: row.get(2)?,
                 md5: row.get(3)?,
-                create_time: row.get(4)?,
+                create_time: row.get::<_, i64>(4)? as u64,
                 source: row.get(5)?,
-                app_icon:"".to_string()
+                source_path: row.get(6)?,
+                app_icon: "".to_string(),
             })
         })?;
         Ok(r)
@@ -305,10 +353,7 @@ impl IndexSQL {
     pub fn new() -> Self {
         // 创建数据库链接
         let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
-        // let data_dir = "/Users/starsxu/.config/lark/data/index_data_v1.sqlite";
-        if !Path::new(&data_dir).exists() {
-            Self::init()
-        }
+        Self::init();
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
         IndexSQL { conn: c }
     }
@@ -337,7 +382,7 @@ impl IndexSQL {
         );
         CREATE INDEX IF NOT EXISTS idx_md5 ON app_index (md5);
         "#;
-        c.execute(sql, ()).unwrap();
+        c.execute_batch(sql).unwrap();
         let sql = r#"
         CREATE TABLE IF NOT EXISTS file_index
         (
@@ -350,19 +395,34 @@ impl IndexSQL {
             abb         TEXT DEFAULT '',
             type        TEXT DEFAULT 'app',
             md5         TEXT NOT NULL,
+            generation  INTEGER NOT NULL DEFAULT 0,
             create_time INTEGER DEFAULT (strftime('%s', 'now'))
         );
-        CREATE INDEX IF NOT EXISTS idx_md5 ON file_index (md5);
         "#;
-        c.execute(sql, ()).unwrap();
+        c.execute_batch(sql).unwrap();
+        // Migrate databases created before snapshot generations were introduced.
+        let _ = c.execute(
+            "ALTER TABLE file_index ADD COLUMN generation INTEGER NOT NULL DEFAULT 0",
+            (),
+        );
+        c.execute_batch(r#"
+            CREATE INDEX IF NOT EXISTS idx_md5 ON file_index (md5);
+            CREATE INDEX IF NOT EXISTS idx_file_generation_title ON file_index (generation, title);
+            CREATE INDEX IF NOT EXISTS idx_file_generation_path ON file_index (generation, path);
+            CREATE TABLE IF NOT EXISTS file_index_staging
+            (
+                title TEXT DEFAULT '', path TEXT NOT NULL UNIQUE, desc TEXT DEFAULT '',
+                pinyin TEXT DEFAULT '', abb TEXT DEFAULT '', type TEXT DEFAULT 'file', md5 TEXT NOT NULL
+            );
+        "#).unwrap();
     }
 
     pub fn insert_file_index(&self, r: &FileIndex) -> Result<i64> {
         let sql = "insert into file_index (title,path,desc,type,md5) values (?1,?2,?3,?4,?5)";
         let md5 = string_factory::md5(r.path.as_str());
-        let res = self.conn.execute(
-            sql, [&r.title, &r.path, &r.desc, &r.file_type, &md5],
-        );
+        let res = self
+            .conn
+            .execute(sql, [&r.title, &r.path, &r.desc, &r.file_type, &md5]);
         match res {
             Ok(r) => {}
             Err(e) => {
@@ -376,13 +436,23 @@ impl IndexSQL {
         println!("开始提交索引:{:?}", &paths.len());
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare("INSERT OR IGNORE INTO file_index (title,path,desc,type,md5) VALUES (?1,?2,?3,?4,?5)")?;
+            let mut stmt = tx.prepare("INSERT OR IGNORE INTO file_index (title,path,desc,pinyin,abb,type,md5,generation) VALUES (?1,?2,?3,?4,?5,?6,?7,0)")?;
             for path in paths {
                 let md5 = string_factory::md5(path.path.as_str());
-                let res = stmt.execute(&[&path.title, &path.path, &path.desc, &path.file_type, &md5]);
+                let res = stmt.execute(rusqlite::params![
+                    path.title,
+                    path.path,
+                    path.desc,
+                    path.pinyin,
+                    path.abb,
+                    path.file_type,
+                    md5
+                ]);
                 match res {
                     Ok(r) => {}
-                    Err(e) => { println!("插入索引失败:{:?}", e); }
+                    Err(e) => {
+                        println!("插入索引失败:{:?}", e);
+                    }
                 }
             }
         }
@@ -390,11 +460,60 @@ impl IndexSQL {
         Ok(())
     }
 
+    pub fn begin_file_generation(&self) -> Result<i64> {
+        let generation: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(generation), 0) + 1 FROM file_index",
+            [],
+            |row| row.get(0),
+        )?;
+        self.conn.execute("DELETE FROM file_index_staging", [])?;
+        Ok(generation)
+    }
+
+    pub fn insert_file_generation(&mut self, _generation: i64, paths: &[FileIndex]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let mut stmt = tx.prepare("INSERT OR REPLACE INTO file_index_staging (title,path,desc,pinyin,abb,type,md5) VALUES (?1,?2,?3,?4,?5,?6,?7)")?;
+        for path in paths {
+            let md5 = string_factory::md5(&path.path);
+            stmt.execute(rusqlite::params![
+                path.title,
+                path.path,
+                path.desc,
+                path.pinyin,
+                path.abb,
+                path.file_type,
+                md5
+            ])?;
+        }
+        drop(stmt);
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn commit_file_generation(&mut self, generation: i64) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM file_index", [])?;
+        tx.execute("INSERT INTO file_index (title,path,desc,pinyin,abb,type,md5,generation) SELECT title,path,desc,pinyin,abb,type,md5,?1 FROM file_index_staging", [generation])?;
+        tx.execute("DELETE FROM file_index_staging", [])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn insert_app_index(&self, r: &FileIndex) -> Result<i64> {
         let sql = "insert into app_index (title,path,desc,icon,pinyin,abb,md5) values (?1,?2,?3,?4,?5,?6,?7)";
         let md5 = string_factory::md5(r.path.as_str());
         let res = self.conn.execute(
-            sql, [&r.title, &r.path, &r.desc, &r.icon, &r.pinyin, &r.abb, &r.file_type, &md5],
+            sql,
+            [
+                &r.title,
+                &r.path,
+                &r.desc,
+                &r.icon,
+                &r.pinyin,
+                &r.abb,
+                &r.file_type,
+                &md5,
+            ],
         );
         match res {
             Ok(r) => {}
@@ -418,7 +537,9 @@ impl IndexSQL {
                     Ok(_) => {
                         // println!("插入索引成功");
                     }
-                    Err(e) => { println!("插入索引失败:{:?}", e); }
+                    Err(e) => {
+                        println!("插入索引失败:{:?}", e);
+                    }
                 }
             }
         }
@@ -429,22 +550,36 @@ impl IndexSQL {
     pub fn find_app(&self, keyword: &str, offset: i32) -> Result<Vec<FileIndex>> {
         let mut sql: String = String::new();
         sql.push_str(
-            "SELECT id, title, path, desc, icon FROM app_index where (title like ?1 or pinyin like ?2 or abb like ?2 or path like ?3)"
+            "SELECT id, title, path, desc, icon FROM app_index
+             WHERE (lower(title) LIKE lower(?1) OR lower(pinyin) LIKE lower(?2)
+             OR lower(abb) LIKE lower(?2) OR lower(path) LIKE lower(?3))",
         );
         let mut limit: usize = 30;
         let mut params: Vec<String> = vec![];
         params.push(format!("{}%", keyword));
         params.push(format!("{}%", keyword));
-        params.push(format!("%/Applications/{}%.app", keyword));
+        params.push(format!("%{}%", keyword));
         params.push(limit.to_string());
         params.push(offset.to_string());
-        let sql = format!("{} order by create_time desc limit ?4 offset ?5", sql);
+        let sql = format!(
+            "{} ORDER BY
+             CASE
+               WHEN lower(title) = lower(?1) THEN 0
+               WHEN lower(title) LIKE lower(?1) THEN 1
+               WHEN instr(replace(lower(path), '\\', '/'), '/' || lower(title) || '/') > 0 THEN 2
+               WHEN lower(path) LIKE lower(?3) THEN 3
+               ELSE 4
+             END,
+             length(title), title COLLATE NOCASE
+             LIMIT ?4 OFFSET ?5",
+            sql
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
         let mut res = vec![];
         while let Some(row) = rows.next()? {
             let r = FileIndex {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 title: row.get(1)?,
                 path: row.get(2)?,
                 desc: row.get(3)?,
@@ -457,24 +592,45 @@ impl IndexSQL {
         Ok(res)
     }
 
-    pub fn find_app_icon(&self, app_name: &str) -> Result<FileIndex> {
-        let mut sql = "SELECT id, title, icon FROM app_index where title = ?1";
-        let r = self.conn.query_row(sql, [app_name], |row| {
-            Ok(FileIndex {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                icon: row.get(2)?,
-                ..Default::default()
+    pub fn find_app_icon(&self, app_name: &str, app_path: &str) -> Result<FileIndex> {
+        let sql = r#"
+            SELECT id, title, path, icon
+            FROM app_index
+            WHERE (
+                ?2 <> ''
+                AND replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
+            ) OR lower(title) = lower(?1)
+            ORDER BY CASE
+                WHEN ?2 <> ''
+                    AND replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
+                THEN 0
+                ELSE 1
+            END
+            LIMIT 1
+        "#;
+        let r = self
+            .conn
+            .query_row(sql, rusqlite::params![app_name, app_path], |row| {
+                Ok(FileIndex {
+                    id: row.get::<_, i64>(0)? as u64,
+                    title: row.get(1)?,
+                    path: row.get(2)?,
+                    icon: row.get(3)?,
+                    ..Default::default()
+                })
             })
-        }).unwrap_or(FileIndex::default());
+            .unwrap_or(FileIndex::default());
         Ok(r)
     }
 
     pub fn find_by_id(&self, table: &str, id: i64) -> Result<FileIndex> {
-        let sql = &format!("SELECT id, title, path, type FROM {}_index where id = ?1", table);
+        let sql = &format!(
+            "SELECT id, title, path, type FROM {}_index where id = ?1",
+            table
+        );
         let r = self.conn.query_row(sql, [&id], |row| {
             Ok(FileIndex {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 title: row.get(1)?,
                 path: row.get(2)?,
                 file_type: row.get(3)?,
@@ -484,23 +640,46 @@ impl IndexSQL {
         Ok(r)
     }
 
-    pub fn find_by_keyword(&self, table: &str, keyword: &str, offset: i32) -> Result<Vec<FileIndex>> {
+    pub fn find_by_keyword(
+        &self,
+        table: &str,
+        keyword: &str,
+        offset: i32,
+    ) -> Result<Vec<FileIndex>> {
         let mut sql: String = String::new();
-        sql.push_str(
-            &format!("SELECT id, title, path, desc, icon, type FROM {}_index where title like ?1", table)
-        );
+        sql.push_str(&format!(
+            "SELECT id, title, path, desc, icon, type FROM {0}_index \
+             WHERE lower(title) LIKE lower(?3) OR lower(path) LIKE lower(?3)",
+            table
+        ));
         let mut limit: usize = 30;
         let mut params: Vec<String> = vec![];
+        // Keep the most relevant matches in the first page: exact title,
+        // title prefix, path prefix, then ordinary substring matches.
+        params.push(keyword.to_string());
+        params.push(format!("{}%", keyword));
         params.push(format!("%{}%", keyword));
         params.push(limit.to_string());
         params.push(offset.to_string());
-        let sql = format!("{} order by create_time desc limit ?2 offset ?3", sql);
+        let sql = format!(
+            "{} ORDER BY
+             CASE
+               WHEN lower(title) = lower(?1) THEN 0
+               WHEN lower(title) LIKE lower(?2) THEN 1
+               WHEN lower(path) LIKE lower(?2) THEN 2
+               ELSE 3
+             END,
+             CASE WHEN lower(title) LIKE lower(?3) THEN 0 ELSE 1 END,
+             length(title), title COLLATE NOCASE
+             LIMIT ?4 OFFSET ?5",
+            sql
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
         let mut res = vec![];
         while let Some(row) = rows.next()? {
             let r = FileIndex {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 title: row.get(1)?,
                 path: row.get(2)?,
                 desc: row.get(3)?,
@@ -534,7 +713,9 @@ impl IndexSQL {
 
     pub fn md5_is_exist(&self, table: &str, md5: &str) -> Result<bool> {
         let sql = &format!("SELECT count(*) FROM {}_index WHERE md5 = ?1", table);
-        let count: u32 = self.conn.query_row(sql, [md5.to_string()], |row| row.get(0))?;
+        let count: u32 = self
+            .conn
+            .query_row(sql, [md5.to_string()], |row| row.get(0))?;
         Ok(count > 0)
     }
 
@@ -547,7 +728,10 @@ impl IndexSQL {
     fn find_by_md5(&self, table: &str, md5: &str) -> Result<FileIndex> {
         let sql = &format!("SELECT id FROM {}_index WHERE md5 = ?1", table);
         let r = self.conn.query_row(sql, [md5.to_string()], |row| {
-            Ok(FileIndex { id: row.get(0)?, ..Default::default() })
+            Ok(FileIndex {
+                id: row.get::<_, i64>(0)? as u64,
+                ..Default::default()
+            })
         })?;
         Ok(r)
     }
@@ -556,7 +740,8 @@ impl IndexSQL {
         let sql = &format!("update {}_index set create_time = ?1 where id = ?2", table);
         // 获取当前毫秒级时间戳
         let now = chrono::Local::now().timestamp_millis() as u64;
-        self.conn.execute(sql, [now.to_string(), r.id.to_string()])?;
+        self.conn
+            .execute(sql, [now.to_string(), r.id.to_string()])?;
         Ok(())
     }
 }

@@ -1,0 +1,21 @@
+{
+  "id": "timestamp",
+  "name": "时间戳转换",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "显示当前时间，并将输入的时间戳转换为日期时间",
+  "entry": { "type": "js", "path": "dist/main.js" },
+  "workflows": [
+    {
+      "id": "timestamp-convert",
+      "title": "时间戳转换",
+      "description": "当前时间戳、当前时间，或转换输入的时间戳",
+      "keywords": ["timestamp", "时间戳", "时间"],
+      "type": "action",
+      "interactive": true,
+      "handler": "convert",
+      "icon": "./assets/icon.svg"
+    }
+  ],
+  "permissions": ["python.execute"]
+}

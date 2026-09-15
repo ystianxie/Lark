@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::io::Write;
-use serde_json::{to_string, Value};
+use crate::utils::database::Record;
 use crate::utils::dirs::config_path;
 use anyhow::Result;
 use applications::prelude::f;
 use serde::{Deserialize, Serialize};
+use serde_json::{to_string, Value};
+use std::collections::HashMap;
+use std::io::Write;
+use tauri::Manager;
 use walkdir::DirEntry;
-use crate::utils::database::Record;
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BaseConfig {
     app_name: String,
@@ -24,6 +24,8 @@ pub struct BaseConfig {
     clipboard_record_file_time: Option<i32>,
     pub local_file_search_exclude_paths: Vec<String>,
     pub local_file_search_exclude_types: Vec<String>,
+    #[serde(default)]
+    pub local_app_search_paths: Vec<String>,
 }
 impl Default for BaseConfig {
     #[cfg(target_os = "macos")]
@@ -68,6 +70,7 @@ impl Default for BaseConfig {
                 "kernel".to_string(),
                 "xpc".to_string(),
             ],
+            local_app_search_paths: Vec::new(),
         }
     }
     #[cfg(target_os = "windows")]
@@ -94,10 +97,30 @@ impl Default for BaseConfig {
                 r"C:\Program Files\Common Files".to_string(),
                 r"C:\Windows\SoftwareDistribution".to_string(),
                 r"C:\Windows\Prefetch".to_string(),
+                // User/application caches and local development artifacts.
+                "*/AppData".to_string(),
+                "*/.git".to_string(),
+                "*/.hg".to_string(),
+                "*/.svn".to_string(),
                 "*/node_modules".to_string(),
-                "*/src-tauri/target".to_string(),
+                "*/target".to_string(),
+                "*/build".to_string(),
                 "*/venv".to_string(),
+                "*/.venv".to_string(),
+                "*/env".to_string(),
+                "*/.env".to_string(),
+                "*/__pycache__".to_string(),
+                "*/.pytest_cache".to_string(),
+                "*/.mypy_cache".to_string(),
+                "*/.ruff_cache".to_string(),
                 "*/dist".to_string(),
+                "*/out".to_string(),
+                "*/coverage".to_string(),
+                "*/.cache".to_string(),
+                "*/.turbo".to_string(),
+                "*/.next".to_string(),
+                "*/.nuxt".to_string(),
+                "*/vendor".to_string(),
             ],
             local_file_search_exclude_types: vec![
                 "sys".to_string(),
@@ -110,6 +133,12 @@ impl Default for BaseConfig {
                 "vxd".to_string(),
                 "msi".to_string(),
                 "evt".to_string(),
+            ],
+            local_app_search_paths: vec![
+                r"D:\App".to_string(),
+                r"D:\Apps".to_string(),
+                r"C:\App".to_string(),
+                r"C:\Apps".to_string(),
             ],
         }
     }
@@ -138,46 +167,50 @@ pub struct ConfigData {
     plugins: HashMap<String, Value>,
 }
 
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
     config: ConfigData,
 }
 
-
 impl Config {
     pub fn new() -> Self {
         Self {
-            config: Self::read_local_config().unwrap()
+            config: Self::read_local_config().unwrap(),
         }
     }
     pub fn get_clipboard_record_limit(&self) -> i32 {
         self.config.base.clipboard_record_count.unwrap_or(-1)
     }
-    pub fn get_file_search_exclude_paths(&self) -> Vec<String> {
-        let mut paths = vec![];
-        let home_dir = tauri::api::path::home_dir().unwrap().to_str().unwrap().to_string();
-        for mut path in self.config.base.local_file_search_exclude_paths.clone() {
-            if path.starts_with("~/") {
-                path = path.replace("~", &home_dir);
-            }
-            paths.push(path)
-        }
-        paths
-    }
+    // pub fn get_file_search_exclude_paths(&self) -> Vec<String> {
+    //     let mut paths = vec![];
+    //     let home_dir = Manager::path(&self).home_dir().unwrap().to_str().unwrap().to_string();
+    //     for mut path in self.config.base.local_file_search_exclude_paths.clone() {
+    //         if path.starts_with("~/") {
+    //             path = path.replace("~", &home_dir);
+    //         }
+    //         paths.push(path)
+    //     }
+    //     paths
+    // }
     // todo 设置文件搜索排除 目录和类型
 
     pub fn read_local_config() -> Result<ConfigData> {
         let config_file_path = config_path()?;
-        let config = ConfigData { ..Default::default() };
-        println!("配置文件路径{:?}",config_file_path);
+        let config = ConfigData {
+            ..Default::default()
+        };
+        println!("配置文件路径{:?}", config_file_path);
         if !config_file_path.exists() {
             let file_result = std::fs::File::create(config_file_path);
             match file_result {
                 Ok(mut file) => {
-                    let config = ConfigData { ..Default::default() };
-                    let config_string = serde_json::to_string_pretty(&config).unwrap_or("".to_string());
-                    file.write_all(&config_string.as_bytes()).expect("写入失败!");
+                    let config = ConfigData {
+                        ..Default::default()
+                    };
+                    let config_string =
+                        serde_json::to_string_pretty(&config).unwrap_or("".to_string());
+                    file.write_all(&config_string.as_bytes())
+                        .expect("写入失败!");
                     Ok(config)
                 }
                 Err(e) => {
@@ -187,7 +220,21 @@ impl Config {
             }
         } else {
             let file_result = std::fs::File::open(config_file_path)?;
-            let config = serde_json::from_reader(&file_result).unwrap_or(config);
+            let mut config: ConfigData = serde_json::from_reader(&file_result).unwrap_or(config);
+            // Keep user customizations, while adding newly introduced safe defaults
+            // to existing installations on the next read.
+            let default_paths = BaseConfig::default().local_file_search_exclude_paths;
+            for path in default_paths {
+                if !config.base.local_file_search_exclude_paths.contains(&path) {
+                    config.base.local_file_search_exclude_paths.push(path);
+                }
+            }
+            let default_app_paths = BaseConfig::default().local_app_search_paths;
+            for path in default_app_paths {
+                if !config.base.local_app_search_paths.contains(&path) {
+                    config.base.local_app_search_paths.push(path);
+                }
+            }
             Ok(config)
         }
     }
@@ -198,16 +245,36 @@ impl Config {
             ConfigUpdate::Version(value) => self.config.base.version = value,
             ConfigUpdate::HotkeyAwaken(value) => self.config.base.hotkey_awaken = value,
             ConfigUpdate::HotkeyClipboard(value) => self.config.base.hotkey_clipboard = value,
-            ConfigUpdate::ClipboardRecordCountSwitch(value) => self.config.base.clipboard_record_count_switch = value,
-            ConfigUpdate::ClipboardRecordCount(value) => self.config.base.clipboard_record_count = value,
-            ConfigUpdate::ClipboardRecordTextSwitch(value) => self.config.base.clipboard_record_text_switch = value,
-            ConfigUpdate::ClipboardRecordTextTime(value) => self.config.base.clipboard_record_text_time = value,
-            ConfigUpdate::ClipboardRecordImageSwitch(value) => self.config.base.clipboard_record_image_switch = value,
-            ConfigUpdate::ClipboardRecordImageTime(value) => self.config.base.clipboard_record_image_time = value,
-            ConfigUpdate::ClipboardRecordFileSwitch(value) => self.config.base.clipboard_record_file_switch = value,
-            ConfigUpdate::ClipboardRecordFileTime(value) => self.config.base.clipboard_record_file_time = value,
-            ConfigUpdate::LocalFileSearchExcludePaths(value) => self.config.base.local_file_search_exclude_paths = value,
-            ConfigUpdate::LocalFileSearchExcludeTypes(value) => self.config.base.local_file_search_exclude_types = value
+            ConfigUpdate::ClipboardRecordCountSwitch(value) => {
+                self.config.base.clipboard_record_count_switch = value
+            }
+            ConfigUpdate::ClipboardRecordCount(value) => {
+                self.config.base.clipboard_record_count = value
+            }
+            ConfigUpdate::ClipboardRecordTextSwitch(value) => {
+                self.config.base.clipboard_record_text_switch = value
+            }
+            ConfigUpdate::ClipboardRecordTextTime(value) => {
+                self.config.base.clipboard_record_text_time = value
+            }
+            ConfigUpdate::ClipboardRecordImageSwitch(value) => {
+                self.config.base.clipboard_record_image_switch = value
+            }
+            ConfigUpdate::ClipboardRecordImageTime(value) => {
+                self.config.base.clipboard_record_image_time = value
+            }
+            ConfigUpdate::ClipboardRecordFileSwitch(value) => {
+                self.config.base.clipboard_record_file_switch = value
+            }
+            ConfigUpdate::ClipboardRecordFileTime(value) => {
+                self.config.base.clipboard_record_file_time = value
+            }
+            ConfigUpdate::LocalFileSearchExcludePaths(value) => {
+                self.config.base.local_file_search_exclude_paths = value
+            }
+            ConfigUpdate::LocalFileSearchExcludeTypes(value) => {
+                self.config.base.local_file_search_exclude_types = value
+            }
         }
     }
     pub fn save_local_config(&self) -> Result<()> {
@@ -227,7 +294,7 @@ pub fn save_setting(setting_info: Value) {
 }
 
 #[test]
-fn te(){
+fn te() {
     fn should_skip_dir(entry: &str, skip_dirs: &[String]) -> bool {
         let mut is_skip = false;
         if !is_skip {
@@ -235,11 +302,18 @@ fn te(){
                 if dir.starts_with("*/") {
                     let skip_key = dir.split("/").last().clone().unwrap();
                     entry.contains(skip_key)
-                }else { false }
+                } else {
+                    false
+                }
             });
         }
         is_skip
     }
-    println!("{:?}",should_skip_dir("/Users/starsxu/Develop/Project/jade-smoke/node_modules", &vec!["*/node_modules".to_string()]));
+    println!(
+        "{:?}",
+        should_skip_dir(
+            "/Users/starsxu/Develop/Project/jade-smoke/node_modules",
+            &vec!["*/node_modules".to_string()]
+        )
+    );
 }
-

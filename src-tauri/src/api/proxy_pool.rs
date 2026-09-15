@@ -19,7 +19,7 @@ fn handle_client(mut stream: &TcpStream) -> Result<(), Box<dyn Error>> {
     }
 
     let response = forward(&buffer)?;
-    println!("返回{:?}",String::from_utf8(response.clone()));
+    println!("返回{:?}", String::from_utf8(response.clone()));
     stream.write_all(&response)?;
     Ok(())
 }
@@ -35,15 +35,21 @@ fn forward(buf: &Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
     loop {
         let mut tmp_buf = vec![0; 1024];
         match stream.read(&mut tmp_buf) {
-            Ok(0) => { println!("为0");break },
-            Ok(size) => {println!("ok");buffer.extend(&tmp_buf[..size])},
+            Ok(0) => {
+                println!("为0");
+                break;
+            }
+            Ok(size) => {
+                println!("ok");
+                buffer.extend(&tmp_buf[..size])
+            }
             Err(e) => {
                 println!("报错了");
-                return Err(Box::new(e))
+                return Err(Box::new(e));
             }
         }
     }
-    println!("返回{}",buffer.len());
+    println!("返回{}", buffer.len());
     Ok(buffer)
 }
 
