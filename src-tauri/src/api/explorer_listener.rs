@@ -20,6 +20,8 @@ mod platform {
     use windows::Win32::UI::Shell::{IShellWindows, IWebBrowserApp, ShellWindows};
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
+    use crate::api::dialog_probe::{probe_foreground_dialog, DialogConfidence};
+
     /// 可停止测试监听线程的句柄。
     pub struct ExplorerListenerHandle {
         stop: Arc<AtomicBool>,
@@ -77,13 +79,27 @@ mod platform {
     where
         F: Fn(PathBuf) + Send + 'static,
     {
+        start_listener_with_dialog(on_path_changed, |_| {})
+    }
+
+    pub fn start_listener_with_dialog<F, D>(
+        on_path_changed: F,
+        on_dialog_changed: D,
+    ) -> ExplorerListenerHandle
+    where
+        F: Fn(PathBuf) + Send + 'static,
+        D: Fn(crate::api::dialog_probe::DialogProbeResult) + Send + 'static,
+    {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
 
         let thread = thread::spawn(move || {
-            if let Err(error) =
-                run_listener(thread_stop, Duration::from_millis(500), on_path_changed)
-            {
+            if let Err(error) = run_listener(
+                thread_stop,
+                Duration::from_millis(500),
+                on_path_changed,
+                on_dialog_changed,
+            ) {
                 eprintln!("[ExplorerListener] {error}");
             }
         });
@@ -108,12 +124,15 @@ mod platform {
         stop: Arc<AtomicBool>,
         interval: Duration,
         on_path_changed: F,
+        on_dialog_changed: impl Fn(crate::api::dialog_probe::DialogProbeResult),
     ) -> Result<(), String>
     where
         F: Fn(PathBuf),
     {
         let _com = ComApartment::initialize()?;
         let mut last_path: Option<PathBuf> = None;
+        let mut last_path_state: Option<Option<PathBuf>> = None;
+        let mut last_dialog_signature: Option<(isize, DialogConfidence, u8)> = None;
 
         println!(
             "[ExplorerListener] 已启动，轮询间隔 {} ms",
@@ -122,12 +141,48 @@ mod platform {
 
         while !stop.load(Ordering::Relaxed) {
             match foreground_explorer_path_in_current_apartment() {
-                Ok(Some(path)) if last_path.as_ref() != Some(&path) => {
-                    last_path = Some(path.clone());
-                    on_path_changed(path);
+                Ok(path_state) => {
+                    if last_path_state.as_ref() != Some(&path_state) {
+                        match &path_state {
+                            Some(path) => println!(
+                                "[ExplorerListener] 当前识别到的资源管理器路径: {}",
+                                path.display()
+                            ),
+                            None => println!(
+                                "[ExplorerListener] 当前未识别到资源管理器路径（前台窗口不是文件夹或路径不可用）"
+                            ),
+                        }
+                        last_path_state = Some(path_state.clone());
+                    }
+
+                    if let Some(path) = path_state {
+                        if last_path.as_ref() != Some(&path) {
+                            last_path = Some(path.clone());
+                            on_path_changed(path);
+                        }
+                    }
                 }
-                Ok(_) => {}
                 Err(error) => eprintln!("[ExplorerListener] 查询失败: {error}"),
+            }
+
+            match probe_foreground_dialog() {
+                Ok(result) => {
+                    let signature = (result.hwnd, result.confidence, result.score);
+                    if last_dialog_signature != Some(signature) {
+                        println!(
+                            "[ExplorerListener] 文件选择框识别: {:?}, hwnd=0x{:X}, title={:?}, class={:?}, score={}, evidence={}",
+                            result.confidence,
+                            result.hwnd,
+                            result.title,
+                            result.window_class,
+                            result.score,
+                            result.evidence.join("；")
+                        );
+                        last_dialog_signature = Some(signature);
+                        on_dialog_changed(result);
+                    }
+                }
+                Err(error) => eprintln!("[ExplorerListener] 文件选择框探测失败: {error}"),
             }
 
             thread::sleep(interval);
@@ -247,12 +302,30 @@ mod platform {
 
 #[cfg(target_os = "windows")]
 pub use platform::{
-    foreground_explorer_path, start_listener, start_test_listener, ExplorerListenerHandle,
+    foreground_explorer_path, start_listener, start_listener_with_dialog, start_test_listener,
+    ExplorerListenerHandle,
 };
 
 #[cfg(not(target_os = "windows"))]
 pub fn foreground_explorer_path() -> Result<Option<std::path::PathBuf>, String> {
     Ok(None)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn start_listener_with_dialog<F, D>(
+    _on_path_changed: F,
+    _on_dialog_changed: D,
+) -> explorer_listener_handle_placeholder::ExplorerListenerHandle
+where
+    F: Fn(std::path::PathBuf) + Send + 'static,
+    D: Send + 'static,
+{
+    explorer_listener_handle_placeholder::ExplorerListenerHandle
+}
+
+#[cfg(not(target_os = "windows"))]
+mod explorer_listener_handle_placeholder {
+    pub struct ExplorerListenerHandle;
 }
 
 #[test]

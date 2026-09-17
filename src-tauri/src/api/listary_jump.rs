@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use crate::api::dialog_navigator::{navigate_foreground_dialog, DialogNavigationMethod};
-use crate::api::explorer_listener::{start_listener, ExplorerListenerHandle};
+use crate::api::dialog_probe::DialogConfidence;
+use crate::api::explorer_listener::{start_listener_with_dialog, ExplorerListenerHandle};
 
 /// MVP 的运行句柄。必须由应用长期持有；丢弃后监听器会停止。
 pub struct ListaryJumpHandle {
@@ -20,11 +21,31 @@ impl ListaryJumpHandle {
     pub fn start() -> Self {
         let latest_explorer_path = Arc::new(RwLock::new(None));
         let listener_path = Arc::clone(&latest_explorer_path);
-        let listener = start_listener(move |path| {
-            if let Ok(mut latest) = listener_path.write() {
-                *latest = Some(path);
-            }
-        });
+        let listener_path_for_dialog = Arc::clone(&latest_explorer_path);
+        let listener = start_listener_with_dialog(
+            move |path| {
+                if let Ok(mut latest) = listener_path.write() {
+                    *latest = Some(path);
+                }
+            },
+            move |dialog| {
+                if dialog.confidence == DialogConfidence::Confirmed {
+                    if let Ok(path) = listener_path_for_dialog.read() {
+                        if let Some(path) = path.clone() {
+                            match navigate_foreground_dialog(path.clone()) {
+                                Ok(method) => println!(
+                                    "[ListaryJump] 自动识别文件选择框并跳转: {} ({method:?})",
+                                    path.display()
+                                ),
+                                Err(error) => eprintln!("[ListaryJump] 自动跳转失败: {error}"),
+                            }
+                        } else {
+                            println!("[ListaryJump] 已识别文件选择框，但尚无资源管理器路径缓存");
+                        }
+                    }
+                }
+            },
+        );
 
         Self {
             latest_explorer_path,
