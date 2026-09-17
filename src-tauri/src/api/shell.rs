@@ -54,12 +54,28 @@ pub fn run_python_script(script_path: &str, params: Vec<String>) -> HashMap<&str
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn run_python_plugin(
+pub async fn run_python_plugin(
     interpreter: Option<String>,
     script_path: String,
     request: Value,
     timeout_ms: Option<u64>,
 ) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_python_plugin_blocking(interpreter, script_path, request, timeout_ms)
+    })
+    .await
+    .map_err(|error| format!("Python 任务失败：{error}"))?
+}
+
+fn run_python_plugin_blocking(
+    interpreter: Option<String>,
+    script_path: String,
+    request: Value,
+    timeout_ms: Option<u64>,
+) -> Result<Value, String> {
+    use std::io::Read;
+    use std::sync::mpsc;
+
     let executable = interpreter
         .filter(|p| !p.trim().is_empty())
         .unwrap_or_else(|| {
@@ -69,41 +85,166 @@ pub fn run_python_plugin(
                 "python3".into()
             }
         });
-    let mut child = Command::new(executable)
+    let body = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+    let mut command = Command::new(executable);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    let mut child = command
         .arg(script_path)
+        .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("failed to start python: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let body = serde_json::to_vec(&request).map_err(|e| e.to_string())?;
-        stdin.write_all(&body).map_err(|e| e.to_string())?;
-    }
+        .map_err(|error| format!("无法启动 Python，请检查解释器是否已安装或配置正确：{error}"))?;
+    let mut stdin = child.stdin.take().ok_or("无法连接 Python 输入")?;
+    let mut stdout = child.stdout.take().ok_or("无法连接 Python 输出")?;
+    let mut stderr = child.stderr.take().ok_or("无法连接 Python 错误输出")?;
+    let (input_sender, input_receiver) = mpsc::channel();
+    let (output_sender, output_receiver) = mpsc::channel();
+    let (error_sender, error_receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = input_sender.send(stdin.write_all(&body));
+    });
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stdout.read_to_end(&mut bytes).map(|_| bytes);
+        let _ = output_sender.send(result);
+    });
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = stderr.read_to_end(&mut bytes).map(|_| bytes);
+        let _ = error_sender.send(result);
+    });
     let limit = Duration::from_millis(timeout_ms.unwrap_or(30_000));
     let started = Instant::now();
-    loop {
-        if child.try_wait().map_err(|e| e.to_string())?.is_some() {
-            break;
+    let mut input = None;
+    let mut output = None;
+    let mut errors = None;
+    let status = loop {
+        if input.is_none() {
+            input = input_receiver.try_recv().ok();
+        }
+        if output.is_none() {
+            output = output_receiver.try_recv().ok();
+        }
+        if errors.is_none() {
+            errors = error_receiver.try_recv().ok();
+        }
+        match child.try_wait() {
+            Ok(Some(status)) if input.is_some() && output.is_some() && errors.is_some() => {
+                break status
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("读取 Python 进程状态失败：{error}"));
+            }
         }
         if started.elapsed() >= limit {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("python execution timed out".to_string());
+            return Err("Python 执行超时，已停止进程".to_string());
         }
         std::thread::sleep(Duration::from_millis(10));
-    }
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if !output.status.success() {
+    };
+    let output = output.unwrap().map_err(|error| error.to_string())?;
+    let errors = errors.unwrap().map_err(|error| error.to_string())?;
+    if !status.success() {
         return Err(format!(
-            "python exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
+            "Python 退出状态 {}：{}",
+            status,
+            String::from_utf8_lossy(&errors)
         ));
     }
+    input
+        .unwrap()
+        .map_err(|error| format!("传递 Python 参数失败：{error}"))?;
+    let stdout = String::from_utf8_lossy(&output);
     serde_json::from_str(stdout.trim()).map_err(|e| format!("invalid python response: {e}"))
+}
+
+#[cfg(test)]
+mod python_plugin_tests {
+    use super::*;
+
+    struct ScriptFile(std::path::PathBuf);
+
+    impl ScriptFile {
+        fn new(source: &str) -> Self {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "lark-python-test-{}-{nonce}.py",
+                std::process::id()
+            ));
+            fs::write(&path, source).unwrap();
+            Self(path)
+        }
+
+        fn run(&self, request: Value, timeout: u64) -> Result<Value, String> {
+            run_python_plugin_blocking(
+                None,
+                self.0.to_string_lossy().to_string(),
+                request,
+                Some(timeout),
+            )
+        }
+    }
+
+    impl Drop for ScriptFile {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn plugin_python_large_streams_and_unicode() {
+        let script = ScriptFile::new("import json, sys\nrequest = json.load(sys.stdin)\nsys.stderr.write('diagnostic' * 100000)\nprint(json.dumps({'ok': True, 'result': request['text']}))\n");
+        let text = "中文输入".repeat(100000);
+        let result = script
+            .run(serde_json::json!({"text": text}), 10000)
+            .unwrap();
+        assert_eq!(result["result"], text);
+    }
+
+    #[test]
+    fn plugin_python_timeout_and_missing_interpreter() {
+        let script = ScriptFile::new("import time\ntime.sleep(5)\n");
+        let error = script.run(serde_json::json!({}), 100).unwrap_err();
+        assert!(error.contains("超时"));
+        let missing = script
+            .0
+            .with_extension("missing-executable")
+            .to_string_lossy()
+            .to_string();
+        let error = run_python_plugin_blocking(
+            Some(missing),
+            script.0.to_string_lossy().to_string(),
+            serde_json::json!({}),
+            Some(100),
+        )
+        .unwrap_err();
+        assert!(error.contains("无法启动 Python"));
+    }
+
+    #[test]
+    fn plugin_python_invalid_output_and_nonzero_exit() {
+        let script = ScriptFile::new("print('not json')\n");
+        assert!(script
+            .run(serde_json::json!({}), 5000)
+            .unwrap_err()
+            .contains("invalid python response"));
+        let script =
+            ScriptFile::new("import sys\nsys.stderr.write('intentional error')\nsys.exit(2)\n");
+        assert!(script
+            .run(serde_json::json!({}), 5000)
+            .unwrap_err()
+            .contains("intentional error"));
+    }
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -233,13 +374,22 @@ pub fn clipboard_control(
     println!("[{}]剪贴板控制：{:?}", data_type, preview);
     if control == "write" {
         if data_type == "file" {
-            Ok("暂不支持文件复制".to_string())
+            let files: Vec<(String, String)> = serde_json::from_str(text)
+                .map_err(|error| format!("文件剪贴板数据格式错误: {error}"))?;
+            ClipboardOperator::set_file(&files).map_err(|error| error.to_string())?;
+            if paste {
+                ClipboardOperator::paste_text().map_err(|error| error.to_string())?;
+            }
+            Ok("写入文件剪贴板成功".to_string())
         } else if data_type == "image" {
             let img = ImageDataDB {
                 base64: text.to_string(),
                 ..Default::default()
             };
-            let _ = ClipboardOperator::set_image(img);
+            ClipboardOperator::set_image(img).map_err(|error| error.to_string())?;
+            if paste {
+                ClipboardOperator::paste_text().map_err(|error| error.to_string())?;
+            }
             println!("写入剪贴板成功");
             Ok("写入剪贴板成功".to_string())
         } else {

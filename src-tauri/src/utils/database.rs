@@ -2,7 +2,7 @@ use crate::utils::dirs::app_data_dir;
 use crate::utils::string_factory;
 use anyhow::Result;
 use pinyin::ToPinyin;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::fmt::format;
 use std::fs::File;
 use std::path::Path;
@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 const RECORD_SQLITE_FILE: &str = "record_data_v1.sqlite";
 const APP_FILE_INDEX_FILE: &str = "index_data_v1.sqlite";
 static RECORD_SCHEMA_READY: OnceLock<()> = OnceLock::new();
+static INDEX_SCHEMA_READY: OnceLock<()> = OnceLock::new();
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 pub struct Record {
@@ -309,19 +310,28 @@ impl RecordSQL {
 
     //删除超过limit的记录
     pub fn delete_over_limit(&self, limit: usize) -> Result<bool> {
-        // 先查询count，如果数量超过limit 10个以上了就删除多余的部分 主要是防止频繁重建数据库
         let mut stmt = self.conn.prepare("SELECT count(id) FROM record")?;
         let mut rows = stmt.query([])?;
         // SQLite INTEGER maps to a signed 64-bit integer in rusqlite.
         let count: i64 = rows.next()?.unwrap().get(0)?;
         let limit = i64::try_from(limit)?;
-        if count < 10 + limit {
+        if count <= limit {
             return Ok(false);
         }
         let remove_num = count - limit;
         let sql = "DELETE FROM record WHERE id in (SELECT id FROM record order by create_time asc limit ?1)";
         self.conn.execute(sql, [remove_num])?;
         Ok(true)
+    }
+
+    pub fn delete_expired(&self, data_type: &str, days: i32) -> Result<bool> {
+        let cutoff =
+            chrono::Local::now().timestamp_millis() - i64::from(days) * 24 * 60 * 60 * 1000;
+        let removed = self.conn.execute(
+            "DELETE FROM record WHERE data_type = ?1 AND create_time < ?2",
+            rusqlite::params![data_type, cutoff],
+        )?;
+        Ok(removed > 0)
     }
 
     pub fn find_by_id(&self, id: u64) -> Result<Record> {
@@ -348,6 +358,24 @@ pub struct IndexSQL {
     conn: Connection,
 }
 
+fn ensure_app_index_custom_column(conn: &Connection) -> Result<()> {
+    let has_is_custom = {
+        let mut stmt = conn.prepare("PRAGMA table_info(app_index)")?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let x = columns
+            .filter_map(std::result::Result::ok)
+            .any(|column| column == "is_custom");
+        x
+    };
+    if !has_is_custom {
+        conn.execute(
+            "ALTER TABLE app_index ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0",
+            (),
+        )?;
+    }
+    Ok(())
+}
+
 #[allow(unused)]
 impl IndexSQL {
     pub fn new() -> Self {
@@ -359,6 +387,7 @@ impl IndexSQL {
     }
 
     pub fn init() {
+        INDEX_SCHEMA_READY.get_or_init(|| {
         // 创建数据库文件并连接及创建数据库
         let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
         if !Path::new(&data_dir).exists() {
@@ -378,11 +407,14 @@ impl IndexSQL {
             abb         TEXT DEFAULT '',
             type        TEXT DEFAULT 'app',
             md5         TEXT NOT NULL,
+            is_custom   INTEGER NOT NULL DEFAULT 0,
             create_time INTEGER DEFAULT (strftime('%s', 'now'))
         );
         CREATE INDEX IF NOT EXISTS idx_md5 ON app_index (md5);
         "#;
         c.execute_batch(sql).unwrap();
+        // Migrate databases created before manual application entries were introduced.
+        ensure_app_index_custom_column(&c).unwrap();
         let sql = r#"
         CREATE TABLE IF NOT EXISTS file_index
         (
@@ -409,12 +441,14 @@ impl IndexSQL {
             CREATE INDEX IF NOT EXISTS idx_md5 ON file_index (md5);
             CREATE INDEX IF NOT EXISTS idx_file_generation_title ON file_index (generation, title);
             CREATE INDEX IF NOT EXISTS idx_file_generation_path ON file_index (generation, path);
+            CREATE INDEX IF NOT EXISTS idx_file_title_nocase ON file_index (title COLLATE NOCASE);
             CREATE TABLE IF NOT EXISTS file_index_staging
             (
                 title TEXT DEFAULT '', path TEXT NOT NULL UNIQUE, desc TEXT DEFAULT '',
                 pinyin TEXT DEFAULT '', abb TEXT DEFAULT '', type TEXT DEFAULT 'file', md5 TEXT NOT NULL
             );
         "#).unwrap();
+        });
     }
 
     pub fn insert_file_index(&self, r: &FileIndex) -> Result<i64> {
@@ -528,7 +562,16 @@ impl IndexSQL {
         println!("开始提交索引:{:?}", &paths.len());
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare("INSERT OR IGNORE INTO app_index (title,path,desc,icon,pinyin,abb,md5) VALUES (?1,?2,?3,?4,?5,?6,?7)")?;
+            let mut stmt = tx.prepare(
+                r#"
+                INSERT INTO app_index (title, path, desc, icon, pinyin, abb, md5)
+                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM app_index
+                    WHERE replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
+                )
+                "#,
+            )?;
             for r in paths {
                 let md5 = string_factory::md5(r.path.as_str());
                 let params = &[&r.title, &r.path, &r.desc, &r.icon, &r.pinyin, &r.abb, &md5];
@@ -544,6 +587,106 @@ impl IndexSQL {
             }
         }
         tx.commit()?; // 提交事务
+        Ok(())
+    }
+
+    pub fn upsert_custom_app_index(&mut self, app: &FileIndex) -> Result<()> {
+        let md5 = string_factory::md5(&app.path);
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing_id = tx
+            .query_row(
+                r#"
+                SELECT id FROM app_index
+                WHERE replace(lower(path), '/', '\') = replace(lower(?1), '/', '\')
+                ORDER BY is_custom DESC, id
+                LIMIT 1
+                "#,
+                [&app.path],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if let Some(id) = existing_id {
+            tx.execute(
+                r#"
+                DELETE FROM app_index
+                WHERE id <> ?1
+                  AND replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
+                "#,
+                rusqlite::params![id, &app.path],
+            )?;
+            let updated = tx.execute(
+                r#"
+                UPDATE app_index SET
+                    title = ?1, path = ?2, desc = ?3, icon = ?4, pinyin = ?5,
+                    abb = ?6, type = 'app', md5 = ?7, is_custom = 1
+                WHERE id = ?8
+                "#,
+                rusqlite::params![
+                    &app.title,
+                    &app.path,
+                    &app.desc,
+                    &app.icon,
+                    &app.pinyin,
+                    &app.abb,
+                    &md5,
+                    id
+                ],
+            )?;
+            if updated != 1 {
+                return Err(anyhow::anyhow!("自定义应用索引更新失败"));
+            }
+        } else {
+            tx.execute(
+                r#"
+                INSERT INTO app_index (title, path, desc, icon, pinyin, abb, type, md5, is_custom)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'app', ?7, 1)
+                "#,
+                rusqlite::params![
+                    &app.title,
+                    &app.path,
+                    &app.desc,
+                    &app.icon,
+                    &app.pinyin,
+                    &app.abb,
+                    md5
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn list_custom_app_indexes(&self) -> Result<Vec<FileIndex>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, path, desc, icon FROM app_index WHERE is_custom = 1 ORDER BY title COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(FileIndex {
+                id: row.get::<_, i64>(0)? as u64,
+                title: row.get(1)?,
+                path: row.get(2)?,
+                desc: row.get(3)?,
+                icon: row.get(4)?,
+                file_type: "app".to_string(),
+                ..Default::default()
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete_custom_app_index(&self, id: i64) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM app_index WHERE id = ?1 AND is_custom = 1",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_discovered_app_indexes(&self) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM app_index WHERE is_custom = 0", [])?;
         Ok(())
     }
 
@@ -640,45 +783,14 @@ impl IndexSQL {
         Ok(r)
     }
 
-    pub fn find_by_keyword(
+    fn query_file_search_layer(
         &self,
-        table: &str,
-        keyword: &str,
-        offset: i32,
+        sql: &str,
+        params: &[&dyn rusqlite::ToSql],
     ) -> Result<Vec<FileIndex>> {
-        let mut sql: String = String::new();
-        sql.push_str(&format!(
-            "SELECT id, title, path, desc, icon, type FROM {0}_index \
-             WHERE lower(title) LIKE lower(?3) OR lower(path) LIKE lower(?3)",
-            table
-        ));
-        let mut limit: usize = 30;
-        let mut params: Vec<String> = vec![];
-        // Keep the most relevant matches in the first page: exact title,
-        // title prefix, path prefix, then ordinary substring matches.
-        params.push(keyword.to_string());
-        params.push(format!("{}%", keyword));
-        params.push(format!("%{}%", keyword));
-        params.push(limit.to_string());
-        params.push(offset.to_string());
-        let sql = format!(
-            "{} ORDER BY
-             CASE
-               WHEN lower(title) = lower(?1) THEN 0
-               WHEN lower(title) LIKE lower(?2) THEN 1
-               WHEN lower(path) LIKE lower(?2) THEN 2
-               ELSE 3
-             END,
-             CASE WHEN lower(title) LIKE lower(?3) THEN 0 ELSE 1 END,
-             length(title), title COLLATE NOCASE
-             LIMIT ?4 OFFSET ?5",
-            sql
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
-        let mut res = vec![];
-        while let Some(row) = rows.next()? {
-            let r = FileIndex {
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(params, |row| {
+            Ok(FileIndex {
                 id: row.get::<_, i64>(0)? as u64,
                 title: row.get(1)?,
                 path: row.get(2)?,
@@ -686,10 +798,95 @@ impl IndexSQL {
                 icon: row.get(4)?,
                 file_type: row.get(5)?,
                 ..Default::default()
-            };
-            res.push(r);
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn find_by_keyword(
+        &self,
+        table: &str,
+        keyword: &str,
+        offset: i32,
+    ) -> Result<Vec<FileIndex>> {
+        const LIMIT: usize = 30;
+        if table != "file" {
+            anyhow::bail!("layered keyword search only supports file_index");
         }
-        Ok(res)
+
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Escape LIKE metacharacters so user input is treated as literal text.
+        let escaped = keyword
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let prefix = format!("{}%", escaped);
+        let contains = format!("%{}%", escaped);
+        let offset = offset.max(0) as usize;
+        let target_count = offset.saturating_add(LIMIT);
+        let mut results = Vec::with_capacity(target_count);
+        let mut remaining = target_count as i64;
+
+        // Layer 1: exact title. This is index-friendly and preserves the strongest match.
+        let exact = self.query_file_search_layer(
+            "SELECT id, title, path, desc, icon, type FROM file_index \
+             WHERE title = ?1 COLLATE NOCASE \
+             ORDER BY length(title), title COLLATE NOCASE LIMIT ?2",
+            &[&keyword, &remaining],
+        )?;
+        remaining -= exact.len() as i64;
+        results.extend(exact);
+
+        // Layer 2: title prefix, excluding the exact-title layer.
+        if remaining > 0 {
+            let rows = self.query_file_search_layer(
+                "SELECT id, title, path, desc, icon, type FROM file_index \
+                 WHERE title COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                   AND title <> ?2 COLLATE NOCASE \
+                 ORDER BY length(title), title COLLATE NOCASE LIMIT ?3",
+                &[&prefix, &keyword, &remaining],
+            )?;
+            remaining -= rows.len() as i64;
+            results.extend(rows);
+        }
+
+        // A one-character substring/path search is extremely broad. Keep it responsive by
+        // returning only exact and prefix title matches until the user types another character.
+        if keyword.chars().count() < 2 {
+            return Ok(results.into_iter().skip(offset).take(LIMIT).collect());
+        }
+
+        // Layer 3: title substring, excluding all prefix matches already considered above.
+        if remaining > 0 {
+            let rows = self.query_file_search_layer(
+                "SELECT id, title, path, desc, icon, type FROM file_index \
+                 WHERE title COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                   AND title COLLATE NOCASE NOT LIKE ?2 ESCAPE '\\' \
+                 ORDER BY length(title), title COLLATE NOCASE LIMIT ?3",
+                &[&contains, &prefix, &remaining],
+            )?;
+            remaining -= rows.len() as i64;
+            results.extend(rows);
+        }
+
+        // Layer 4: path substring only when title matching still did not fill the page.
+        if remaining > 0 {
+            let rows = self.query_file_search_layer(
+                "SELECT id, title, path, desc, icon, type FROM file_index \
+                 WHERE path COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                   AND title COLLATE NOCASE NOT LIKE ?1 ESCAPE '\\' \
+                 ORDER BY length(title), title COLLATE NOCASE LIMIT ?2",
+                &[&contains, &remaining],
+            )?;
+            results.extend(rows);
+        }
+
+        Ok(results.into_iter().skip(offset).take(LIMIT).collect())
     }
 
     pub fn delete_by_id(&self, table: &str, id: i64) -> Result<()> {
@@ -743,6 +940,234 @@ impl IndexSQL {
         self.conn
             .execute(sql, [now.to_string(), r.id.to_string()])?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod file_search_tests {
+    use super::*;
+
+    fn test_index(rows: &[(&str, &str)]) -> IndexSQL {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE file_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT DEFAULT '', path TEXT NOT NULL UNIQUE, desc TEXT DEFAULT '',
+                icon TEXT DEFAULT '', type TEXT DEFAULT 'file'
+            );
+            CREATE INDEX idx_file_title_nocase ON file_index (title COLLATE NOCASE);
+            "#,
+        )
+        .unwrap();
+        for (title, path) in rows {
+            conn.execute(
+                "INSERT INTO file_index (title, path, desc, type) VALUES (?1, ?2, ?2, 'file')",
+                [title, path],
+            )
+            .unwrap();
+        }
+        IndexSQL { conn }
+    }
+
+    #[test]
+    fn single_character_search_only_returns_exact_and_title_prefix_matches() {
+        let db = test_index(&[
+            ("a", r"C:\root\a"),
+            ("Alpha.txt", r"C:\root\Alpha.txt"),
+            ("Beta.txt", r"C:\root\Beta.txt"),
+            ("notes.txt", r"C:\archive\notes.txt"),
+        ]);
+
+        let results = db.find_by_keyword("file", "a", 0).unwrap();
+        let titles: Vec<_> = results.iter().map(|item| item.title.as_str()).collect();
+
+        assert_eq!(titles, vec!["a", "Alpha.txt"]);
+    }
+
+    #[test]
+    fn multi_character_search_falls_back_from_title_to_path_contains() {
+        let db = test_index(&[
+            ("Alpha.txt", r"C:\root\Alpha.txt"),
+            ("Graph.txt", r"C:\root\Graph.txt"),
+            ("notes.txt", r"C:\alpha-folder\notes.txt"),
+        ]);
+
+        let results = db.find_by_keyword("file", "ph", 0).unwrap();
+        let titles: Vec<_> = results.iter().map(|item| item.title.as_str()).collect();
+
+        assert_eq!(titles, vec!["Alpha.txt", "Graph.txt", "notes.txt"]);
+    }
+
+    #[test]
+    fn like_wildcards_in_user_input_are_matched_literally() {
+        let db = test_index(&[
+            ("100% real.txt", r"C:\root\100% real.txt"),
+            ("1000 real.txt", r"C:\root\1000 real.txt"),
+        ]);
+
+        let results = db.find_by_keyword("file", "100%", 0).unwrap();
+        let titles: Vec<_> = results.iter().map(|item| item.title.as_str()).collect();
+
+        assert_eq!(titles, vec!["100% real.txt"]);
+    }
+}
+
+#[cfg(test)]
+mod app_index_tests {
+    use super::*;
+
+    fn test_index() -> IndexSQL {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE app_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT DEFAULT '', path TEXT NOT NULL UNIQUE, desc TEXT DEFAULT '',
+                icon TEXT DEFAULT '', pinyin TEXT DEFAULT '', abb TEXT DEFAULT '',
+                type TEXT DEFAULT 'app', md5 TEXT NOT NULL,
+                is_custom INTEGER NOT NULL DEFAULT 0,
+                create_time INTEGER DEFAULT (strftime('%s', 'now'))
+            );
+            "#,
+        )
+        .unwrap();
+        IndexSQL { conn }
+    }
+
+    #[test]
+    fn old_app_index_schema_migrates_without_losing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE app_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT DEFAULT '', path TEXT NOT NULL UNIQUE, md5 TEXT NOT NULL
+            );
+            INSERT INTO app_index (title, path, md5) VALUES ('Existing', 'C:\existing.exe', 'a');
+            "#,
+        )
+        .unwrap();
+
+        ensure_app_index_custom_column(&conn).unwrap();
+
+        let row: (String, i64) = conn
+            .query_row("SELECT title, is_custom FROM app_index", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(row, ("Existing".to_string(), 0));
+    }
+
+    #[test]
+    fn rebuild_cleanup_preserves_only_custom_apps() {
+        let db = test_index();
+        db.conn
+            .execute(
+                "INSERT INTO app_index (title, path, md5, is_custom) VALUES ('Auto', 'C:\\auto.exe', 'a', 0), ('Custom', 'C:\\custom.exe', 'b', 1)",
+                [],
+            )
+            .unwrap();
+
+        db.clear_discovered_app_indexes().unwrap();
+
+        let rows = db.list_custom_app_indexes().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Custom");
+    }
+
+    #[test]
+    fn custom_app_is_updated_and_only_explicitly_deleted() {
+        let mut db = test_index();
+        let mut app = FileIndex {
+            title: "First name".to_string(),
+            path: r"C:\custom.exe".to_string(),
+            desc: r"C:\custom.exe".to_string(),
+            ..Default::default()
+        };
+        db.upsert_custom_app_index(&app).unwrap();
+        app.title = "Updated name".to_string();
+        app.path = r"c:/CUSTOM.exe".to_string();
+        db.upsert_custom_app_index(&app).unwrap();
+
+        let mut scanner = test_index();
+        scanner.upsert_custom_app_index(&app).unwrap();
+        scanner
+            .insert_app_indexes(vec![FileIndex {
+                title: "Scanner duplicate".to_string(),
+                path: r"C:\custom.exe".to_string(),
+                ..Default::default()
+            }])
+            .unwrap();
+        let scanner_count: i64 = scanner
+            .conn
+            .query_row("SELECT COUNT(*) FROM app_index", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(scanner_count, 1);
+
+        let rows = db.list_custom_app_indexes().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Updated name");
+
+        db.delete_custom_app_index(rows[0].id as i64).unwrap();
+        assert!(db.list_custom_app_indexes().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod clipboard_retention_tests {
+    use super::*;
+
+    fn test_records() -> RecordSQL {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE record (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT, content_preview TEXT, data_type TEXT,
+                md5 TEXT, source TEXT, source_path TEXT,
+                create_time INTEGER
+            );
+            "#,
+        )
+        .unwrap();
+        RecordSQL { conn }
+    }
+
+    #[test]
+    fn count_limit_is_exact_and_type_expiry_is_independent() {
+        let db = test_records();
+        let now = chrono::Local::now().timestamp_millis();
+        let old = now - 3 * 24 * 60 * 60 * 1000;
+        db.conn
+            .execute_batch(&format!(
+                r#"
+                INSERT INTO record (content, data_type, md5, create_time) VALUES
+                    ('old text', 'text', '1', {old}),
+                    ('old image', 'image', '2', {old}),
+                    ('new text', 'text', '3', {now}),
+                    ('new file', 'file', '4', {now});
+                "#
+            ))
+            .unwrap();
+
+        assert!(db.delete_expired("text", 1).unwrap());
+        let old_image_count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM record WHERE content = 'old image'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_image_count, 1);
+
+        assert!(db.delete_over_limit(2).unwrap());
+        let count: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM record", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
     }
 }
 

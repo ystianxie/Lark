@@ -18,7 +18,7 @@ const apiNames = {
 export function normalizePluginPath(path) {
   return String(path || "")
     .replace(/^\\\\\?\\/, "")
-    .replaceAll("\\\\", "/")
+    .replaceAll("\\", "/")
     .replace(/\/+$/, "");
 }
 
@@ -58,7 +58,9 @@ export async function loadPluginRuntime(manifest, state = {}) {
     return response.text();
   });
   const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
-  const module = await import(/* @vite-ignore */ url);
+  let module;
+  try { module = await import(/* @vite-ignore */ url); }
+  finally { URL.revokeObjectURL(url); }
   if (typeof module.activate !== "function") throw new Error(`插件 ${key} 未导出 activate()`);
   const runtime = await module.activate(createPluginContext(manifest, state));
   runtimes.set(key, runtime);

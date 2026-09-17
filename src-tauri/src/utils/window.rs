@@ -8,6 +8,46 @@ use objc::{msg_send, sel, sel_impl};
 use tauri::{Emitter, Manager, Runtime, Window};
 use window_shadows::set_shadow;
 
+#[cfg(target_os = "windows")]
+pub fn disable_system_menu<R: Runtime>(app: &tauri::App<R>) -> Result<(), String> {
+    use std::ptr::null_mut;
+    use winapi::um::winuser::{
+        GetWindowLongW, SetWindowLongW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_SYSMENU,
+    };
+
+    let window = app
+        .get_window("skylark")
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as winapi::shared::windef::HWND;
+
+    unsafe {
+        let style = GetWindowLongW(hwnd, GWL_STYLE);
+        SetWindowLongW(hwnd, GWL_STYLE, style & !(WS_SYSMENU as i32));
+        SetWindowPos(
+            hwnd,
+            null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED
+                | SWP_NOACTIVATE
+                | SWP_NOMOVE
+                | SWP_NOOWNERZORDER
+                | SWP_NOSIZE
+                | SWP_NOZORDER,
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn disable_system_menu<R: Runtime>(_app: &tauri::App<R>) -> Result<(), String> {
+    Ok(())
+}
+
 pub fn set_window_shadow<R: Runtime>(app: &tauri::App<R>) {
     #[cfg(target_os = "macos")]
     {

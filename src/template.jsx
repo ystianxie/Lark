@@ -212,7 +212,7 @@ function TemplateComponent({
     );
 }
 
-function SubpageComponent({component, keyDown}) {
+function SubpageComponent({component, keyDown, pluginLibraryProps}) {
     const [RenderComponent, setRenderComponent] = useState(false);
     const [appDirectory, setAppDirectory] = useState({});
     const styleHexRef = useRef(null);
@@ -277,7 +277,7 @@ function SubpageComponent({component, keyDown}) {
         <>
             <div id="subPageFrame"
                  style={component?.type === "panel" ? {height: "calc(100vh - 75px)", marginTop: "5px"} : {}}>
-                {RenderComponent ? <div style={subpageStyle}><RenderComponent onKeyDown={keyDown}/></div> : <div/>}
+                {RenderComponent ? <div style={subpageStyle}><RenderComponent onKeyDown={keyDown} {...pluginLibraryProps}/></div> : <div/>}
             </div>
         </>
     );
@@ -345,7 +345,8 @@ const showPluginComponent = {
     icon: <img src={componentImg} alt="components" className='activateComponent' data-tauri-drag-region/>,
     title: '组件库',
     desc: 'show component',
-    type: "panel"
+    type: "panel",
+    data: "showComponent"
 };
 const settingPluginComponent = {
     icon: <img src={settingImg} alt="setting" className='activateComponent' data-tauri-drag-region/>,
@@ -463,15 +464,21 @@ const getWindowPosition = async () => {
 // 读取本地组件库，查看注册状态
 const loadCustomComponent = async () => {
     const records = await invoke("load_plugins", {});
-    const files = {};
-    for (const record of records || []) {
-        if (record.error || !record.manifest || !record.manifest.id) {
-            console.warn("跳过无效插件", record);
-            continue;
-        }
-        files[record.id] = { ...record.manifest, __root: record.root, __pluginId: record.id };
-    }
-    return files;
+    return Object.fromEntries((records || []).map((record) => {
+        const manifest = record.manifest || {};
+        const validWorkflows = Array.isArray(manifest.workflows) && manifest.workflows.every(workflow =>
+            workflow && typeof workflow.id === "string" && Array.isArray(workflow.keywords) &&
+            workflow.keywords.every(keyword => typeof keyword === "string")
+        );
+        const error = record.error || (typeof manifest.id !== "string" || !manifest.id ||
+            typeof manifest.name !== "string" || !manifest.name || !validWorkflows
+            ? "Manifest 缺少 id、name 或有效的 workflows，请按插件开发规范检查。" : null);
+        return [record.id, { ...manifest,
+            name: typeof manifest.name === "string" ? manifest.name : record.id,
+            description: typeof manifest.description === "string" ? manifest.description : "",
+            version: typeof manifest.version === "string" ? manifest.version : "",
+            __root: record.root, __pluginId: record.id, __error: error, __editable: record.editable === true }];
+    }));
 };
 
 const initIndexDB = async (db, version, dbList, setDbList) => {

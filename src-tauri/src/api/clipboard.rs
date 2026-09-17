@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{ClipboardRetention, Config};
 use crate::utils::database::{self, Record};
 #[cfg(target_os = "windows")]
 use crate::utils::icons;
@@ -18,6 +18,29 @@ pub struct ClipboardWatcher;
 
 pub struct ClipboardOperator;
 
+fn apply_clipboard_retention(db: &database::RecordSQL, retention: ClipboardRetention) -> bool {
+    let mut changed = false;
+    if let Some(limit) = retention.count {
+        match db.delete_over_limit(limit) {
+            Ok(removed) => changed |= removed,
+            Err(error) => eprintln!("清理超量剪贴板记录失败: {error}"),
+        }
+    }
+    for (data_type, days) in [
+        ("text", retention.text_days),
+        ("image", retention.image_days),
+        ("file", retention.file_days),
+    ] {
+        if let Some(days) = days {
+            match db.delete_expired(data_type, days) {
+                Ok(removed) => changed |= removed,
+                Err(error) => eprintln!("清理过期{data_type}剪贴板记录失败: {error}"),
+            }
+        }
+    }
+    changed
+}
+
 #[derive(Default, Clone)]
 struct ActiveApplication {
     name: String,
@@ -33,6 +56,8 @@ struct InternalClipboardText {
 }
 
 static INTERNAL_CLIPBOARD_TEXT: OnceLock<Mutex<Option<InternalClipboardText>>> = OnceLock::new();
+static INTERNAL_CLIPBOARD_BINARY: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
+static INTERNAL_CLIPBOARD_SEQUENCE: OnceLock<Mutex<Option<(u32, Instant)>>> = OnceLock::new();
 const INTERNAL_CLIPBOARD_TTL: StdDuration = StdDuration::from_secs(3);
 
 fn set_internal_clipboard_text(text: &str) -> Result<()> {
@@ -73,6 +98,72 @@ fn consume_internal_clipboard_text(text: &str) -> Option<u32> {
         return pending.take().map(|marked| marked.sequence);
     }
     None
+}
+
+fn mark_internal_clipboard_binary(digest: String) {
+    let state = INTERNAL_CLIPBOARD_BINARY.get_or_init(|| Mutex::new(None));
+    if let Ok(mut pending) = state.lock() {
+        *pending = Some((digest, Instant::now()));
+    }
+}
+
+fn consume_internal_clipboard_binary(digest: &str) -> bool {
+    let Some(state) = INTERNAL_CLIPBOARD_BINARY.get() else {
+        return false;
+    };
+    let Ok(mut pending) = state.lock() else {
+        return false;
+    };
+    let Some((marked_digest, marked_at)) = pending.as_ref() else {
+        return false;
+    };
+    if marked_at.elapsed() > INTERNAL_CLIPBOARD_TTL {
+        *pending = None;
+        return false;
+    }
+    if marked_digest == digest {
+        *pending = None;
+        return true;
+    }
+    false
+}
+
+fn clear_internal_clipboard_binary() {
+    if let Some(state) = INTERNAL_CLIPBOARD_BINARY.get() {
+        if let Ok(mut pending) = state.lock() {
+            *pending = None;
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn mark_internal_clipboard_sequence() {
+    let state = INTERNAL_CLIPBOARD_SEQUENCE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut pending) = state.lock() {
+        *pending = Some((get_clipboard_sequence_number(), Instant::now()));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn consume_internal_clipboard_sequence(sequence: u32) -> bool {
+    let Some(state) = INTERNAL_CLIPBOARD_SEQUENCE.get() else {
+        return false;
+    };
+    let Ok(mut pending) = state.lock() else {
+        return false;
+    };
+    let Some((marked_sequence, marked_at)) = pending.as_ref() else {
+        return false;
+    };
+    if marked_at.elapsed() > INTERNAL_CLIPBOARD_TTL {
+        *pending = None;
+        return false;
+    }
+    if *marked_sequence == sequence {
+        *pending = None;
+        return true;
+    }
+    false
 }
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize)]
@@ -127,11 +218,13 @@ impl ClipboardOperator {
     }
 
     pub fn set_image(data: ImageDataDB) -> Result<()> {
-        print!("????");
         let mut clipboard = Clipboard::new()?;
-        let img_data = img_factory::base64_to_rgba8(&data.base64).expect("error");
-        println!("{:?}", img_data);
+        let img_data = img_factory::base64_to_rgba8(&data.base64)?;
+        let digest = string_factory::md5_by_bytes(&img_data.bytes);
         clipboard.set_image(img_data)?;
+        mark_internal_clipboard_binary(digest);
+        #[cfg(target_os = "windows")]
+        mark_internal_clipboard_sequence();
         Ok(())
     }
 
@@ -149,47 +242,53 @@ impl ClipboardOperator {
         }
     }
 
-    pub fn set_file(file_path: &str) {
-        // todo 多文件
+    pub fn set_file(files: &[(String, String)]) -> Result<()> {
+        if files.is_empty() {
+            return Err(anyhow::anyhow!("没有可粘贴的文件路径"));
+        }
+        let file_paths: Vec<String> = files.iter().map(|(path, _)| path.clone()).collect();
+        let digest = string_factory::md5(&serde_json::to_string(files)?);
         #[cfg(target_os = "windows")]
         {
-            let _ = Command::new("powershell")
-                .arg("src/utils/clipboard_file_win.ps1")
-                .arg(file_path)
-                .output()
-                .expect("");
-            thread::sleep(Duration::milliseconds(500).to_std().unwrap());
-            let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
-            enigo
-                .key(Key::Control, enigo::Direction::Press)
-                .expect("error");
-            enigo
-                .key(Key::Unicode('v'), enigo::Direction::Click)
-                .expect("error");
-            enigo
-                .key(Key::Control, enigo::Direction::Release)
-                .expect("error");
+            let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/utils/clipboard_file_win.ps1");
+            let output = Command::new("powershell")
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(script)
+                .args(file_paths)
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow::anyhow!(
+                    "写入文件剪贴板失败: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            mark_internal_clipboard_binary(digest);
+            mark_internal_clipboard_sequence();
+            return Ok(());
         }
         #[cfg(target_os = "macos")]
         {
-            let command_data = format!("'set the clipboard to POSIX file \"'{}'\"'", file_path);
-            let _ = Command::new("osascript")
+            let file_list = file_paths
+                .iter()
+                .map(|path| format!("POSIX file \"{}\"", path.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let output = Command::new("osascript")
                 .arg("-e")
-                .arg(command_data)
-                .output()
-                .expect("");
-            thread::sleep(Duration::milliseconds(500).to_std().unwrap());
-            let mut enigo: Enigo = Enigo::new(&Settings::default()).unwrap();
-            enigo
-                .key(Key::Meta, enigo::Direction::Press)
-                .expect("error");
-            enigo
-                .key(Key::Unicode('v'), enigo::Direction::Click)
-                .expect("error");
-            enigo
-                .key(Key::Meta, enigo::Direction::Release)
-                .expect("error");
+                .arg(format!("set the clipboard to {{{file_list}}}"))
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow::anyhow!(
+                    "写入文件剪贴板失败: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            mark_internal_clipboard_binary(digest);
+            return Ok(());
         }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        Err(anyhow::anyhow!("当前平台暂不支持文件剪贴板"))
     }
 
     pub fn get_file() -> Vec<(String, String)> {
@@ -315,16 +414,31 @@ impl ClipboardWatcher {
             #[cfg(target_os = "windows")]
             let mut last_clipboard_sequence = 0;
             let mut clipboard = Clipboard::new().unwrap();
-            let limit = Config::new().get_clipboard_record_limit();
+            let mut retention = Config::new().clipboard_retention();
+            let mut retention_refresh_tick = 0u8;
             println!("start clipboard watcher");
             loop {
+                let refresh_retention = retention_refresh_tick == 0;
+                if refresh_retention {
+                    retention = Config::new().clipboard_retention();
+                }
+                retention_refresh_tick = (retention_refresh_tick + 1) % 5;
                 #[cfg(target_os = "windows")]
                 let current_clipboard_sequence = get_clipboard_sequence_number();
                 #[cfg(target_os = "windows")]
                 let clipboard_changed = current_clipboard_sequence != 0
                     && current_clipboard_sequence != last_clipboard_sequence;
+                #[cfg(target_os = "windows")]
+                let internal_clipboard_change =
+                    consume_internal_clipboard_sequence(current_clipboard_sequence);
+                #[cfg(target_os = "windows")]
+                if internal_clipboard_change {
+                    clear_internal_clipboard_binary();
+                }
                 #[cfg(not(target_os = "windows"))]
                 let clipboard_changed = false;
+                #[cfg(not(target_os = "windows"))]
+                let internal_clipboard_change = false;
                 #[cfg(target_os = "windows")]
                 let mut clipboard_snapshot_read = false;
                 #[cfg(target_os = "windows")]
@@ -340,37 +454,45 @@ impl ClipboardWatcher {
                     }
                     let files_string = json_factory::stringify(&files).unwrap();
                     let md5 = string_factory::md5(&files_string);
-                    if clipboard_changed || md5 != last_content_md5 {
-                        let files_string = json_factory::stringify(&files).unwrap();
-                        println!("获取到新文件: {:?}", files);
-                        let content_db = FileDataDB {
-                            file_count: files.len(),
-                            files: files_string,
-                            title: format!(
-                                "{} File{}: {}",
-                                files.len(),
-                                if files.len() > 1 { "s" } else { "" },
-                                files[0].0.split("/").last().unwrap()
-                            ),
-                        };
-                        let content = json_factory::stringify(&content_db).unwrap();
-                        let res = db.insert_if_not_exist(&Record {
-                            content: content.clone(),
-                            content_preview: Some(content.clone()),
-                            data_type: "file".to_string(),
-                            source: current_app.name.clone(),
-                            source_path: current_app.path.clone(),
-                            ..Default::default()
-                        });
-                        match res {
-                            Ok(_) => {
-                                need_notify = true;
-                            }
-                            Err(e) => {
-                                println!("insert record error: {}", e);
-                            }
-                        }
+                    if internal_clipboard_change {
                         last_content_md5 = md5.clone();
+                    }
+                    if !internal_clipboard_change && (clipboard_changed || md5 != last_content_md5)
+                    {
+                        if consume_internal_clipboard_binary(&md5) {
+                            last_content_md5 = md5;
+                        } else {
+                            let files_string = json_factory::stringify(&files).unwrap();
+                            println!("获取到新文件: {:?}", files);
+                            let content_db = FileDataDB {
+                                file_count: files.len(),
+                                files: files_string,
+                                title: format!(
+                                    "{} File{}: {}",
+                                    files.len(),
+                                    if files.len() > 1 { "s" } else { "" },
+                                    files[0].0.split("/").last().unwrap()
+                                ),
+                            };
+                            let content = json_factory::stringify(&content_db).unwrap();
+                            let res = db.insert_if_not_exist(&Record {
+                                content: content.clone(),
+                                content_preview: Some(content.clone()),
+                                data_type: "file".to_string(),
+                                source: current_app.name.clone(),
+                                source_path: current_app.path.clone(),
+                                ..Default::default()
+                            });
+                            match res {
+                                Ok(_) => {
+                                    need_notify = true;
+                                }
+                                Err(e) => {
+                                    println!("insert record error: {}", e);
+                                }
+                            }
+                            last_content_md5 = md5.clone();
+                        }
                     }
                 } else {
                     let text = clipboard.get_text();
@@ -382,7 +504,10 @@ impl ClipboardWatcher {
                         let content_origin = text.clone();
                         let content = text.trim();
                         let md5 = string_factory::md5(&content_origin);
-                        if !content.is_empty() && (clipboard_changed || md5 != last_content_md5) {
+                        if !internal_clipboard_change
+                            && !content.is_empty()
+                            && (clipboard_changed || md5 != last_content_md5)
+                        {
                             if let Some(sequence) = consume_internal_clipboard_text(&content_origin)
                             {
                                 #[cfg(target_os = "windows")]
@@ -428,7 +553,12 @@ impl ClipboardWatcher {
                     }
                     let img_md5 = string_factory::md5_by_bytes(&img.bytes);
                     let img_size = (img.bytes.len() as f64) / 1024.0;
-                    if clipboard_changed || img_md5 != last_img_md5 {
+                    if !internal_clipboard_change && (clipboard_changed || img_md5 != last_img_md5)
+                    {
+                        if consume_internal_clipboard_binary(&img_md5) {
+                            last_img_md5 = img_md5;
+                            return;
+                        }
                         // 有新图片产生
                         println!("获取到新图片md5: {}", img_md5);
                         let base64 = img_factory::rgba8_to_base64(&img);
@@ -472,11 +602,8 @@ impl ClipboardWatcher {
                     }
                 });
 
-                let res = db.delete_over_limit(limit as usize);
-                if let Ok(success) = res {
-                    if success {
-                        need_notify = true;
-                    }
+                if (need_notify || refresh_retention) && apply_clipboard_retention(&db, retention) {
+                    need_notify = true;
                 }
                 if need_notify {
                     //TODO 显示通知窗口

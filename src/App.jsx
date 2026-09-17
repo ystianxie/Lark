@@ -14,6 +14,8 @@ import { listen } from "@tauri-apps/api/event";
 import webImg from "./assets/web.svg";
 import baseComponent from "./baseComponent";
 import { executePluginWorkflow, normalizePluginPath } from "./pluginRuntime";
+import {normalizePluginResults} from "./pluginScaffold";
+import {schedulePluginExecution} from "./pluginExecution";
 import PluginView from "./PluginView";
 import { useLocalStorage } from "react-use";
 import {
@@ -67,7 +69,33 @@ const App = () => {
   // 自制插件管理
   const [pluginStatus, setPluginStatus] = useLocalStorage("pluginStatus", {});
   // 自制插件列表
-  const [pluginList, setPluginList] = useLocalStorage("pluginList", []);
+  const [pluginList, setPluginList] = useState({});
+  const [pluginsLoading, setPluginsLoading] = useState(true);
+  const [pluginsError, setPluginsError] = useState("");
+  const pluginRefreshId = useRef(0);
+
+  const refreshPlugins = async () => {
+    const requestId = ++pluginRefreshId.current;
+    setPluginsLoading(true);
+    setPluginsError("");
+    try {
+      const result = await loadCustomComponent();
+      if (requestId === pluginRefreshId.current) setPluginList(result);
+      return {ok: true};
+    } catch (error) {
+      if (requestId === pluginRefreshId.current) setPluginsError(String(error));
+      return {ok: false, error: String(error)};
+    } finally {
+      if (requestId === pluginRefreshId.current) setPluginsLoading(false);
+    }
+  };
+
+  const togglePlugin = (pluginId, enable) => {
+    const nextStatus = { ...pluginStatus, [pluginId]: { ...pluginStatus?.[pluginId], enable } };
+    localStorage.setItem("pluginStatus", JSON.stringify(nextStatus));
+    searchRequestId.current += 1;
+    setPluginStatus(nextStatus);
+  };
 
   const [dbList, setDbList] = useLocalStorage("dbList", []);
 
@@ -115,9 +143,10 @@ const App = () => {
   async function handleKeyDown(event) {
     // 处理键盘按下
     setKeyDown(event);
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (componentInfoRef.current?.type === "panel") {
       // panel 仍由主输入框接收键盘事件，但不允许按键修改输入内容。
-      event.preventDefault();
+      if (event.key !== "Tab" || componentInfoRef.current?.data !== "showComponent") event.preventDefault();
       if (event.key === "Escape" && isComposing.ppos === 0) {
         initStatusRef.current?.();
         setTimeout(() => inputBox.current?.focus(), 50);
@@ -293,15 +322,9 @@ const App = () => {
       { text, file: pistol, ui: { close: () => initStatus() } },
       { text, file: pistol }
     );
-    const items = Array.isArray(response)
-      ? response
-      : response?.results || response?.items || (response ? [response] : []);
-    return items.map((item) => ({
-      type: "result",
-      title: item.title || item.label || "插件结果",
-      desc: item.desc || item.description || "",
-      data: item.data ?? item.value ?? "",
-      icon: item.icon || plugin.icon || "PY",
+    return normalizePluginResults(response, plugin.name).map((item) => ({
+      ...item,
+      icon: item.icon || workflow.icon || "JS",
     }));
   };
 
@@ -324,8 +347,12 @@ const App = () => {
     console.log(currentComponent);
     if (!currentComponent) return;
     const plugin = currentComponent.pluginId && pluginList[currentComponent.pluginId];
-    if (plugin && currentComponent.type === "action" && plugin.entry?.type === "js") {
+    if (currentComponent.pluginId && (!plugin || plugin.__error || pluginStatus?.[currentComponent.pluginId]?.enable === false)) return;
+    if (plugin && ["action", "python"].includes(currentComponent.type) && plugin.entry?.type === "js") {
       if (currentComponent.interactive) {
+        searchRequestId.current += 1;
+        setKeywordComponent([]);
+        setSelectedIndex(-1);
         setActivePluginWorkflow({ plugin, workflow: currentComponent });
         setComponent(createActiveIcon(currentComponent.icon));
         setComponentInfo({ ...currentComponent, type: "input-panel" });
@@ -336,7 +363,8 @@ const App = () => {
         const result = await executePluginWorkflow(plugin, currentComponent,
           { text: inputValue, file: pistol, ui: { close: () => initStatus() } },
           { text: inputValue, file: pistol });
-        if (result) initStatus([result]); else initStatus();
+        const results = normalizePluginResults(result, plugin.name);
+        if (results.length) initStatus(results); else initStatus();
       } catch (error) {
         initStatus([{ type: "result", title: "插件执行失败", desc: String(error), icon: "ERROR", data: String(error) }]);
       }
@@ -548,6 +576,8 @@ const App = () => {
 
   useEffect(() => {
     // 输入框内容提交
+    const requestId = ++searchRequestId.current;
+    const isCurrent = () => requestId === searchRequestId.current;
     function calculator() {
       let calc_result = calculateExpression(inputValue);
       if (calc_result !== false) {
@@ -562,11 +592,11 @@ const App = () => {
     }
 
     const fetchData = async () => {
-      const requestId = ++searchRequestId.current;
+      if (!isCurrent()) return;
       if (inputBox.current) {
         inputBox.current.value = inputValue;
       }
-      if (inputValue === "-") {
+      if (inputValue === "-" && !activePluginWorkflow && !componentInfo?.type) {
         function deleteIndexedDB(dbName) {
           return new Promise((resolve, reject) => {
             const request = indexedDB.deleteDatabase(dbName);
@@ -605,7 +635,14 @@ const App = () => {
       let result = [];
       if (activePluginWorkflow) {
         try {
-          result = await runActivePluginWorkflow(activePluginWorkflow, inputValue.trim());
+          const {plugin, workflow} = activePluginWorkflow;
+          if (pluginStatus?.[plugin.id]?.enable === false || !pluginList[plugin.id]) return;
+          if (workflow.skipEmptyInput && !inputValue.trim()) {
+            result = [];
+          } else {
+            result = await schedulePluginExecution(`${plugin.id}:${workflow.id}`,
+              () => runActivePluginWorkflow(activePluginWorkflow, workflow.skipEmptyInput ? inputValue : inputValue.trim()), isCurrent);
+          }
         } catch (error) {
           result = [{
             type: "result",
@@ -617,6 +654,7 @@ const App = () => {
         }
         if (requestId !== searchRequestId.current) return;
         await modifyWindowSize(result.length || "compact");
+        if (!isCurrent()) return;
         setKeywordComponent(result);
         setSelectedIndex(0);
         return;
@@ -679,7 +717,7 @@ const App = () => {
           }
           // 匹配自定义插件组件
           for (let pluginName in pluginList) {
-            if (pluginStatus[pluginName]?.enable === false) {
+            if (pluginStatus?.[pluginName]?.enable === false || pluginList[pluginName].__error) {
               continue;
             }
             let plugin = pluginList[pluginName];
@@ -807,10 +845,10 @@ const App = () => {
     // 仅保留很短的防抖；查询本身在 Rust 后台线程执行，避免阻塞输入事件。
     const timer = setTimeout(() => {
       fetchData();
-    }, 30);
+    }, activePluginWorkflow?.workflow.debounceMs === 200 ? 200 : 80);
 
-    return () => clearTimeout(timer);
-  }, [inputValue, activePluginWorkflow]);
+    return () => { clearTimeout(timer); searchRequestId.current += 1; };
+  }, [inputValue, activePluginWorkflow, pluginList, pluginStatus]);
 
   useEffect(() => {
     // 监听窗口失去焦点 隐藏窗口
@@ -884,6 +922,16 @@ const App = () => {
         await focusInput();
       }
     });
+    const unListenClipboardShowRequest = listen("clipboard-show-request", async () => {
+      flushSync(() => initStatusRef.current?.());
+      const clipboard = insidePluginList.clipboardPluginComponent;
+      setComponent(createActiveIcon(clipboard.icon));
+      setComponentInfo(clipboard);
+      await modifyWindowSize("expanded");
+      await appWindow.show();
+      await appWindow.setFocus();
+      await focusPanelInputAfterWake();
+    });
 
     const handleGlobalKeyDown = (event) => {
       if (componentInfoRef.current?.type === "panel") {
@@ -920,9 +968,7 @@ const App = () => {
     initAppHabitDB(appHabitDB, setAppHabitDB, dbList, setDbList);
 
     // 读取本地组件库，查看注册状态
-    loadCustomComponent().then((result) => {
-      setPluginList(result);
-    });
+    refreshPlugins();
     if (!windowPosition.current) {
       windowPosition.current = getWindowPosition();
     }
@@ -934,6 +980,7 @@ const App = () => {
 
     return () => {
       unListenShowRequest.then((f) => f());
+      unListenClipboardShowRequest.then((f) => f());
       unListenAutoHide.then((f) => f());
       unListenWindowFocus.then((f) => f());
       unListenFileDrop.then((f) => f());
@@ -978,6 +1025,7 @@ const App = () => {
             ref={inputBox}
             type="text"
             id="mainInput"
+            placeholder={activePluginWorkflow?.workflow.skipEmptyInput ? "输入文本后自动执行，Esc 返回" : ""}
             autoComplete="off"
             autoCorrect="off"
             spellCheck="false"
@@ -988,6 +1036,8 @@ const App = () => {
             }}
             onChange={(event) => {
               if (!isComposing.status) {
+                searchRequestId.current += 1;
+                if (activePluginWorkflow) { setKeywordComponent([]); setSelectedIndex(-1); }
                 setInputValue(event.target.value);
               }
             }}
@@ -996,6 +1046,8 @@ const App = () => {
               setFnDown(false);
             }}
             onCompositionStart={() => {
+              searchRequestId.current += 1;
+              if (activePluginWorkflow) { setKeywordComponent([]); setSelectedIndex(-1); }
               setIsComposing({ status: true, ppos: 0 });
             }}
             onCompositionEnd={(event) => {
@@ -1026,7 +1078,17 @@ const App = () => {
             onClose={() => initStatus()}
           />
         ) : componentInfo ? (
-          <SubpageComponent component={componentInfo} keyDown={keyDown} />
+          <SubpageComponent component={componentInfo} keyDown={keyDown}
+            pluginLibraryProps={componentInfo.data === "showComponent" ? {
+              plugins: pluginList,
+              pluginStatus,
+              loading: pluginsLoading,
+              error: pluginsError,
+              onRefresh: refreshPlugins,
+              onToggle: togglePlugin,
+              onClose: () => { initStatus(); inputBox.current?.focus(); },
+            } : undefined}
+          />
         ) : null}
       </div>
     </div>

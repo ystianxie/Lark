@@ -234,8 +234,8 @@ const ClipboardComponent = ({onKeyDown}) => {
             if (dataType === "image") {
                 content = JSON.parse(content).base64
             } else if (dataType === "file") {
-                let files = JSON.parse(content).files
-                content = files[0][0]
+                // 传递完整文件列表，支持多文件/文件夹粘贴。
+                content = JSON.parse(content).files
             }
             invoke("clipboard_control", {
                 text: content,

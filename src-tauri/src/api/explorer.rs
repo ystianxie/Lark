@@ -230,7 +230,38 @@ fn get_app_from_lnk(lnk_path: &str) -> Result<Vec<String>, ApplicationError> {
 }
 
 pub fn get_apps(path: &str) -> Vec<HashMap<String, String>> {
-    get_apps_with_depth(path, true, true, false)
+    get_apps_with_depth(path, true, true, false, &[])
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_app_scan_path(path: &str) -> String {
+    path.trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn normalize_app_scan_path(path: &str) -> String {
+    path.trim()
+        .trim_matches('"')
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn is_app_scan_path_excluded(path: &str, excluded_paths: &[String]) -> bool {
+    let path = normalize_app_scan_path(path);
+    excluded_paths.iter().any(|excluded| {
+        let excluded = normalize_app_scan_path(excluded);
+        !excluded.is_empty()
+            && (path == excluded
+                || path
+                    .strip_prefix(&excluded)
+                    .map(|suffix| suffix.starts_with('\\') || suffix.starts_with('/'))
+                    .unwrap_or(false))
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -300,7 +331,11 @@ fn get_apps_with_depth(
     recursive: bool,
     include_direct_files: bool,
     exclude_common_dirs: bool,
+    excluded_paths: &[String],
 ) -> Vec<HashMap<String, String>> {
+    if is_app_scan_path_excluded(path, excluded_paths) {
+        return Vec::new();
+    }
     println!("开始检索目录： {:?}", path.replace("\\", "/"));
     let mut applications = Vec::new();
     let entries = fs::read_dir(path);
@@ -342,7 +377,13 @@ fn get_apps_with_depth(
         {
             if !app_name.ends_with(".app") {
                 // println!("文件夹：{:?}", entry.path().to_str().unwrap());
-                applications.extend(get_apps(entry.path().to_str().unwrap()));
+                applications.extend(get_apps_with_depth(
+                    entry.path().to_str().unwrap(),
+                    true,
+                    include_direct_files,
+                    exclude_common_dirs,
+                    excluded_paths,
+                ));
                 continue;
             }
 
@@ -428,6 +469,7 @@ fn get_apps_with_depth(
                         true,
                         include_direct_files,
                         exclude_common_dirs,
+                        excluded_paths,
                     ));
                 }
                 continue;
@@ -458,9 +500,7 @@ fn get_apps_with_depth(
                     continue;
                 }
                 // continue;
-            } else if include_direct_files
-                && matches!(extension.as_deref(), Some("rdp" | "url"))
-            {
+            } else if include_direct_files && matches!(extension.as_deref(), Some("rdp" | "url")) {
                 app_title = entry
                     .path()
                     .file_stem()
@@ -832,14 +872,33 @@ fn file_scanning(
 pub fn create_app_index_to_sql(app_handle: AppHandle) {
     let config = config::Config::read_local_config().unwrap().base;
     let mut index_db = IndexSQL::new();
-    let _ = index_db.clear_data("app");
+    if let Err(error) = index_db.clear_discovered_app_indexes() {
+        eprintln!("清理自动应用索引失败: {error}");
+        return;
+    }
     let mut result = Vec::new();
     #[cfg(target_os = "macos")]
     {
-        result.extend(get_apps("/System/Applications"));
-        result.extend(get_apps("/Applications/"));
-        result.extend(get_apps(
+        result.extend(get_apps_with_depth(
+            "/System/Applications",
+            true,
+            true,
+            false,
+            &config.local_app_search_exclude_paths,
+        ));
+        result.extend(get_apps_with_depth(
+            "/Applications/",
+            true,
+            true,
+            false,
+            &config.local_app_search_exclude_paths,
+        ));
+        result.extend(get_apps_with_depth(
             "/System/Volumes/Preboot/Cryptexes/App/System/Applications",
+            true,
+            true,
+            false,
+            &config.local_app_search_exclude_paths,
         ));
     }
     #[cfg(target_os = "windows")]
@@ -854,18 +913,29 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
         println!("{:?}", home_dir);
         // result.extend(get_apps(r"C:\Program Files\"));
         // result.extend(get_apps(r"C:\Program Files (x86)\"));
-        result.extend(get_apps(
+        result.extend(get_apps_with_depth(
             r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\",
+            true,
+            true,
+            false,
+            &config.local_app_search_exclude_paths,
         ));
-        result.extend(get_apps(&format!(
-            r"{}\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\",
-            home_dir.as_str()
-        )));
+        result.extend(get_apps_with_depth(
+            &format!(
+                r"{}\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\",
+                home_dir.as_str()
+            ),
+            true,
+            true,
+            false,
+            &config.local_app_search_exclude_paths,
+        ));
         result.extend(get_apps_with_depth(
             &format!(r"{}\Desktop\", home_dir),
             false,
             true,
             false,
+            &config.local_app_search_exclude_paths,
         ));
         for portable_root in config
             .local_app_search_paths
@@ -873,7 +943,13 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
             .filter(|path| Path::new(path).is_dir())
         {
             println!("扫描便携应用目录: {}", portable_root);
-            result.extend(get_apps_with_depth(portable_root, true, true, true));
+            result.extend(get_apps_with_depth(
+                portable_root,
+                true,
+                true,
+                true,
+                &config.local_app_search_exclude_paths,
+            ));
         }
         // result.extend();
         // result.extend(&std::env::var_os("USERPROFILE").unwrap().join("Desktop"));
@@ -921,6 +997,72 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
         })
         .collect();
     index_db.insert_app_indexes(items).unwrap();
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn add_custom_app_index(app_path: String, app_name: String) -> Result<(), String> {
+    let app_path = app_path.trim().trim_matches('"');
+    let app_name = app_name.trim();
+    if app_name.is_empty() {
+        return Err("应用名称不能为空".to_string());
+    }
+    let path = Path::new(app_path);
+    if !path.is_file() {
+        return Err("应用路径不存在或不是文件".to_string());
+    }
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("exe"))
+        .unwrap_or(false)
+    {
+        return Err("目前仅支持添加 .exe 应用".to_string());
+    }
+    let canonical_path =
+        std::fs::canonicalize(path).map_err(|error| format!("无法规范化应用路径：{error}"))?;
+    let canonical_path = canonical_path
+        .to_str()
+        .ok_or_else(|| "应用路径不是有效文本".to_string())?
+        .to_string();
+    #[cfg(target_os = "windows")]
+    let canonical_path = if let Some(path) = canonical_path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{path}")
+    } else {
+        canonical_path
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&canonical_path)
+            .to_string()
+    };
+
+    let (pinyin, abb) = text_to_pinyin(app_name);
+    let app = FileIndex {
+        title: app_name.to_string(),
+        path: canonical_path.clone(),
+        desc: canonical_path.clone(),
+        icon: read_icon_to_base64(canonical_path),
+        pinyin,
+        abb,
+        file_type: "app".to_string(),
+        ..Default::default()
+    };
+    let mut index = IndexSQL::new();
+    index
+        .upsert_custom_app_index(&app)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_custom_app_indexes() -> Result<Vec<FileIndex>, String> {
+    IndexSQL::new()
+        .list_custom_app_indexes()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn delete_custom_app_index(id: i64) -> Result<(), String> {
+    IndexSQL::new()
+        .delete_custom_app_index(id)
+        .map_err(|error| error.to_string())
 }
 
 pub fn create_file_index_to_sql(app_handle: AppHandle) {
@@ -1126,6 +1268,20 @@ pub(crate) fn find_windows_with_partial_title(partial_title: &str) {
         );
     }
 }
+
+#[test]
+#[cfg(target_os = "windows")]
+fn app_scan_exclusions_match_only_the_selected_subtree() {
+    let excluded = vec![r"D:\Apps\SDK".to_string()];
+    assert!(is_app_scan_path_excluded(r"d:/apps/sdk", &excluded));
+    assert!(is_app_scan_path_excluded(
+        r"D:\Apps\SDK\tools\bin",
+        &excluded
+    ));
+    assert!(!is_app_scan_path_excluded(r"D:\Apps\SDK2", &excluded));
+    assert!(!is_app_scan_path_excluded(r"D:\Apps\Other", &excluded));
+}
+
 #[test]
 #[allow(unused)]
 fn test1() {

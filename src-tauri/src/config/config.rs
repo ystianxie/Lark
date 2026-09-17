@@ -8,12 +8,22 @@ use std::collections::HashMap;
 use std::io::Write;
 use tauri::Manager;
 use walkdir::DirEntry;
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSnippet {
+    pub keyword: String,
+    pub text: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BaseConfig {
     app_name: String,
     version: String,
     pub hotkey_awaken: String,
     pub hotkey_clipboard: String,
+    #[serde(default)]
+    clipboard_settings_initialized: bool,
     clipboard_record_count_switch: bool,
     clipboard_record_count: Option<i32>,
     clipboard_record_text_switch: bool,
@@ -26,6 +36,18 @@ pub struct BaseConfig {
     pub local_file_search_exclude_types: Vec<String>,
     #[serde(default)]
     pub local_app_search_paths: Vec<String>,
+    #[serde(default)]
+    pub local_app_search_exclude_paths: Vec<String>,
+    #[serde(default)]
+    pub snippets_enabled: bool,
+    #[serde(default = "default_snippet_trigger")]
+    pub snippet_trigger: String,
+    #[serde(default)]
+    pub text_snippets: Vec<TextSnippet>,
+}
+
+fn default_snippet_trigger() -> String {
+    ";".to_string()
 }
 impl Default for BaseConfig {
     #[cfg(target_os = "macos")]
@@ -35,7 +57,8 @@ impl Default for BaseConfig {
             version: "1.0.0".to_string(),
             hotkey_awaken: "Option+Space".to_string(),
             hotkey_clipboard: "Shift+Meta+V".to_string(),
-            clipboard_record_count_switch: false,
+            clipboard_settings_initialized: true,
+            clipboard_record_count_switch: true,
             clipboard_record_count: Some(100),
             clipboard_record_text_switch: false,
             clipboard_record_text_time: Some(10),
@@ -71,6 +94,10 @@ impl Default for BaseConfig {
                 "xpc".to_string(),
             ],
             local_app_search_paths: Vec::new(),
+            local_app_search_exclude_paths: Vec::new(),
+            snippets_enabled: false,
+            snippet_trigger: default_snippet_trigger(),
+            text_snippets: Vec::new(),
         }
     }
     #[cfg(target_os = "windows")]
@@ -80,7 +107,8 @@ impl Default for BaseConfig {
             version: "1.0.0".to_string(),
             hotkey_awaken: "Alt+Space".to_string(),
             hotkey_clipboard: "Shift+Alt+V".to_string(),
-            clipboard_record_count_switch: false,
+            clipboard_settings_initialized: true,
+            clipboard_record_count_switch: true,
             clipboard_record_count: Some(100),
             clipboard_record_text_switch: false,
             clipboard_record_text_time: Some(10),
@@ -140,6 +168,10 @@ impl Default for BaseConfig {
                 r"C:\App".to_string(),
                 r"C:\Apps".to_string(),
             ],
+            local_app_search_exclude_paths: Vec::new(),
+            snippets_enabled: false,
+            snippet_trigger: default_snippet_trigger(),
+            text_snippets: Vec::new(),
         }
     }
 }
@@ -159,6 +191,8 @@ enum ConfigUpdate {
     ClipboardRecordFileTime(Option<i32>),
     LocalFileSearchExcludePaths(Vec<String>),
     LocalFileSearchExcludeTypes(Vec<String>),
+    LocalAppSearchPaths(Vec<String>),
+    LocalAppSearchExcludePaths(Vec<String>),
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -172,14 +206,19 @@ pub struct Config {
     config: ConfigData,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ClipboardRetention {
+    pub count: Option<usize>,
+    pub text_days: Option<i32>,
+    pub image_days: Option<i32>,
+    pub file_days: Option<i32>,
+}
+
 impl Config {
     pub fn new() -> Self {
         Self {
             config: Self::read_local_config().unwrap(),
         }
-    }
-    pub fn get_clipboard_record_limit(&self) -> i32 {
-        self.config.base.clipboard_record_count.unwrap_or(-1)
     }
     // pub fn get_file_search_exclude_paths(&self) -> Vec<String> {
     //     let mut paths = vec![];
@@ -199,7 +238,6 @@ impl Config {
         let config = ConfigData {
             ..Default::default()
         };
-        println!("配置文件路径{:?}", config_file_path);
         if !config_file_path.exists() {
             let file_result = std::fs::File::create(config_file_path);
             match file_result {
@@ -221,20 +259,13 @@ impl Config {
         } else {
             let file_result = std::fs::File::open(config_file_path)?;
             let mut config: ConfigData = serde_json::from_reader(&file_result).unwrap_or(config);
-            // Keep user customizations, while adding newly introduced safe defaults
-            // to existing installations on the next read.
-            let default_paths = BaseConfig::default().local_file_search_exclude_paths;
-            for path in default_paths {
-                if !config.base.local_file_search_exclude_paths.contains(&path) {
-                    config.base.local_file_search_exclude_paths.push(path);
-                }
+            if !config.base.clipboard_settings_initialized {
+                // Older builds always enforced the 100-item limit even though the
+                // persisted switch was unused. Preserve that effective behavior.
+                config.base.clipboard_settings_initialized = true;
+                config.base.clipboard_record_count_switch = true;
             }
-            let default_app_paths = BaseConfig::default().local_app_search_paths;
-            for path in default_app_paths {
-                if !config.base.local_app_search_paths.contains(&path) {
-                    config.base.local_app_search_paths.push(path);
-                }
-            }
+            // Keep user customizations, including intentionally removed exclusions.
             Ok(config)
         }
     }
@@ -275,22 +306,291 @@ impl Config {
             ConfigUpdate::LocalFileSearchExcludeTypes(value) => {
                 self.config.base.local_file_search_exclude_types = value
             }
+            ConfigUpdate::LocalAppSearchPaths(value) => {
+                self.config.base.local_app_search_paths = value
+            }
+            ConfigUpdate::LocalAppSearchExcludePaths(value) => {
+                self.config.base.local_app_search_exclude_paths = value
+            }
+        }
+    }
+    pub fn clipboard_retention(&self) -> ClipboardRetention {
+        let base = &self.config.base;
+        ClipboardRetention {
+            count: base
+                .clipboard_record_count_switch
+                .then_some(base.clipboard_record_count)
+                .flatten()
+                .filter(|value| *value > 0)
+                .map(|value| value as usize),
+            text_days: base
+                .clipboard_record_text_switch
+                .then_some(base.clipboard_record_text_time)
+                .flatten()
+                .filter(|value| *value > 0),
+            image_days: base
+                .clipboard_record_image_switch
+                .then_some(base.clipboard_record_image_time)
+                .flatten()
+                .filter(|value| *value > 0),
+            file_days: base
+                .clipboard_record_file_switch
+                .then_some(base.clipboard_record_file_time)
+                .flatten()
+                .filter(|value| *value > 0),
         }
     }
     pub fn save_local_config(&self) -> Result<()> {
-        let mut file = std::fs::File::create(config_path()?)?;
+        let path = config_path()?;
+        let temp_path = path.with_extension("json.tmp");
+        let backup_path = path.with_extension("json.bak");
+        let mut file = std::fs::File::create(&temp_path)?;
         let config = serde_json::to_string_pretty(&self.config).unwrap_or("".to_string());
-        file.write_all(config.as_bytes()).expect("写入到文件失败！");
+        file.write_all(config.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+
+        if backup_path.exists() {
+            std::fs::remove_file(&backup_path)?;
+        }
+        if path.exists() {
+            std::fs::rename(&path, &backup_path)?;
+        }
+        if let Err(error) = std::fs::rename(&temp_path, &path) {
+            if backup_path.exists() {
+                std::fs::rename(&backup_path, &path).map_err(|restore_error| {
+                    anyhow::anyhow!(
+                        "failed to replace config: {error}; failed to restore backup: {restore_error}"
+                    )
+                })?;
+            }
+            return Err(error.into());
+        }
+        if backup_path.exists() {
+            let _ = std::fs::remove_file(backup_path);
+        }
         Ok(())
     }
     pub fn register_plugin_config(&mut self, plugin_name: &str, config: Value) {
         self.config.plugins.insert(plugin_name.to_string(), config);
     }
 }
-#[tauri::command(rename_all = "camelCase")]
-pub fn save_setting(setting_info: Value) {
-    // todo 保存设置结果到数据库
-    println!("Received JSON data: {}", setting_info);
+pub fn save_setting_data(setting_info: Value) -> Result<(String, String)> {
+    let mut config = Config::new();
+    if let Some(value) = setting_info.get("hotkeyAwaken").and_then(Value::as_str) {
+        config.update_local_config(ConfigUpdate::HotkeyAwaken(value.to_string()));
+    }
+    if let Some(value) = setting_info.get("hotkeyClipboard").and_then(Value::as_str) {
+        config.update_local_config(ConfigUpdate::HotkeyClipboard(value.to_string()));
+    }
+    if let Some(value) = setting_info
+        .get("clipboardCountSwitch")
+        .and_then(Value::as_bool)
+    {
+        config.update_local_config(ConfigUpdate::ClipboardRecordCountSwitch(value));
+    }
+    if let Some(value) = setting_info.get("clipboardCount").and_then(Value::as_i64) {
+        config.update_local_config(ConfigUpdate::ClipboardRecordCount(Some(
+            value.clamp(10, 200) as i32,
+        )));
+    }
+    if let Some(value) = setting_info
+        .get("clipboardTextSwitch")
+        .and_then(Value::as_bool)
+    {
+        config.update_local_config(ConfigUpdate::ClipboardRecordTextSwitch(value));
+    }
+    if let Some(value) = setting_info.get("clipboardText").and_then(Value::as_i64) {
+        config.update_local_config(ConfigUpdate::ClipboardRecordTextTime(Some(
+            value.clamp(1, 30) as i32,
+        )));
+    }
+    if let Some(value) = setting_info
+        .get("clipboardImageSwitch")
+        .and_then(Value::as_bool)
+    {
+        config.update_local_config(ConfigUpdate::ClipboardRecordImageSwitch(value));
+    }
+    if let Some(value) = setting_info.get("clipboardImage").and_then(Value::as_i64) {
+        config.update_local_config(ConfigUpdate::ClipboardRecordImageTime(Some(
+            value.clamp(1, 15) as i32,
+        )));
+    }
+    if let Some(value) = setting_info
+        .get("clipboardFileSwitch")
+        .and_then(Value::as_bool)
+    {
+        config.update_local_config(ConfigUpdate::ClipboardRecordFileSwitch(value));
+    }
+    if let Some(value) = setting_info.get("clipboardFile").and_then(Value::as_i64) {
+        config.update_local_config(ConfigUpdate::ClipboardRecordFileTime(Some(
+            value.clamp(1, 10) as i32,
+        )));
+    }
+    config.config.base.clipboard_settings_initialized = true;
+    config.save_local_config()?;
+    Ok((
+        config.config.base.hotkey_awaken.clone(),
+        config.config.base.hotkey_clipboard.clone(),
+    ))
+}
+
+pub fn app_settings() -> Result<Value> {
+    let config = Config::read_local_config()?;
+    let base = config.base;
+    Ok(serde_json::json!({
+        "hotkeyAwaken": base.hotkey_awaken,
+        "hotkeyClipboard": base.hotkey_clipboard,
+        "clipboardCountSwitch": base.clipboard_record_count_switch,
+        "clipboardCount": base.clipboard_record_count,
+        "clipboardTextSwitch": base.clipboard_record_text_switch,
+        "clipboardText": base.clipboard_record_text_time,
+        "clipboardImageSwitch": base.clipboard_record_image_switch,
+        "clipboardImage": base.clipboard_record_image_time,
+        "clipboardFileSwitch": base.clipboard_record_file_switch,
+        "clipboardFile": base.clipboard_record_file_time,
+    }))
+}
+
+pub fn snippet_settings() -> Result<Value> {
+    let config = Config::read_local_config()?;
+    Ok(serde_json::json!({
+        "enabled": config.base.snippets_enabled,
+        "trigger": config.base.snippet_trigger,
+        "snippets": config.base.text_snippets,
+    }))
+}
+
+pub fn save_snippet_settings_data(setting_info: Value) -> Result<(bool, String, Vec<TextSnippet>)> {
+    let enabled = setting_info
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let trigger = setting_info
+        .get("trigger")
+        .and_then(Value::as_str)
+        .unwrap_or(";")
+        .trim()
+        .to_string();
+    if trigger.chars().count() != 1 || trigger.chars().any(char::is_whitespace) {
+        return Err(anyhow::anyhow!("触发符必须是一个非空白字符"));
+    }
+
+    let snippets: Vec<TextSnippet> = serde_json::from_value(
+        setting_info
+            .get("snippets")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+    )?;
+    for snippet in &snippets {
+        if snippet.keyword.is_empty()
+            || snippet.keyword.len() > 32
+            || !snippet
+                .keyword
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+        {
+            return Err(anyhow::anyhow!(
+                "关键词只能包含字母、数字、下划线或短横线，长度为 1 到 32"
+            ));
+        }
+        if snippet.text.is_empty() {
+            return Err(anyhow::anyhow!("片段内容不能为空"));
+        }
+    }
+    for (index, snippet) in snippets.iter().enumerate() {
+        if snippets[..index]
+            .iter()
+            .any(|other| other.keyword == snippet.keyword)
+        {
+            return Err(anyhow::anyhow!("关键词不能重复：{}", snippet.keyword));
+        }
+        if snippets.iter().enumerate().any(|(other_index, other)| {
+            other_index != index
+                && other.keyword.starts_with(&snippet.keyword)
+                && other.keyword != snippet.keyword
+        }) {
+            return Err(anyhow::anyhow!(
+                "关键词不能互为前缀：{}，否则无法判断何时展开",
+                snippet.keyword
+            ));
+        }
+    }
+
+    let mut config = Config::new();
+    config.config.base.snippets_enabled = enabled;
+    config.config.base.snippet_trigger = trigger.clone();
+    config.config.base.text_snippets = snippets.clone();
+    config.save_local_config()?;
+    Ok((enabled, trigger, snippets))
+}
+
+pub fn save_index_settings_data(setting_info: Value) -> Result<()> {
+    let mut config = Config::new();
+    if let Some(value) = setting_info
+        .get("localAppSearchPaths")
+        .and_then(Value::as_array)
+    {
+        config.update_local_config(ConfigUpdate::LocalAppSearchPaths(
+            value
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        ));
+    }
+    if let Some(value) = setting_info
+        .get("localAppSearchExcludePaths")
+        .and_then(Value::as_array)
+    {
+        config.update_local_config(ConfigUpdate::LocalAppSearchExcludePaths(
+            value
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        ));
+    }
+    if let Some(value) = setting_info
+        .get("localFileSearchExcludePaths")
+        .and_then(Value::as_array)
+    {
+        config.update_local_config(ConfigUpdate::LocalFileSearchExcludePaths(
+            value
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        ));
+    }
+    if let Some(value) = setting_info
+        .get("localFileSearchExcludeTypes")
+        .and_then(Value::as_array)
+    {
+        config.update_local_config(ConfigUpdate::LocalFileSearchExcludeTypes(
+            value
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        ));
+    }
+    config.save_local_config()
+}
+
+pub fn index_settings() -> Result<Value> {
+    let config = Config::read_local_config()?;
+    Ok(serde_json::json!({
+        "localAppSearchPaths": config.base.local_app_search_paths,
+        "localAppSearchExcludePaths": config.base.local_app_search_exclude_paths,
+        "localFileSearchExcludePaths": config.base.local_file_search_exclude_paths,
+        "localFileSearchExcludeTypes": config.base.local_file_search_exclude_types,
+    }))
+}
+
+pub fn hotkey_settings() -> Result<(String, String)> {
+    let config = Config::read_local_config()?;
+    Ok((config.base.hotkey_awaken, config.base.hotkey_clipboard))
 }
 
 #[test]
