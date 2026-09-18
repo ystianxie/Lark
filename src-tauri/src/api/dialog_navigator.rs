@@ -21,8 +21,8 @@ mod platform {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumChildWindows, GetClassNameW, GetDlgCtrlID, GetForegroundWindow, IsWindow,
-        IsWindowVisible, SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_CHAR, WM_GETTEXT,
-        WM_GETTEXTLENGTH, WM_KEYDOWN, WM_KEYUP, WM_SETTEXT,
+        IsWindowVisible, SendMessageTimeoutW, IDOK, SMTO_ABORTIFHUNG, WM_COMMAND, WM_GETTEXT,
+        WM_GETTEXTLENGTH, WM_SETTEXT,
     };
 
     use crate::api::dialog_probe::{probe_foreground_dialog, DialogConfidence};
@@ -111,9 +111,10 @@ mod platform {
 
         set_control_text(edit, &navigation_text)?;
 
-        // 文件对话框通常会把文件名框中的 `目录\` 解释为目录导航。
-        // Enter 只定向发送到该 Edit，不向当前全局焦点注入字符。
-        if let Err(error) = send_enter_to_control(edit) {
+        // 仅向 Edit 发送 WM_KEYDOWN/WM_CHAR 不会经过对话框管理器，现代文件对话框
+        // 通常不会因此执行“打开”。向顶层对话框发送 IDOK，等价于点击打开/保存按钮；
+        // 当文件名框里是 `目录\` 时，标准文件对话框会把它解释为进入该目录。
+        if let Err(error) = submit_dialog(dialog) {
             let _ = set_control_text(edit, &original_text);
             return Err(error);
         }
@@ -199,10 +200,8 @@ mod platform {
         Ok(())
     }
 
-    fn send_enter_to_control(hwnd: HWND) -> Result<(), String> {
-        send_message(hwnd, WM_KEYDOWN, WPARAM(VK_RETURN.0 as usize), LPARAM(0))?;
-        send_message(hwnd, WM_CHAR, WPARAM(VK_RETURN.0 as usize), LPARAM(0))?;
-        send_message(hwnd, WM_KEYUP, WPARAM(VK_RETURN.0 as usize), LPARAM(0))?;
+    fn submit_dialog(dialog: HWND) -> Result<(), String> {
+        send_message(dialog, WM_COMMAND, WPARAM(IDOK.0 as usize), LPARAM(0))?;
         Ok(())
     }
 

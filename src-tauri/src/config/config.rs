@@ -22,6 +22,8 @@ pub struct BaseConfig {
     version: String,
     pub hotkey_awaken: String,
     pub hotkey_clipboard: String,
+    #[serde(default = "default_hotkey_file_jump")]
+    pub hotkey_file_jump: String,
     #[serde(default)]
     clipboard_settings_initialized: bool,
     clipboard_record_count_switch: bool,
@@ -44,10 +46,17 @@ pub struct BaseConfig {
     pub snippet_trigger: String,
     #[serde(default)]
     pub text_snippets: Vec<TextSnippet>,
+    /// 全局 Python 解释器路径（可直接指向虚拟环境里的可执行文件）。None = 使用平台默认命令。
+    #[serde(default)]
+    pub python_interpreter: Option<String>,
 }
 
 fn default_snippet_trigger() -> String {
     ";".to_string()
+}
+
+fn default_hotkey_file_jump() -> String {
+    "Ctrl+G".to_string()
 }
 impl Default for BaseConfig {
     #[cfg(target_os = "macos")]
@@ -57,6 +66,7 @@ impl Default for BaseConfig {
             version: "1.0.0".to_string(),
             hotkey_awaken: "Option+Space".to_string(),
             hotkey_clipboard: "Shift+Meta+V".to_string(),
+            hotkey_file_jump: default_hotkey_file_jump(),
             clipboard_settings_initialized: true,
             clipboard_record_count_switch: true,
             clipboard_record_count: Some(100),
@@ -98,6 +108,7 @@ impl Default for BaseConfig {
             snippets_enabled: false,
             snippet_trigger: default_snippet_trigger(),
             text_snippets: Vec::new(),
+            python_interpreter: None,
         }
     }
     #[cfg(target_os = "windows")]
@@ -107,6 +118,7 @@ impl Default for BaseConfig {
             version: "1.0.0".to_string(),
             hotkey_awaken: "Alt+Space".to_string(),
             hotkey_clipboard: "Shift+Alt+V".to_string(),
+            hotkey_file_jump: default_hotkey_file_jump(),
             clipboard_settings_initialized: true,
             clipboard_record_count_switch: true,
             clipboard_record_count: Some(100),
@@ -172,6 +184,7 @@ impl Default for BaseConfig {
             snippets_enabled: false,
             snippet_trigger: default_snippet_trigger(),
             text_snippets: Vec::new(),
+            python_interpreter: None,
         }
     }
 }
@@ -181,6 +194,7 @@ enum ConfigUpdate {
     Version(String),
     HotkeyAwaken(String),
     HotkeyClipboard(String),
+    HotkeyFileJump(String),
     ClipboardRecordCountSwitch(bool),
     ClipboardRecordCount(Option<i32>),
     ClipboardRecordTextSwitch(bool),
@@ -193,11 +207,13 @@ enum ConfigUpdate {
     LocalFileSearchExcludeTypes(Vec<String>),
     LocalAppSearchPaths(Vec<String>),
     LocalAppSearchExcludePaths(Vec<String>),
+    PythonInterpreter(Option<String>),
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ConfigData {
     pub base: BaseConfig,
+    #[serde(default)]
     plugins: HashMap<String, Value>,
 }
 
@@ -276,6 +292,7 @@ impl Config {
             ConfigUpdate::Version(value) => self.config.base.version = value,
             ConfigUpdate::HotkeyAwaken(value) => self.config.base.hotkey_awaken = value,
             ConfigUpdate::HotkeyClipboard(value) => self.config.base.hotkey_clipboard = value,
+            ConfigUpdate::HotkeyFileJump(value) => self.config.base.hotkey_file_jump = value,
             ConfigUpdate::ClipboardRecordCountSwitch(value) => {
                 self.config.base.clipboard_record_count_switch = value
             }
@@ -312,6 +329,7 @@ impl Config {
             ConfigUpdate::LocalAppSearchExcludePaths(value) => {
                 self.config.base.local_app_search_exclude_paths = value
             }
+            ConfigUpdate::PythonInterpreter(value) => self.config.base.python_interpreter = value,
         }
     }
     pub fn clipboard_retention(&self) -> ClipboardRetention {
@@ -371,8 +389,19 @@ impl Config {
         }
         Ok(())
     }
-    pub fn register_plugin_config(&mut self, plugin_name: &str, config: Value) {
-        self.config.plugins.insert(plugin_name.to_string(), config);
+}
+
+impl ConfigData {
+    pub fn plugin_settings(&self, plugin_id: &str) -> Option<Value> {
+        self.plugins.get(plugin_id).cloned()
+    }
+
+    pub fn set_plugin_settings(&mut self, plugin_id: &str, values: Value) {
+        self.plugins.insert(plugin_id.to_string(), values);
+    }
+
+    pub fn remove_plugin_settings(&mut self, plugin_id: &str) -> bool {
+        self.plugins.remove(plugin_id).is_some()
     }
 }
 pub fn save_setting_data(setting_info: Value) -> Result<(String, String)> {
@@ -382,6 +411,20 @@ pub fn save_setting_data(setting_info: Value) -> Result<(String, String)> {
     }
     if let Some(value) = setting_info.get("hotkeyClipboard").and_then(Value::as_str) {
         config.update_local_config(ConfigUpdate::HotkeyClipboard(value.to_string()));
+    }
+    if let Some(value) = setting_info.get("hotkeyFileJump").and_then(Value::as_str) {
+        config.update_local_config(ConfigUpdate::HotkeyFileJump(value.to_string()));
+    }
+    // 与其它字段不同：这里按「key 是否存在」判断，而不是 as_str()。
+    // 前端未加载成功时不传该 key，就不能覆盖已有配置；需要清空时必须显式传 null
+    //（undefined 会被 JSON.stringify 整个丢弃，等同于「不传」）。
+    if let Some(value) = setting_info.get("pythonInterpreter") {
+        let configured = value
+            .as_str()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_string);
+        config.update_local_config(ConfigUpdate::PythonInterpreter(configured));
     }
     if let Some(value) = setting_info
         .get("clipboardCountSwitch")
@@ -441,6 +484,7 @@ pub fn app_settings() -> Result<Value> {
     Ok(serde_json::json!({
         "hotkeyAwaken": base.hotkey_awaken,
         "hotkeyClipboard": base.hotkey_clipboard,
+        "hotkeyFileJump": base.hotkey_file_jump,
         "clipboardCountSwitch": base.clipboard_record_count_switch,
         "clipboardCount": base.clipboard_record_count,
         "clipboardTextSwitch": base.clipboard_record_text_switch,
@@ -449,6 +493,7 @@ pub fn app_settings() -> Result<Value> {
         "clipboardImage": base.clipboard_record_image_time,
         "clipboardFileSwitch": base.clipboard_record_file_switch,
         "clipboardFile": base.clipboard_record_file_time,
+        "pythonInterpreter": base.python_interpreter,
     }))
 }
 
@@ -588,9 +633,40 @@ pub fn index_settings() -> Result<Value> {
     }))
 }
 
-pub fn hotkey_settings() -> Result<(String, String)> {
+pub fn hotkey_settings() -> Result<(String, String, String)> {
     let config = Config::read_local_config()?;
-    Ok((config.base.hotkey_awaken, config.base.hotkey_clipboard))
+    Ok((
+        config.base.hotkey_awaken,
+        config.base.hotkey_clipboard,
+        config.base.hotkey_file_jump,
+    ))
+}
+
+/// 读取某个插件的配置值；没有记录时返回空对象，便于前端直接展开。
+pub fn plugin_settings(plugin_id: &str) -> Result<Value> {
+    let config = Config::read_local_config()?;
+    Ok(config
+        .plugin_settings(plugin_id)
+        .unwrap_or_else(|| serde_json::json!({})))
+}
+
+/// 读取全部插件的配置值，供完整性摘要计算使用（不经过前端内存）。
+pub fn plugin_settings_map() -> Result<HashMap<String, Value>> {
+    let config = Config::read_local_config()?;
+    Ok(config.plugins.clone())
+}
+
+/// 覆盖写入某个插件的配置值。键的合法性由命令层按 manifest 声明过滤。
+pub fn save_plugin_settings_data(plugin_id: &str, values: Value) -> Result<()> {
+    let mut config = Config::new();
+    config.config.set_plugin_settings(plugin_id, values);
+    config.save_local_config()
+}
+
+pub fn clear_plugin_settings_data(plugin_id: &str) -> Result<()> {
+    let mut config = Config::new();
+    config.config.remove_plugin_settings(plugin_id);
+    config.save_local_config()
 }
 
 #[test]
@@ -616,4 +692,26 @@ fn te() {
             &vec!["*/node_modules".to_string()]
         )
     );
+}
+
+#[cfg(test)]
+mod plugin_config_tests {
+    use super::*;
+
+    #[test]
+    fn config_data_without_plugins_key_keeps_base_settings() {
+        let mut value = serde_json::to_value(ConfigData::default()).expect("配置应可序列化");
+        let removed = value
+            .as_object_mut()
+            .expect("配置根节点应为对象")
+            .remove("plugins");
+        assert!(
+            removed.is_some(),
+            "默认配置应包含 plugins 键，否则本测试不再验证缺键场景"
+        );
+        let restored: ConfigData =
+            serde_json::from_value(value).expect("缺少 plugins 键不应导致整个配置回退默认值");
+        assert!(restored.plugins.is_empty());
+        assert_eq!(restored.base.app_name, "lark");
+    }
 }

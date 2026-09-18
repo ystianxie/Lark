@@ -571,7 +571,7 @@ impl ClipboardWatcher {
                         };
                         // 压缩画质作为预览图，防止渲染时非常卡顿
                         let jpeg_base64 = img_factory::rgba8_to_jpeg_base64(&img, 70);
-                        println!("获取到新图片: {}", jpeg_base64);
+                        println!("获取到新图片");
                         let content_preview_db = ImageDataDB {
                             width: img.width,
                             height: img.height,

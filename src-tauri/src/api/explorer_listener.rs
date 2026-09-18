@@ -133,6 +133,8 @@ mod platform {
         let mut last_path: Option<PathBuf> = None;
         let mut last_path_state: Option<Option<PathBuf>> = None;
         let mut last_dialog_signature: Option<(isize, DialogConfidence, u8)> = None;
+        // 只有从资源管理器直接切换到文件对话框，才执行自动跳转。
+        let mut previous_foreground_was_explorer = false;
 
         println!(
             "[ExplorerListener] 已启动，轮询间隔 {} ms",
@@ -140,35 +142,42 @@ mod platform {
         );
 
         while !stop.load(Ordering::Relaxed) {
-            match foreground_explorer_path_in_current_apartment() {
+            let current_foreground_is_explorer = match foreground_explorer_path_in_current_apartment(
+            ) {
                 Ok(path_state) => {
                     if last_path_state.as_ref() != Some(&path_state) {
                         match &path_state {
-                            Some(path) => println!(
-                                "[ExplorerListener] 当前识别到的资源管理器路径: {}",
-                                path.display()
-                            ),
-                            None => println!(
-                                "[ExplorerListener] 当前未识别到资源管理器路径（前台窗口不是文件夹或路径不可用）"
-                            ),
-                        }
+                                Some(path) => println!(
+                                    "[ExplorerListener] 当前识别到的资源管理器路径: {}",
+                                    path.display()
+                                ),
+                                None => println!(
+                                    "[ExplorerListener] 当前未识别到资源管理器路径（前台窗口不是文件夹或路径不可用）"
+                                ),
+                            }
                         last_path_state = Some(path_state.clone());
                     }
 
+                    let is_explorer = path_state.is_some();
                     if let Some(path) = path_state {
                         if last_path.as_ref() != Some(&path) {
                             last_path = Some(path.clone());
                             on_path_changed(path);
                         }
                     }
+                    is_explorer
                 }
-                Err(error) => eprintln!("[ExplorerListener] 查询失败: {error}"),
-            }
+                Err(error) => {
+                    eprintln!("[ExplorerListener] 查询失败: {error}");
+                    previous_foreground_was_explorer
+                }
+            };
 
             match probe_foreground_dialog() {
                 Ok(result) => {
                     let signature = (result.hwnd, result.confidence, result.score);
                     if last_dialog_signature != Some(signature) {
+                        
                         println!(
                             "[ExplorerListener] 文件选择框识别: {:?}, hwnd=0x{:X}, title={:?}, class={:?}, score={}, evidence={}",
                             result.confidence,
@@ -179,12 +188,22 @@ mod platform {
                             result.evidence.join("；")
                         );
                         last_dialog_signature = Some(signature);
-                        on_dialog_changed(result);
+
+                        if previous_foreground_was_explorer
+                            && !current_foreground_is_explorer
+                            && result.confidence == DialogConfidence::Confirmed
+                        {
+                            println!(
+                                "[ExplorerListener] 检测到资源管理器 -> 文件选择框，触发自动跳转"
+                            );
+                            on_dialog_changed(result);
+                        }
                     }
                 }
                 Err(error) => eprintln!("[ExplorerListener] 文件选择框探测失败: {error}"),
             }
 
+            previous_foreground_was_explorer = current_foreground_is_explorer;
             thread::sleep(interval);
         }
 

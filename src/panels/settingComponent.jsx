@@ -3,6 +3,7 @@ import styled, {createGlobalStyle} from 'styled-components';
 import {distance} from "mathjs";
 import {Button, Input, InputNumber, Checkbox, Flex, Tabs, Tag, Popconfirm, Switch} from 'antd';
 import {invoke} from "@tauri-apps/api/core";
+import {open} from "@tauri-apps/plugin-dialog";
 import {listen} from "@tauri-apps/api/event";
 
 const Wrapper = createGlobalStyle`
@@ -660,6 +661,7 @@ const Component = () => {
     const [clipboardFileSwitch, setClipboardFileSwitch] = useState(false);
     const [hotkeyAwaken, setHotkeyAwaken] = useState("Alt+Space");
     const [hotkeyClipboard, setHotkeyClipboard] = useState("Shift+Alt+V");
+    const [hotkeyFileJump, setHotkeyFileJump] = useState("Ctrl+G");
     const [appSearchPaths, setAppSearchPaths] = useState([]);
     const [appExcludePaths, setAppExcludePaths] = useState([]);
     const [excludePaths, setExcludePaths] = useState([]);
@@ -679,19 +681,25 @@ const Component = () => {
     const [newSnippetText, setNewSnippetText] = useState('');
     const [snippetError, setSnippetError] = useState('');
     const [settingNotice, setSettingNotice] = useState({type: '', text: ''});
+    const [pythonInterpreter, setPythonInterpreter] = useState(null);
+    const [pythonProbe, setPythonProbe] = useState(null);
+    const [pythonProbeError, setPythonProbeError] = useState('');
     const hotkeyCaptureActive = useRef(false);
     const activeHotkeyField = useRef(null);
     const hotkeyCaptureTransition = useRef(Promise.resolve());
     const hotkeyAwakenRef = useRef(hotkeyAwaken);
     const hotkeyClipboardRef = useRef(hotkeyClipboard);
+    const hotkeyFileJumpRef = useRef(hotkeyFileJump);
 
     hotkeyAwakenRef.current = hotkeyAwaken;
     hotkeyClipboardRef.current = hotkeyClipboard;
+    hotkeyFileJumpRef.current = hotkeyFileJump;
 
     useEffect(() => {
         invoke("get_app_settings").then((settings) => {
             setHotkeyAwaken(settings.hotkeyAwaken);
             setHotkeyClipboard(settings.hotkeyClipboard);
+            setHotkeyFileJump(settings.hotkeyFileJump || "Ctrl+G");
             setClipboardCountSwitch(settings.clipboardCountSwitch ?? true);
             setClipboardCount(settings.clipboardCount ?? 100);
             setClipboardTextSwitch(settings.clipboardTextSwitch ?? false);
@@ -700,6 +708,9 @@ const Component = () => {
             setClipboardImage(settings.clipboardImage ?? 5);
             setClipboardFileSwitch(settings.clipboardFileSwitch ?? false);
             setClipboardFile(settings.clipboardFile ?? 1);
+            const interpreter = settings.pythonInterpreter ?? null;
+            setPythonInterpreter(interpreter);
+            probePythonInterpreter(interpreter);
         }).catch((error) => console.error("读取应用设置失败", error));
         invoke("get_index_settings").then((settings) => {
             setAppSearchPaths(settings.localAppSearchPaths || []);
@@ -729,19 +740,25 @@ const Component = () => {
             if (!name || typeof payload !== 'string') return;
             const nextAwaken = name === 'lark' ? payload : hotkeyAwakenRef.current;
             const nextClipboard = name === 'cbd' ? payload : hotkeyClipboardRef.current;
+            const nextFileJump = name === 'fileJump' ? payload : hotkeyFileJumpRef.current;
             try {
                 await invoke('reserve_hotkey_capture', {
                     awaken: nextAwaken,
                     clipboard: nextClipboard,
+                    fileJump: nextFileJump,
                 });
                 if (name === 'lark') {
                     hotkeyAwakenRef.current = payload;
                     setHotkeyAwaken(payload);
                     setLarkDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
-                } else {
+                } else if (name === 'cbd') {
                     hotkeyClipboardRef.current = payload;
                     setHotkeyClipboard(payload);
                     setCBDDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
+                } else {
+                    hotkeyFileJumpRef.current = payload;
+                    setHotkeyFileJump(payload);
+                    setFileJumpDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
                 }
                 setSettingNotice({type: '', text: ''});
             } catch (error) {
@@ -775,12 +792,59 @@ const Component = () => {
         }
     });
     const [cbdDisplayText, setCBDDisplayText] = useReducer(hotkeysFrameShow, {downKey: {}});
+    const [fileJumpDisplayText, setFileJumpDisplayText] = useReducer(hotkeysFrameShow, {downKey: {}});
 
     useEffect(() => {
         setLarkDisplayText({behavior: "set", data: hotkeyToDownKey(hotkeyAwaken)});
         setCBDDisplayText({behavior: "set", data: hotkeyToDownKey(hotkeyClipboard)});
-    }, [hotkeyAwaken, hotkeyClipboard]);
+        setFileJumpDisplayText({behavior: "set", data: hotkeyToDownKey(hotkeyFileJump)});
+    }, [hotkeyAwaken, hotkeyClipboard, hotkeyFileJump]);
 
+
+    // 解释器探测：只在打开设置页、选择文件或输入框失焦时触发，结果仅用于提示，不阻断保存。
+    function probePythonInterpreter(path) {
+        const value = typeof path === 'string' && path.trim() ? path.trim() : null;
+        invoke("probe_python_interpreter", {path: value}).then((result) => {
+            setPythonProbe(result);
+            setPythonProbeError('');
+        }).catch((error) => {
+            setPythonProbe(null);
+            setPythonProbeError(String(error));
+        });
+    }
+
+    async function choosePythonInterpreter() {
+        try {
+            // macOS/Linux 的解释器通常没有扩展名，加 filters 会导致选不中。
+            const windows = (navigator.userAgent || '').includes('Windows');
+            const selected = await open({
+                multiple: false,
+                directory: false,
+                filters: windows ? [{name: 'Python 解释器', extensions: ['exe']}] : undefined,
+            });
+            if (typeof selected !== 'string') return;
+            setPythonInterpreter(selected);
+            probePythonInterpreter(selected);
+        } catch (error) {
+            setPythonProbeError(String(error));
+        }
+    }
+
+    function pythonProbeSummary() {
+        if (pythonProbeError) return `检测失败：${pythonProbeError}`;
+        if (!pythonProbe) return '未检测';
+        if (!pythonProbe.ok) {
+            const hint = pythonProbe.kind === 'store-alias'
+                ? '；这看起来是 Microsoft Store 的应用执行别名，请改选具体解释器（例如 <虚拟环境>\\Scripts\\python.exe）'
+                : '';
+            return `不可用：${pythonProbe.error || '未知错误'}${hint}`;
+        }
+        const label = pythonProbe.kind === 'venv' ? '虚拟环境' : '系统 Python';
+        const version = pythonProbe.version ? ` ${pythonProbe.version}` : '';
+        return pythonProbe.configured
+            ? `${label}${version}（已配置）`
+            : `未配置，使用系统默认：${pythonProbe.resolved}${version}`;
+    }
 
     const handleSettingReset = () => {
         const defaults = {
@@ -807,6 +871,7 @@ const Component = () => {
         let all_setting = {
             hotkeyAwaken,
             hotkeyClipboard,
+            hotkeyFileJump,
             clipboardCountSwitch,
             clipboardCount,
             clipboardTextSwitch,
@@ -814,7 +879,9 @@ const Component = () => {
             clipboardImageSwitch,
             clipboardImage,
             clipboardFileSwitch,
-            clipboardFile
+            clipboardFile,
+            // 清空必须显式传 null：undefined 会被 JSON.stringify 丢掉，宿主会当成「不更新」。
+            pythonInterpreter: pythonInterpreter ?? null
         }
         try {
             await hotkeyCaptureTransition.current;
@@ -963,6 +1030,8 @@ const Component = () => {
             setLarkDisplayText({behavior: "down", data: downKey})
         } else if (name === "cbd") {
             setCBDDisplayText({behavior: "down", data: downKey})
+        } else if (name === "fileJump") {
+            setFileJumpDisplayText({behavior: "down", data: downKey})
         }
         const modifierOnly = ['Control', 'Alt', 'Shift', 'Meta'].includes(event.key);
         if (!modifierOnly) {
@@ -975,24 +1044,31 @@ const Component = () => {
             const candidate = parts.join("+");
             const nextAwaken = name === 'lark' ? candidate : hotkeyAwaken;
             const nextClipboard = name === 'cbd' ? candidate : hotkeyClipboard;
+            const nextFileJump = name === 'fileJump' ? candidate : hotkeyFileJump;
             try {
                 await invoke('reserve_hotkey_capture', {
                     awaken: nextAwaken,
                     clipboard: nextClipboard,
+                    fileJump: nextFileJump,
                 });
                 if (name === "lark") {
                     hotkeyAwakenRef.current = candidate;
                     setHotkeyAwaken(candidate);
-                } else {
+                } else if (name === "cbd") {
                     hotkeyClipboardRef.current = candidate;
                     setHotkeyClipboard(candidate);
+                } else {
+                    hotkeyFileJumpRef.current = candidate;
+                    setHotkeyFileJump(candidate);
                 }
                 setSettingNotice({type: '', text: ''});
             } catch (error) {
                 if (name === "lark") {
                     setLarkDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyAwaken)});
-                } else {
+                } else if (name === "cbd") {
                     setCBDDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyClipboard)});
+                } else {
+                    setFileJumpDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyFileJump)});
                 }
                 setSettingNotice({type: 'error', text: `快捷键暂时无法占用：${error}`});
             }
@@ -1010,6 +1086,8 @@ const Component = () => {
             setLarkDisplayText({behavior: "up", data: upKey})
         } else if (name === "cbd") {
             setCBDDisplayText({behavior: "up", data: upKey})
+        } else if (name === "fileJump") {
+            setFileJumpDisplayText({behavior: "up", data: upKey})
         }
     }
 
@@ -1289,6 +1367,19 @@ const Component = () => {
                                     <HotkeyKeys downKey={cbdDisplayText.downKey}/>
                                 </div>
                             </div>
+                            <div className="hotkeys-item">
+                                <div>
+                                    <div className="hotkeyName">文件跳转</div>
+                                    <div className="hotkeyDescription">文件选择框自动跳转到当前目录</div>
+                                </div>
+                                <div contentEditable suppressContentEditableWarning className="hotkeys-input"
+                                     role="textbox" aria-label="文件跳转快捷键"
+                                     onFocus={() => { activeHotkeyField.current = 'fileJump'; }}
+                                     onKeyDown={(event) => handleHotkeysDown(event, 'fileJump')}
+                                     onKeyUp={(event) => handleHotkeysUp(event, 'fileJump')}>
+                                    <HotkeyKeys downKey={fileJumpDisplayText.downKey}/>
+                                </div>
+                            </div>
                         </div>
                     </section>
 
@@ -1320,6 +1411,25 @@ const Component = () => {
                                              disabled={!clipboardFileSwitch}
                                              onChange={(value) => setClipboardFile(value ?? 1)} changeOnWheel/>
                             </div>
+                        </div>
+                    </section>
+
+                    <section className="appSettingCard">
+                        <h3 className="snippetHeading">Python 环境</h3>
+                        <div className="snippetHint">
+                            插件 Python 与外部 Python 索引脚本共用这个解释器；留空使用系统默认。指向虚拟环境时请选择
+                            它下面的 Scripts\python.exe（不需要「激活」环境）。
+                        </div>
+                        <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
+                            <Input size="small" value={pythonInterpreter || ''} allowClear
+                                   placeholder="留空使用系统默认解释器"
+                                   onChange={(event) => setPythonInterpreter(event.target.value || null)}
+                                   onBlur={() => probePythonInterpreter(pythonInterpreter)}/>
+                            <Button size="small" onClick={choosePythonInterpreter}>选择…</Button>
+                            <Button size="small" onClick={() => probePythonInterpreter(pythonInterpreter)}>检测</Button>
+                        </div>
+                        <div className={pythonProbeError ? 'settingError' : 'snippetHint'} style={{marginTop: 8}}>
+                            {pythonProbeSummary()}
                         </div>
                     </section>
 

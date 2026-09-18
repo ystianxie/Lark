@@ -72,7 +72,15 @@ const App = () => {
   const [pluginList, setPluginList] = useState({});
   const [pluginsLoading, setPluginsLoading] = useState(true);
   const [pluginsError, setPluginsError] = useState("");
+  const [pluginSettingsStatus, setPluginSettingsStatus] = useState({});
   const pluginRefreshId = useRef(0);
+
+  // 只拉取「必填项是否齐全」的摘要，不把插件的配置值读进前端内存。
+  const refreshPluginSettingsStatus = () => {
+    invoke("get_plugin_settings_status")
+      .then((status) => setPluginSettingsStatus(status && typeof status === "object" ? status : {}))
+      .catch(() => setPluginSettingsStatus({}));
+  };
 
   const refreshPlugins = async () => {
     const requestId = ++pluginRefreshId.current;
@@ -80,7 +88,10 @@ const App = () => {
     setPluginsError("");
     try {
       const result = await loadCustomComponent();
-      if (requestId === pluginRefreshId.current) setPluginList(result);
+      if (requestId === pluginRefreshId.current) {
+        setPluginList(result);
+        refreshPluginSettingsStatus();
+      }
       return {ok: true};
     } catch (error) {
       if (requestId === pluginRefreshId.current) setPluginsError(String(error));
@@ -103,6 +114,15 @@ const App = () => {
 
   const [insidePluginList, setInsidePluginList] = useState(pluginsComponent);
 
+  // 带目标插件打开组件库，并由 showComponent 的 pluginConfigId 自动进入该插件的配置页。
+  const openPluginConfig = async (plugin) => {
+    setKeywordComponent([]);
+    setSelectedIndex(0);
+    setInputValue("");
+    setComponentInfo({ ...insidePluginList.showPluginComponent, pluginConfigId: plugin.id });
+    await modifyWindowSize("expanded");
+  };
+
   const [appHabitDB, setAppHabitDB] = useState(null);
 
   const [actionParent, setActionParent] = useState({});
@@ -111,6 +131,10 @@ const App = () => {
   // 全局事件监听器只注册一次，使用 ref 读取最新的面板状态，避免闭包持有旧值。
   const componentInfoRef = useRef(componentInfo);
   const initStatusRef = useRef(null);
+  // 当前面板（如插件创建向导）需要接管窗口拖放时，在此注册 (path) => void 处理器；
+  // 为空则拖入的文件按原路径交给 pistol（插件入参 / 文件搜索 / .py 执行）。
+  // Windows 上 WebView2 的原生拖放已被 Tauri 的 drop handler 接管，面板内收不到 HTML5 drop 事件。
+  const panelDropHandlerRef = useRef(null);
 
   const appWindow = getCurrentWebviewWindow();
 
@@ -140,6 +164,8 @@ const App = () => {
   componentInfoRef.current = componentInfo;
   initStatusRef.current = initStatus;
 
+  // 窗口拖放由 Rust 侧的 win-file-drop 插件接管：它注入脚本把 File 交给宿主解析成真实路径，
+  // 再以 tauri://drag-drop 事件发回来（见下方 unListenFileDrop）。这里不再自己解析 dataTransfer。
   async function handleKeyDown(event) {
     // 处理键盘按下
     setKeyDown(event);
@@ -348,6 +374,12 @@ const App = () => {
     if (!currentComponent) return;
     const plugin = currentComponent.pluginId && pluginList[currentComponent.pluginId];
     if (currentComponent.pluginId && (!plugin || plugin.__error || pluginStatus?.[currentComponent.pluginId]?.enable === false)) return;
+    // 必填配置缺失时不执行插件，直接带用户去该插件的配置页，避免被误判成插件故障。
+    if (plugin && ["action", "python"].includes(currentComponent.type) &&
+        pluginSettingsStatus?.[plugin.id]?.configured === false) {
+      await openPluginConfig(plugin);
+      return;
+    }
     if (plugin && ["action", "python"].includes(currentComponent.type) && plugin.entry?.type === "js") {
       if (currentComponent.interactive) {
         searchRequestId.current += 1;
@@ -947,13 +979,20 @@ const App = () => {
 
     document.addEventListener("keydown", handleGlobalKeyDown);
 
-    const unListenFileDrop = listen("tauri://file-drop", (event) => {
-      const { payload } = event;
-      if (Array.isArray(payload) && payload.length > 0) {
-        setPistol(payload[0]);
-        if (componentInfoRef.current?.type !== "panel") {
-          inputBox.current?.focus();
-        }
+    // Tauri v2 的窗口拖放事件是 tauri://drag-drop，payload 形如 { paths: [...], position }；
+    // v1 的 tauri://file-drop 在 v2 中已不再发出，监听它永远不会触发。
+    const unListenFileDrop = listen("tauri://drag-drop", (event) => {
+      const [path] = event.payload?.paths ?? [];
+      if (!path) return;
+      // 面板（如插件创建向导）接管拖放时优先交给它，避免误设 pistol。
+      const panelHandler = panelDropHandlerRef.current;
+      if (panelHandler) {
+        panelHandler(path);
+        return;
+      }
+      setPistol(path);
+      if (componentInfoRef.current?.type !== "panel") {
+        inputBox.current?.focus();
       }
     });
 
@@ -1012,13 +1051,12 @@ const App = () => {
           {!pistol ? (
             <div />
           ) : (
-            <div
-              className="pistol"
-              onDoubleClick={() => {
-                setPistol("");
-              }}
-            >
-              <p className="pistolText">{pistol.split("/").pop()}</p>
+            <div className="pistol" title={pistol}
+              onDoubleClick={() => setPistol("")}>
+              {/* 拖入的是 Windows 反斜杠路径，两种分隔符都要切，否则会显示整条路径 */}
+              <span className="pistolText">{pistol.split(/[\\/]/).pop()}</span>
+              <span className="pistolRemove" role="button" aria-label="移除文件"
+                onClick={() => { setPistol(""); inputBox.current?.focus(); }}>×</span>
             </div>
           )}
           <input
@@ -1080,6 +1118,7 @@ const App = () => {
         ) : componentInfo ? (
           <SubpageComponent component={componentInfo} keyDown={keyDown}
             pluginLibraryProps={componentInfo.data === "showComponent" ? {
+              panelDropHandlerRef,
               plugins: pluginList,
               pluginStatus,
               loading: pluginsLoading,
@@ -1087,6 +1126,7 @@ const App = () => {
               onRefresh: refreshPlugins,
               onToggle: togglePlugin,
               onClose: () => { initStatus(); inputBox.current?.focus(); },
+              pluginConfigId: componentInfo.pluginConfigId,
             } : undefined}
           />
         ) : null}

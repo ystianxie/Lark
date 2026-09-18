@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::thread;
+use std::time::Duration;
 
 use crate::api::dialog_navigator::{navigate_foreground_dialog, DialogNavigationMethod};
 use crate::api::dialog_probe::DialogConfidence;
@@ -17,7 +19,7 @@ pub struct ListaryJumpHandle {
 }
 
 impl ListaryJumpHandle {
-    /// 启动资源管理器路径监听。
+    /// 启动路径监听，并启用“资源管理器 -> 文件对话框”的自动跳转。
     pub fn start() -> Self {
         let latest_explorer_path = Arc::new(RwLock::new(None));
         let listener_path = Arc::clone(&latest_explorer_path);
@@ -29,20 +31,31 @@ impl ListaryJumpHandle {
                 }
             },
             move |dialog| {
-                if dialog.confidence == DialogConfidence::Confirmed {
-                    if let Ok(path) = listener_path_for_dialog.read() {
-                        if let Some(path) = path.clone() {
-                            match navigate_foreground_dialog(path.clone()) {
-                                Ok(method) => println!(
-                                    "[ListaryJump] 自动识别文件选择框并跳转: {} ({method:?})",
-                                    path.display()
-                                ),
-                                Err(error) => eprintln!("[ListaryJump] 自动跳转失败: {error}"),
-                            }
-                        } else {
-                            println!("[ListaryJump] 已识别文件选择框，但尚无资源管理器路径缓存");
-                        }
+                if dialog.confidence != DialogConfidence::Confirmed {
+                    return;
+                }
+
+                // 控件结构可能先于 Shell 视图完成初始化，过早提交会出现“有日志但没效果”。
+                thread::sleep(Duration::from_millis(200));
+
+                let path = match listener_path_for_dialog.read() {
+                    Ok(path) => path.clone(),
+                    Err(_) => {
+                        eprintln!("[ListaryJump] 资源管理器路径状态已损坏");
+                        return;
                     }
+                };
+
+                if let Some(path) = path {
+                    match navigate_foreground_dialog(path.clone()) {
+                        Ok(method) => println!(
+                            "[ListaryJump] 自动跳转已提交: {} ({method:?})",
+                            path.display()
+                        ),
+                        Err(error) => eprintln!("[ListaryJump] 自动跳转失败: {error}"),
+                    }
+                } else {
+                    println!("[ListaryJump] 已识别文件选择框，但尚无资源管理器路径缓存");
                 }
             },
         );

@@ -45,5 +45,10 @@
 .creator-icon-drop { display: flex; align-items: center; gap: 12px; padding: 10px; border: 1px dashed #aaa; border-radius: 8px; background: #fff; }
 .creator-icon-preview { width: 56px; height: 56px; flex-shrink: 0; }
 .creator-icon-preview svg { display: block; width: 56px; height: 56px; }
+.creator-icon-preview img { display: block; width: 56px; height: 56px; object-fit: contain; }
 .creator-icon-drop p { margin-bottom: 4px; }
 .creator-icon-drop small { display: block; color: #777; margin-top: 4px; }
+.plugin-settings-description { color: #888; font-size: 12px; line-height: 1.5; }
+.plugin-settings-required { margin-left: 4px; color: #d4380d; }
+.creator-config-item { display: flex; flex-direction: column; gap: 10px; padding: 10px; border: 1px dashed #ccc; border-radius: 8px; background: #fff; }
+.creator-config-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

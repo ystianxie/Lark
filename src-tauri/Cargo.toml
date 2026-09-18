@@ -43,6 +43,8 @@ rdev = { version = "0.5.1", features = ['unstable_grab'] } #获取键盘按键
 libc = "0.2.152"
 rayon = "1.12.0"
 walkdir = "2"
+# 从 HTML5 拖放里取回被拖入文件的真实路径（仅 Windows 生效，其他平台为空实现）。
+win-file-drop = { path = "./win-file-drop" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.27.0"
@@ -92,6 +94,7 @@ lnk = "0.5"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2.3.2"
+tauri-plugin-dialog = "2"
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]

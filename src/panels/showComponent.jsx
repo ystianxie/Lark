@@ -1,8 +1,9 @@
-import React, {useState} from "react";
+import React, {useEffect, useRef, useState} from "react";
 import {Alert, Button, Empty, Input, Switch, Tag} from "antd";
 import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import "./showComponent.css";
 import PluginCreator from "./PluginCreator";
+import PluginSettings from "./PluginSettings";
 
 function PluginIcon({plugin}) {
     const [failed, setFailed] = useState(false);
@@ -16,11 +17,21 @@ function PluginIcon({plugin}) {
     </div>;
 }
 
-export default function Component({plugins = {}, pluginStatus, loading, error, onRefresh, onToggle, onClose}) {
+export default function Component({plugins = {}, pluginStatus, loading, error, onRefresh, onToggle, onClose, pluginConfigId, panelDropHandlerRef}) {
     const [query, setQuery] = useState("");
     const [saveError, setSaveError] = useState("");
     const [creating, setCreating] = useState(false);
     const [editing, setEditing] = useState(null);
+    const [configuring, setConfiguring] = useState(null);
+    // 由搜索结果拦截带过来的目标插件：组件库加载出插件后自动进入它的配置页。
+    const openedConfigRequest = useRef("");
+    useEffect(() => {
+        if (!pluginConfigId || openedConfigRequest.current === pluginConfigId) return;
+        const plugin = plugins[pluginConfigId];
+        if (!plugin || !Array.isArray(plugin.config?.fields) || !plugin.config.fields.length) return;
+        openedConfigRequest.current = pluginConfigId;
+        setConfiguring(plugin);
+    }, [pluginConfigId, plugins]);
     const entries = Object.values(plugins).sort((left, right) =>
         String(left.name || left.__pluginId).localeCompare(String(right.name || right.__pluginId), "zh-CN"));
     const enabledCount = entries.filter(plugin => !plugin.__error && pluginStatus?.[plugin.__pluginId]?.enable !== false).length;
@@ -31,7 +42,11 @@ export default function Component({plugins = {}, pluginStatus, loading, error, o
             .join(" ").toLowerCase().includes(query.trim().toLowerCase());
     });
 
-    if (creating || editing) return <PluginCreator editPlugin={editing} existingIds={Object.keys(plugins)} onClose={() => {setCreating(false); setEditing(null);}}
+    if (configuring) return <PluginSettings plugin={configuring} onClose={() => setConfiguring(null)}
+        onSaved={onRefresh}/>;
+
+    if (creating || editing) return <PluginCreator editPlugin={editing} existingIds={Object.keys(plugins)}
+        panelDropHandlerRef={panelDropHandlerRef} onClose={() => {setCreating(false); setEditing(null);}}
         onRegistered={async pluginId => {
             if (!editing) onToggle(pluginId, true);
             const result = await onRefresh();
@@ -74,6 +89,10 @@ export default function Component({plugins = {}, pluginStatus, loading, error, o
                                     {workflow.keywords.map(keyword => <Tag key={keyword}>{keyword}</Tag>)}
                                 </div>)}</div>}
                     </div>
+                    {Array.isArray(plugin.config?.fields) && plugin.config.fields.length > 0
+                        ? <Button size="small" title="填写该插件声明的配置项"
+                            onClick={() => { setConfiguring(plugin); setSaveError(""); }}>配置</Button>
+                        : null}
                     <Button size="small" disabled={Boolean(plugin.__error) || !plugin.__editable}
                             title={plugin.__editable ? "编辑向导配置并重新生成插件文件" : "仅支持编辑由新增向导创建的用户插件"}
                             onClick={async () => { try { const data = await invoke("load_plugin_editor", {pluginId}); setEditing(data); } catch (e) { setSaveError(String(e)); } }}>编辑</Button>

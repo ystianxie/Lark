@@ -23,7 +23,8 @@
         "decorations": false,
         "skipTaskbar": true,
         "alwaysOnTop": true,
-        "shadow": false
+        "shadow": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {
@@ -59,7 +60,8 @@
             "global-shortcut:allow-is-registered",
             "global-shortcut:allow-register",
             "global-shortcut:allow-unregister",
-            "core:window:allow-get-all-windows"
+            "core:window:allow-get-all-windows",
+            "dialog:allow-open"
           ]
         }
       ]

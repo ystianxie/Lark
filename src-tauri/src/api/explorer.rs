@@ -539,12 +539,12 @@ fn get_apps_with_depth(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn read_file_to_base64(path: &str) -> String {
-    let mut file = File::open(path).expect("无法打开文件");
+pub fn read_file_to_base64(path: &str) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|error| format!("无法打开文件：{error}"))?;
     let mut contents = Vec::new();
-    file.read_to_end(&mut contents).expect("无法读取文件内容");
-    let base64_contents = encode(&contents);
-    base64_contents
+    file.read_to_end(&mut contents)
+        .map_err(|error| format!("无法读取文件内容：{error}"))?;
+    Ok(encode(&contents))
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -558,7 +558,7 @@ pub fn read_icns_to_base64(path: &str) -> Result<String, String> {
         Ok(icon_family) => icon_family,
         Err(e) => {
             return if e.contains("not an icns file") {
-                Ok(read_file_to_base64(path))
+                read_file_to_base64(path)
             } else {
                 Ok("".to_string())
             }

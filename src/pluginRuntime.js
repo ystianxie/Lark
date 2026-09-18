@@ -28,13 +28,19 @@ export function createPluginContext(manifest, state = {}) {
     if (permissions[permission]) api[apiNames[permission] || permission.replace('.', '_')] = permissions[permission];
   }
   if ((manifest.permissions || []).includes("python.execute")) {
+    // 解释器由宿主的「应用设置 → Python 环境」决定，不再从 manifest 读取：
+    // manifest.runtime.pythonPath 从来没有写入端，是个只读不写的死字段（已移除）。
+    // 同样不传 timeoutMs，由宿主用默认的 30 秒。
     api.runPython = (task, args = {}) => invoke("run_python_plugin", {
       scriptPath: `${normalizePluginPath(manifest.__root)}/python/main.py`,
       request: { id: `${manifest.id}-${Date.now()}`, task, args },
-      interpreter: manifest.runtime?.pythonPath || null,
-      timeoutMs: manifest.runtime?.timeoutMs || 30000,
     });
   }
+  // 配置是插件自己的数据，不额外引入权限项：宿主只按 manifest 的 config 声明过滤键。
+  // 必须每次调用都向宿主取值，不能在此快照——runtime 会按插件 id 缓存且 activate 只执行一次，
+  // 快照会导致用户在组件库改完配置后不生效。
+  api.getConfig = () => invoke("get_plugin_settings", { pluginId: manifest.id });
+  api.setConfig = (values) => invoke("save_plugin_settings", { pluginId: manifest.id, values });
   return {
     theme: state.theme || {},
     input: { text: state.text || "", file: state.file || null, selection: state.selection || null },

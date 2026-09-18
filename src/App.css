@@ -202,18 +202,20 @@ body {
 }
 
 .pistol {
-    max-width: 200px;
-    min-width: 40px;
+    max-width: 190px;
+    min-width: 44px;
     width: fit-content;
-    height: 40px;
-    /* background-color: #5c99a0; */
-    background-color: #dcf4c9;
+    height: 30px;
     display: flex;
     align-items: center;
-    margin: 2px 10px 2px 0;
-    border: 1.5px dashed #464647;
-    border-radius: 10px;
-    font-size: 20px;
+    gap: 6px;
+    padding: 0 6px 0 10px;
+    margin: 0 8px 0 0;
+    background-color: rgba(255, 255, 255, 0.09);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    font-size: 15px;
+    color: #d5d5d6;
     user-select: none;
     -webkit-user-select: none;
     /* Safari */
@@ -222,12 +224,43 @@ body {
     -ms-user-select: none;
     /* Internet Explorer/Edge */
     cursor: default;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.pistol:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.22);
 }
 
 .pistolText {
+    margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* 移除按钮：平时淡化，指针进入标签后才清晰，避免和文件名抢视线 */
+.pistolRemove {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 14px;
+    line-height: 1;
+    color: #8b8b8d;
+    cursor: pointer;
+}
+
+.pistol:hover .pistolRemove {
+    color: #d5d5d6;
+}
+
+.pistolRemove:hover {
+    background-color: rgba(255, 255, 255, 0.18);
+    color: #ffffff;
 }
 
 .subpageComponent {

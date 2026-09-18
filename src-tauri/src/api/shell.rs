@@ -26,49 +26,97 @@ use std::{path, ptr};
 use webbrowser;
 use winapi::um::processthreadsapi::{CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW};
 
+/// 平台默认解释器命令。未配置时使用，保持与历史行为一致。
+fn platform_default_python() -> String {
+    if cfg!(target_os = "windows") {
+        "python.exe".to_string()
+    } else {
+        "python3".to_string()
+    }
+}
+
+/// 解释器解析的唯一入口：配置值（非空）优先，否则回落平台默认命令。
+/// 纯函数，不查路径是否存在——路径真实性交给 `probe_python_interpreter`。
+fn resolve_python_interpreter(configured: Option<&str>) -> String {
+    configured
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(platform_default_python)
+}
+
+/// 从宿主配置读取用户在「应用设置」里配置的解释器。
+/// 每次调用都重新读配置：插件实时执行需要「改完配置立即生效」，不能缓存快照。
+fn configured_python_interpreter() -> String {
+    let configured = crate::config::Config::read_local_config()
+        .ok()
+        .and_then(|config| config.base.python_interpreter);
+    resolve_python_interpreter(configured.as_deref())
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn run_python_script(script_path: &str, params: Vec<String>) -> HashMap<&str, String> {
-    // 使用 `Command` 运行 Python 脚本
+    // 使用 `Command` 运行 Python 脚本。解释器与插件执行共用同一份设置。
     println!("{:?}", script_path);
-    let output = Command::new("python")
+    let executable = configured_python_interpreter();
+    let mut command = Command::new(&executable);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    let output = command
         .arg(script_path)
         .args(params)
-        .output()
-        .expect("Failed to execute Python script");
+        .env("PYTHONIOENCODING", "utf-8")
+        .output();
     let mut result = HashMap::new();
-    if output.status.success() {
-        // 将输出转换为字符串并打印
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        println!("Script output:\n{}", stdout);
-        result.insert("success", "true".to_string());
-        result.insert("data", stdout.to_string());
-        return result;
-    } else {
-        // 如果脚本执行失败，打印错误信息
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("Script output:\n{}", stderr);
-        result.insert("success", "false".to_string());
-        result.insert("data", stderr.to_string());
-        return result;
+    match output {
+        Ok(output) if output.status.success() => {
+            // 将输出转换为字符串并打印
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            println!("Script output:\n{}", stdout);
+            result.insert("success", "true".to_string());
+            result.insert("data", stdout.to_string());
+        }
+        Ok(output) => {
+            // 如果脚本执行失败，打印错误信息
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            println!("Script output:\n{}", stderr);
+            result.insert("success", "false".to_string());
+            result.insert("data", stderr.to_string());
+        }
+        Err(error) => {
+            // 解释器不存在时不能 panic：该命令同步执行，panic 会跨过 IPC 边界终止进程。
+            // 继续沿用 success/data 契约，调用方（App.jsx 的外部索引脚本）只认这两个键。
+            let message = format!("无法启动 Python（{executable}）：{error}");
+            println!("{message}");
+            result.insert("success", "false".to_string());
+            result.insert("data", message);
+        }
     }
+    result
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn run_python_plugin(
-    interpreter: Option<String>,
     script_path: String,
     request: Value,
     timeout_ms: Option<u64>,
 ) -> Result<Value, String> {
+    // 解释器只由宿主设置决定（manifest 里的 runtime 字段已废弃）。
+    // 读配置放在阻塞线程里，避免拖慢 async 线程。
     tauri::async_runtime::spawn_blocking(move || {
-        run_python_plugin_blocking(interpreter, script_path, request, timeout_ms)
+        run_python_plugin_blocking(
+            configured_python_interpreter(),
+            script_path,
+            request,
+            timeout_ms,
+        )
     })
     .await
     .map_err(|error| format!("Python 任务失败：{error}"))?
 }
 
 fn run_python_plugin_blocking(
-    interpreter: Option<String>,
+    executable: String,
     script_path: String,
     request: Value,
     timeout_ms: Option<u64>,
@@ -76,17 +124,8 @@ fn run_python_plugin_blocking(
     use std::io::Read;
     use std::sync::mpsc;
 
-    let executable = interpreter
-        .filter(|p| !p.trim().is_empty())
-        .unwrap_or_else(|| {
-            if cfg!(target_os = "windows") {
-                "python.exe".into()
-            } else {
-                "python3".into()
-            }
-        });
     let body = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-    let mut command = Command::new(executable);
+    let mut command = Command::new(&executable);
     #[cfg(target_os = "windows")]
     command.creation_flags(0x08000000);
     let mut child = command
@@ -165,6 +204,119 @@ fn run_python_plugin_blocking(
     serde_json::from_str(stdout.trim()).map_err(|e| format!("invalid python response: {e}"))
 }
 
+/// 从解释器所在目录向上逐级查找 `pyvenv.cfg`，判断它是否属于某个虚拟环境。
+fn python_environment_kind(executable: &str) -> &'static str {
+    let path = Path::new(executable);
+    // 只有绝对路径才向上查找：裸命令名（"python.exe"）的 parent 是空路径，
+    // 照直查找会把当前工作目录里的 pyvenv.cfg 误判成虚拟环境。
+    if !path.is_absolute() {
+        return "system";
+    }
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir.join("pyvenv.cfg").is_file() {
+            return "venv";
+        }
+        current = dir.parent();
+    }
+    "system"
+}
+
+/// Microsoft Store 的 App Execution Alias 目录。只用于在探测失败时给出更贴近
+/// 用户操作的提示，不能单凭路径下结论——真装了 Store 版 Python 也能正常探测。
+fn is_windows_store_alias(executable: &str) -> bool {
+    executable
+        .replace('\\', "/")
+        .to_ascii_lowercase()
+        .contains("windowsapps")
+}
+
+/// 执行 `<executable> --version` 并返回版本号文本。
+/// Python 3 把版本写到 stdout、2.x 写到 stderr，两路都要取。
+fn probe_python_version(executable: &str, timeout: Duration) -> Result<String, String> {
+    let mut command = Command::new(executable);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    let mut child = command
+        .arg("--version")
+        .env("PYTHONIOENCODING", "utf-8")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("无法启动解释器：{error}"))?;
+    // --version 只有一行输出，管道不会写满，因此不需要 run_python_plugin_blocking 那套
+    // 多线程读管道；这里只需一个超时兜底，防止解释器卡住不退出。
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("探测超时，已停止进程".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("读取解释器进程状态失败：{error}"));
+            }
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("读取解释器输出失败：{error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if output.status.success() {
+        Ok(if stdout.is_empty() { stderr } else { stdout })
+    } else {
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        Err(if detail.is_empty() {
+            format!("解释器返回非零退出码：{}", output.status)
+        } else {
+            detail
+        })
+    }
+}
+
+fn probe_python_interpreter_blocking(configured: Option<String>) -> Value {
+    let configured = configured
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty());
+    let resolved = resolve_python_interpreter(configured.as_deref());
+    let mut kind = python_environment_kind(&resolved);
+    let (ok, version, error) = match probe_python_version(&resolved, Duration::from_secs(5)) {
+        Ok(version) => (true, Some(version), None),
+        Err(error) => {
+            if is_windows_store_alias(&resolved) {
+                kind = "store-alias";
+            }
+            (false, None, Some(error))
+        }
+    };
+    serde_json::json!({
+        "ok": ok,
+        "configured": configured,
+        "resolved": resolved,
+        "version": version,
+        "kind": kind,
+        "error": error,
+    })
+}
+
+/// 探测解释器是否可用，供「应用设置 - Python 环境」做即时反馈。
+/// 未配置（path 为 None）时探测平台默认命令，便于界面显示「当前默认」。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn probe_python_interpreter(path: Option<String>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || probe_python_interpreter_blocking(path))
+        .await
+        .map_err(|error| format!("Python 探测失败：{error}"))
+}
+
 #[cfg(test)]
 mod python_plugin_tests {
     use super::*;
@@ -187,7 +339,7 @@ mod python_plugin_tests {
 
         fn run(&self, request: Value, timeout: u64) -> Result<Value, String> {
             run_python_plugin_blocking(
-                None,
+                resolve_python_interpreter(None),
                 self.0.to_string_lossy().to_string(),
                 request,
                 Some(timeout),
@@ -222,13 +374,61 @@ mod python_plugin_tests {
             .to_string_lossy()
             .to_string();
         let error = run_python_plugin_blocking(
-            Some(missing),
+            missing,
             script.0.to_string_lossy().to_string(),
             serde_json::json!({}),
             Some(100),
         )
         .unwrap_err();
         assert!(error.contains("无法启动 Python"));
+    }
+
+    #[test]
+    fn interpreter_resolution_prefers_configured_path() {
+        assert_eq!(
+            resolve_python_interpreter(Some(r"D:\envs\x\Scripts\python.exe")),
+            r"D:\envs\x\Scripts\python.exe"
+        );
+        let default = resolve_python_interpreter(None);
+        assert!(default == "python.exe" || default == "python3");
+        // 空白配置等同于未配置：否则会把空串当成可执行文件名交给 Command::new。
+        assert_eq!(resolve_python_interpreter(Some("   ")), default);
+        assert_eq!(resolve_python_interpreter(Some("")), default);
+    }
+
+    #[test]
+    fn python_environment_kind_detects_venv_and_ignores_command_names() {
+        // 裸命令名不能触发向上查找，否则会把工作目录里的 pyvenv.cfg 误判成虚拟环境。
+        assert_eq!(python_environment_kind("python.exe"), "system");
+        let root = std::env::temp_dir().join(format!(
+            "lark-venv-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let scripts = root.join("Scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(root.join("pyvenv.cfg"), "home = C:\\Python312\n").unwrap();
+        let interpreter = scripts.join("python.exe").to_string_lossy().to_string();
+        assert_eq!(python_environment_kind(&interpreter), "venv");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn probe_reports_missing_interpreter_without_panicking() {
+        let missing = std::env::temp_dir()
+            .join(format!("lark-missing-python-{}", std::process::id()))
+            .to_string_lossy()
+            .to_string();
+        let probe = probe_python_interpreter_blocking(Some(missing));
+        assert_eq!(probe["ok"], serde_json::json!(false));
+        assert!(probe["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("无法启动"));
+        assert!(probe["resolved"].is_string());
     }
 
     #[test]
@@ -458,7 +658,9 @@ pub fn write_txt(file_path: &str, text: &str) -> Result<String, String> {
 #[tauri::command(rename_all = "camelCase")]
 pub fn read_txt(file_path: &str) -> Result<String, String> {
     if path::Path::new(file_path).exists() {
-        let content = fs::read_to_string(file_path).expect("Failed to read file");
+        // 目录、非 UTF-8 文本、被占用等情况都会让 read_to_string 失败。
+        // 这里必须转成 Err 返回：命令是同步执行的，panic 会跨过 IPC 回调边界直接终止进程。
+        let content = fs::read_to_string(file_path).map_err(|error| error.to_string())?;
         Ok(content)
     } else {
         Ok(String::from("File not found"))

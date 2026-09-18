@@ -1,14 +1,5 @@
 import {invoke} from "@tauri-apps/api/core";
 
-async function run_python_plugin(scriptPath, request, interpreter) {
-    return await invoke("run_python_plugin", {
-        scriptPath,
-        request,
-        interpreter: interpreter || null,
-        timeoutMs: 30000,
-    });
-}
-
 async function open_app(app_path, app_name) {
     await invoke("open_app", {appPath: app_path, appName: app_name});
 }
@@ -74,5 +65,4 @@ export default {
     action_rebuildFileIndex,
     action_rebuildAppIndex,
     action_result,
-    run_python_plugin,
 };
