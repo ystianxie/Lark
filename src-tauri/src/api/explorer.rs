@@ -117,6 +117,37 @@ pub fn search_file_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
         ..Default::default()
     }]
 }
+
+/// 将文件系统路径转换为增量索引记录。路径不存在或无法读取元数据时返回 None。
+pub fn file_path_to_index(path: &std::path::Path) -> Option<FileIndex> {
+    let metadata = (0..4).find_map(|_| match std::fs::metadata(path) {
+        Ok(metadata) => Some(metadata),
+        Err(_) => {
+            std::thread::sleep(std::time::Duration::from_millis(75));
+            None
+        }
+    })?;
+    let title = path.file_name()?.to_str()?.to_string();
+    let (pinyin, abb) = text_to_pinyin(&title);
+    let file_type = if metadata.is_dir() {
+        "folder".to_string()
+    } else {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_lowercase()
+    };
+    let path = path.to_string_lossy().into_owned();
+    Some(FileIndex {
+        title,
+        path,
+        desc: String::new(),
+        pinyin,
+        abb,
+        file_type,
+        ..Default::default()
+    })
+}
 pub fn search_app_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
     let db = IndexSQL::new();
     if let Ok(result) = db.find_app(keyword, offset) {

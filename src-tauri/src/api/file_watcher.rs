@@ -1,0 +1,367 @@
+//! 文件系统增量监听（第二阶段独立模块）。
+//!
+//! 本模块只负责监听、过滤、重命名识别和合并文件系统事件，不负责启动应用或写入数据库。
+//! 调用方应在全量索引完成后启动 [`FileWatcher::start`]，并在回调中批量更新 `file_index`。
+
+use crate::utils::database::{FileIndex, FileIndexChange};
+use notify::event::{ModifyKind, RenameMode};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileEventKind {
+    Created,
+    Changed,
+    Removed,
+    Renamed { from: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileEvent {
+    pub kind: FileEventKind,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct WatchConfig {
+    pub roots: Vec<PathBuf>,
+    pub excluded_paths: Vec<PathBuf>,
+    pub excluded_extensions: Vec<String>,
+    pub debounce: Duration,
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            roots: Vec::new(),
+            excluded_paths: Vec::new(),
+            excluded_extensions: Vec::new(),
+            debounce: Duration::from_millis(300),
+        }
+    }
+}
+
+impl WatchConfig {
+    pub fn with_debounce(mut self, debounce: Duration) -> Self {
+        self.debounce = debounce;
+        self
+    }
+}
+
+pub struct FileWatcher {
+    stop: Arc<Mutex<bool>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+/// 串行处理增量索引写入，确保同一个 SQLite 连接不被多个线程并发使用。
+pub struct FileIndexUpdateService {
+    sender: Sender<IndexMessage>,
+    stop: Arc<Mutex<bool>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl FileIndexUpdateService {
+    pub fn start() -> Self {
+        let (sender, receiver) = mpsc::channel::<IndexMessage>();
+        let stop = Arc::new(Mutex::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = thread::spawn(move || run_index_service(receiver, thread_stop));
+        Self {
+            sender,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    pub fn sender(&self) -> Sender<IndexMessage> {
+        self.sender.clone()
+    }
+
+    pub fn begin_rebuild(&self) -> Result<(), String> { self.sender.send(IndexMessage::BeginRebuild).map_err(|e| e.to_string()) }
+    pub fn finish_rebuild(&self) -> Result<(), String> { self.sender.send(IndexMessage::FinishRebuild).map_err(|e| e.to_string()) }
+}
+
+pub enum IndexMessage { Batch(Vec<FileIndexChange>), BeginRebuild, FinishRebuild }
+
+impl Drop for FileIndexUpdateService {
+    fn drop(&mut self) {
+        *self.stop.lock().unwrap() = true;
+        drop(self.sender.clone());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn run_index_service(receiver: Receiver<IndexMessage>, stop: Arc<Mutex<bool>>) {
+    let mut index = crate::utils::database::IndexSQL::new();
+    let mut rebuilding = false;
+    let mut pending = Vec::new();
+    while !*stop.lock().unwrap() {
+        match receiver.recv_timeout(Duration::from_millis(250)) {
+            Ok(IndexMessage::BeginRebuild) => rebuilding = true,
+            Ok(IndexMessage::Batch(changes)) if rebuilding => pending.extend(changes),
+            Ok(IndexMessage::Batch(changes)) if !changes.is_empty() => {
+                println!("[FileWatcher] 开始写入 {} 个增量索引变更", changes.len());
+                if let Err(error) = index.apply_file_changes(&changes) {
+                    eprintln!("[FileWatcher] 增量索引写入失败: {error}");
+                } else {
+                    println!("[FileWatcher] 增量索引写入完成");
+                }
+            }
+            Ok(IndexMessage::FinishRebuild) => {
+                rebuilding = false;
+                if !pending.is_empty() {
+                    if let Err(error) = index.apply_file_changes(&pending) { eprintln!("[FileWatcher] 重建后补写增量索引失败: {error}"); }
+                    pending.clear();
+                }
+            }
+            Ok(IndexMessage::Batch(_)) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+impl FileWatcher {
+    pub fn start<F>(config: WatchConfig, on_batch: F) -> notify::Result<Self>
+    where
+        F: Fn(Vec<FileEvent>) + Send + Sync + 'static,
+    {
+        if config.roots.is_empty() {
+            return Err(notify::Error::generic("文件监听未配置任何根目录"));
+        }
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let stop = Arc::new(Mutex::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let callback = Arc::new(on_batch);
+        let thread = thread::spawn(move || run(config, thread_stop, callback, ready_tx));
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(Self {
+                stop,
+                thread: Some(thread),
+            }),
+            Ok(Err(error)) => {
+                let _ = thread.join();
+                Err(error)
+            }
+            Err(_) => Err(notify::Error::generic("文件监听线程初始化失败")),
+        }
+    }
+
+    pub fn stop(mut self) {
+        *self.stop.lock().unwrap() = true;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for FileWatcher {
+    fn drop(&mut self) {
+        *self.stop.lock().unwrap() = true;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn run<F>(
+    config: WatchConfig,
+    stop: Arc<Mutex<bool>>,
+    callback: Arc<F>,
+    ready: mpsc::SyncSender<notify::Result<()>>,
+) where
+    F: Fn(Vec<FileEvent>) + Send + Sync + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    let mut watcher = match RecommendedWatcher::new(tx, Config::default()) {
+        Ok(w) => w,
+        Err(error) => {
+            let _ = ready.send(Err(error));
+            return;
+        }
+    };
+    for root in &config.roots {
+        if let Err(error) = watcher.watch(root, RecursiveMode::Recursive) {
+            let _ = ready.send(Err(error));
+            return;
+        }
+    }
+    let _ = ready.send(Ok(()));
+    let mut pending = Vec::new();
+    loop {
+        if *stop.lock().unwrap() {
+            break;
+        }
+        match rx.recv_timeout(config.debounce) {
+            Ok(Ok(event)) => {
+                let normalized = normalize(event.clone(), &config);
+                if !normalized.is_empty() {
+                    println!("[FileWatcher] 原始事件: {:?}, paths={:?}", event.kind, event.paths);
+                    pending.extend(normalized);
+                }
+            }
+            Ok(Err(error)) => eprintln!("[FileWatcher] 监听事件错误: {error}"),
+            Err(RecvTimeoutError::Timeout) => {
+                let batch = coalesce(std::mem::take(&mut pending));
+                if !batch.is_empty() {
+                    callback(batch);
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+fn normalize(event: Event, config: &WatchConfig) -> Vec<FileEvent> {
+    if let EventKind::Modify(ModifyKind::Name(RenameMode::Both)) = event.kind {
+        if event.paths.len() >= 2 {
+            let from = event.paths[0].clone();
+            let to = event.paths[1].clone();
+            if !is_excluded(&from, config) || !is_excluded(&to, config) {
+                return vec![FileEvent {
+                    kind: FileEventKind::Renamed { from },
+                    path: to,
+                }];
+            }
+        }
+        return Vec::new();
+    }
+    let kind = match event.kind {
+        EventKind::Create(_) => FileEventKind::Created,
+        // Windows 常把重命名拆成 From/To 两个事件；分别映射为删除和新增，
+        // 避免把旧路径当成普通修改再次写回索引。
+        EventKind::Modify(ModifyKind::Name(RenameMode::From)) => FileEventKind::Removed,
+        EventKind::Modify(ModifyKind::Name(RenameMode::To)) => FileEventKind::Created,
+        EventKind::Modify(ModifyKind::Name(RenameMode::Any)) => FileEventKind::Changed,
+        EventKind::Modify(_) => FileEventKind::Changed,
+        EventKind::Remove(_) => FileEventKind::Removed,
+        _ => return Vec::new(),
+    };
+    event
+        .paths
+        .into_iter()
+        .filter(|path| matches!(&kind, FileEventKind::Removed) || !is_excluded(path, config))
+        .map(|path| FileEvent {
+            kind: kind.clone(),
+            path,
+        })
+        .collect()
+}
+
+pub fn is_excluded(path: &Path, config: &WatchConfig) -> bool {
+    if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('$') || n.starts_with('.')) {
+        return true;
+    }
+    if config.excluded_paths.iter().any(|excluded| path_is_under(path, excluded)) {
+        return true;
+    }
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            config
+                .excluded_extensions
+                .iter()
+                .any(|x| x.trim_start_matches('.').eq_ignore_ascii_case(ext))
+        })
+}
+
+fn path_is_under(path: &Path, excluded: &Path) -> bool {
+    let path = normalize_compare_path(path);
+    let excluded = normalize_compare_path(excluded);
+    path == excluded || path.starts_with(&(excluded + "\\"))
+}
+
+fn normalize_compare_path(path: &Path) -> String {
+    let mut value = path.to_string_lossy().replace('/', "\\");
+    while value.ends_with('\\') && value.len() > 3 { value.pop(); }
+    if value.starts_with(r"\\?\") { value = value[4..].to_string(); }
+    value.to_ascii_lowercase()
+}
+
+/// 将监听事件转换为数据库变更；不存在的新增/修改路径会被忽略。
+pub fn events_to_index_changes(
+    events: &[FileEvent],
+    to_index: impl Fn(&Path) -> Option<FileIndex>,
+) -> Vec<FileIndexChange> {
+    let changes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            FileEventKind::Created | FileEventKind::Changed => {
+                to_index(&event.path).map(FileIndexChange::Upsert)
+            }
+            FileEventKind::Removed => Some(FileIndexChange::Remove {
+                path: event.path.to_string_lossy().into_owned(),
+                recursive: true,
+            }),
+            FileEventKind::Renamed { from } => to_index(&event.path)
+                .map(|to| FileIndexChange::Rename {
+                    from: from.to_string_lossy().into_owned(),
+                    to,
+                })
+                .or_else(|| {
+                    Some(FileIndexChange::Remove {
+                        path: from.to_string_lossy().into_owned(),
+                        recursive: true,
+                    })
+                }),
+        })
+        .collect();
+    println!("[FileWatcher] 事件转换结果: {} 个变更", changes.len());
+    changes
+}
+
+fn coalesce(events: Vec<FileEvent>) -> Vec<FileEvent> {
+    let mut final_events = HashMap::<PathBuf, FileEvent>::new();
+    for event in events {
+        let path = event.path.clone();
+        match final_events.get(&path) {
+            Some(previous)
+                if matches!(previous.kind, FileEventKind::Removed)
+                    && matches!(event.kind, FileEventKind::Changed) => {}
+            _ => {
+                final_events.insert(path, event);
+            }
+        }
+    }
+    final_events.into_values().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_file_events_to_index_changes() {
+        let events = vec![
+            FileEvent { kind: FileEventKind::Created, path: PathBuf::from("a.txt") },
+            FileEvent { kind: FileEventKind::Removed, path: PathBuf::from("gone.txt") },
+            FileEvent { kind: FileEventKind::Renamed { from: PathBuf::from("old.txt") }, path: PathBuf::from("new.txt") },
+        ];
+        let changes = events_to_index_changes(&events, |path| {
+            (path == Path::new("a.txt") || path == Path::new("new.txt")).then(|| FileIndex {
+                title: path.file_name().unwrap().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+                ..Default::default()
+            })
+        });
+        assert_eq!(changes.len(), 3);
+        assert!(matches!(changes[0], FileIndexChange::Upsert(_)));
+        assert!(matches!(changes[1], FileIndexChange::Remove { .. }));
+        assert!(matches!(changes[2], FileIndexChange::Rename { .. }));
+    }
+
+    #[test]
+    fn excluded_paths_and_extensions_are_filtered() {
+        let config = WatchConfig { excluded_paths: vec![PathBuf::from("target")], excluded_extensions: vec!["tmp".into()], ..Default::default() };
+        assert!(is_excluded(Path::new("target/a.txt"), &config));
+        assert!(is_excluded(Path::new("a.TMP"), &config));
+        assert!(!is_excluded(Path::new("a.rs"), &config));
+    }
+}

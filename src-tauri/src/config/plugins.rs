@@ -124,10 +124,11 @@ fn validate_plugin_files(plugin_id: &str, files: &BTreeMap<String, String>) -> R
         }
     }
     // 图标至少提供一种格式；位图在这里完成 base64 解码与文件头校验，写入阶段直接使用结果。
-    if !ICON_FILES
-        .iter()
-        .any(|name| files.get(*name).is_some_and(|content| !content.trim().is_empty()))
-    {
+    if !ICON_FILES.iter().any(|name| {
+        files
+            .get(*name)
+            .is_some_and(|content| !content.trim().is_empty())
+    }) {
         return Err("缺少图标文件".into());
     }
     for name in ICON_FILES {
@@ -293,12 +294,7 @@ fn validate_plugin_config(manifest: &Value, workflow_ids: &HashSet<&str>) -> Res
             .and_then(Value::as_str)
             .ok_or("配置项缺少 type")?;
         if ![
-            "text",
-            "password",
-            "number",
-            "boolean",
-            "select",
-            "textarea",
+            "text", "password", "number", "boolean", "select", "textarea",
         ]
         .contains(&field_type)
         {
@@ -711,7 +707,9 @@ mod creation_tests {
         for key in ["a", "api_key", "base_url", "base_url_2", "a1_b2"] {
             assert!(valid_config_key(key), "{key} 应合法");
         }
-        for key in ["", "1abc", "_abc", "apiKey", "base-url", "api key", "API_KEY"] {
+        for key in [
+            "", "1abc", "_abc", "apiKey", "base-url", "api key", "API_KEY",
+        ] {
             assert!(!valid_config_key(key), "{key} 应被拒绝");
         }
         assert!(valid_config_key(&"a".repeat(32)));
@@ -819,7 +817,9 @@ mod creation_tests {
                 serde_json::json!({"key": format!("field_{index}"), "label": "F", "type": "text"})
             })
             .collect();
-        assert!(validate_config(serde_json::json!({"schemaVersion": 1, "fields": fields})).is_err());
+        assert!(
+            validate_config(serde_json::json!({"schemaVersion": 1, "fields": fields})).is_err()
+        );
     }
 
     fn base64_bytes(bytes: &[u8]) -> String {
@@ -838,8 +838,16 @@ mod creation_tests {
         assert!(icon_file_bytes("assets/icon.jpg", &base64_bytes(&png)).is_err());
         assert!(icon_file_bytes("assets/icon.png", "!!not-base64!!").is_err());
         // WebP 需要同时匹配 RIFF 与 WEBP 标记。
-        assert!(icon_file_bytes("assets/icon.webp", &base64_bytes(b"RIFF\x00\x00\x00\x00WEBP")).is_ok());
-        assert!(icon_file_bytes("assets/icon.webp", &base64_bytes(b"RIFF\x00\x00\x00\x00XXXX")).is_err());
+        assert!(icon_file_bytes(
+            "assets/icon.webp",
+            &base64_bytes(b"RIFF\x00\x00\x00\x00WEBP")
+        )
+        .is_ok());
+        assert!(icon_file_bytes(
+            "assets/icon.webp",
+            &base64_bytes(b"RIFF\x00\x00\x00\x00XXXX")
+        )
+        .is_err());
         // SVG 是文本，不走 base64。
         assert_eq!(
             icon_file_bytes("assets/icon.svg", "<svg/>").unwrap(),
@@ -848,9 +856,11 @@ mod creation_tests {
         // 超过上限（文件头正确，仅体积过大）。
         let mut oversized = vec![0u8; ICON_MAX_BYTES + 1];
         oversized[..8].copy_from_slice(&png[..8]);
-        assert!(icon_file_bytes("assets/icon.png", &base64_bytes(&oversized))
-            .unwrap_err()
-            .contains("超过"));
+        assert!(
+            icon_file_bytes("assets/icon.png", &base64_bytes(&oversized))
+                .unwrap_err()
+                .contains("超过")
+        );
     }
 
     #[test]

@@ -177,7 +177,6 @@ mod platform {
                 Ok(result) => {
                     let signature = (result.hwnd, result.confidence, result.score);
                     if last_dialog_signature != Some(signature) {
-                        
                         println!(
                             "[ExplorerListener] 文件选择框识别: {:?}, hwnd=0x{:X}, title={:?}, class={:?}, score={}, evidence={}",
                             result.confidence,

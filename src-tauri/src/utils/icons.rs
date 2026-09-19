@@ -239,15 +239,7 @@ pub fn get_icon(ext: &str, size: i32) -> Result<Vec<u8>, image::ImageError> {
 #[cfg(target_os = "windows")]
 pub fn has_embedded_icon(path: &str) -> bool {
     let path = utf_16_null_terminiated(path);
-    unsafe {
-        ExtractIconExW(
-            path.as_ptr(),
-            -1,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            0,
-        ) > 0
-    }
+    unsafe { ExtractIconExW(path.as_ptr(), -1, ptr::null_mut(), ptr::null_mut(), 0) > 0 }
 }
 
 fn utf_16_null_terminiated(x: &str) -> Vec<u16> {

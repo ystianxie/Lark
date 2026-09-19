@@ -54,6 +54,14 @@ pub struct FileIndex {
     pub create_time: u64,
 }
 
+/// 文件系统增量变更，供 watcher 与索引数据库之间传递。
+#[derive(Debug, Clone)]
+pub enum FileIndexChange {
+    Upsert(FileIndex),
+    Remove { path: String, recursive: bool },
+    Rename { from: String, to: FileIndex },
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
 pub struct QueryReq {
     pub key: Option<String>,
@@ -70,6 +78,8 @@ impl RecordSQL {
         RECORD_SCHEMA_READY.get_or_init(Self::init);
         let data_dir = app_data_dir().unwrap().join(RECORD_SQLITE_FILE);
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
+        c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let _ = c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         RecordSQL { conn: c }
     }
 
@@ -80,6 +90,7 @@ impl RecordSQL {
             File::create(&data_dir).unwrap();
         }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
+        c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
         let sql = r#"
         create table if not exists record
         (
@@ -383,6 +394,8 @@ impl IndexSQL {
         let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
         Self::init();
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
+        c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let _ = c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         IndexSQL { conn: c }
     }
 
@@ -395,6 +408,8 @@ impl IndexSQL {
             File::create(&data_dir).unwrap();
         }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
+        c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let _ = c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         let sql = r#"
         CREATE TABLE IF NOT EXISTS app_index
         (
@@ -442,6 +457,7 @@ impl IndexSQL {
             CREATE INDEX IF NOT EXISTS idx_file_generation_title ON file_index (generation, title);
             CREATE INDEX IF NOT EXISTS idx_file_generation_path ON file_index (generation, path);
             CREATE INDEX IF NOT EXISTS idx_file_title_nocase ON file_index (title COLLATE NOCASE);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_file_index_path_unique ON file_index (path);
             CREATE TABLE IF NOT EXISTS file_index_staging
             (
                 title TEXT DEFAULT '', path TEXT NOT NULL UNIQUE, desc TEXT DEFAULT '',
@@ -491,6 +507,46 @@ impl IndexSQL {
             }
         }
         tx.commit()?; // 提交事务
+        Ok(())
+    }
+
+    /// 在一个事务内应用一批增量文件索引变更。
+    /// 全量 generation 重建仍使用 staging 接口；两者不应并发调用。
+    pub fn apply_file_changes(&mut self, changes: &[FileIndexChange]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for change in changes {
+            match change {
+                FileIndexChange::Upsert(file) => {
+                    let md5 = string_factory::md5(&file.path);
+                    tx.execute(
+                        "INSERT INTO file_index (title,path,desc,icon,pinyin,abb,type,md5,generation) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0) ON CONFLICT(path) DO UPDATE SET title=excluded.title, desc=excluded.desc, icon=excluded.icon, pinyin=excluded.pinyin, abb=excluded.abb, type=excluded.type, md5=excluded.md5",
+                        rusqlite::params![file.title, file.path, file.desc, file.icon, file.pinyin, file.abb, file.file_type, md5],
+                    )?;
+                }
+                FileIndexChange::Remove { path, recursive } => {
+                    if *recursive {
+                        let base = path.trim_end_matches(['\\', '/']);
+                        let win_prefix = format!(r#"{}\%"#, base);
+                        let unix_prefix = format!("{}/%", base);
+                        tx.execute(
+                            "DELETE FROM file_index WHERE path = ?1 OR path LIKE ?2 OR path LIKE ?3",
+                            rusqlite::params![path, win_prefix, unix_prefix],
+                        )?;
+                    } else {
+                        tx.execute("DELETE FROM file_index WHERE path = ?1", [path])?;
+                    }
+                }
+                FileIndexChange::Rename { from, to } => {
+                    tx.execute("DELETE FROM file_index WHERE path = ?1", [from])?;
+                    let md5 = string_factory::md5(&to.path);
+                    tx.execute(
+                        "INSERT INTO file_index (title,path,desc,icon,pinyin,abb,type,md5,generation) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0) ON CONFLICT(path) DO UPDATE SET title=excluded.title, desc=excluded.desc, icon=excluded.icon, pinyin=excluded.pinyin, abb=excluded.abb, type=excluded.type, md5=excluded.md5",
+                        rusqlite::params![to.title, to.path, to.desc, to.icon, to.pinyin, to.abb, to.file_type, md5],
+                    )?;
+                }
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -968,6 +1024,19 @@ mod file_search_tests {
             .unwrap();
         }
         IndexSQL { conn }
+    }
+
+    #[test]
+    fn incremental_changes_upsert_remove_and_rename() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE file_index (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, path TEXT NOT NULL UNIQUE, desc TEXT, icon TEXT, pinyin TEXT, abb TEXT, type TEXT, md5 TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, create_time INTEGER);").unwrap();
+        let mut db = IndexSQL { conn };
+        let file = FileIndex { title: "a.txt".into(), path: "a.txt".into(), file_type: "txt".into(), ..Default::default() };
+        db.apply_file_changes(&[FileIndexChange::Upsert(file.clone())]).unwrap();
+        db.apply_file_changes(&[FileIndexChange::Rename { from: "a.txt".into(), to: FileIndex { path: "b.txt".into(), title: "b.txt".into(), ..file.clone() } }]).unwrap();
+        db.apply_file_changes(&[FileIndexChange::Remove { path: "b.txt".into(), recursive: false }]).unwrap();
+        let count: i64 = db.conn.query_row("SELECT COUNT(*) FROM file_index", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

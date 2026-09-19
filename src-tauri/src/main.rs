@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::path::PathBuf;
 mod api;
 mod config;
 mod utils;
@@ -94,6 +95,7 @@ async fn search_keyword(
 
 #[tauri::command]
 fn create_file_index(app: AppHandle) {
+    let _ = app.state::<Mutex<api::file_watcher::FileIndexUpdateService>>().lock().unwrap().begin_rebuild();
     let app_handle = app.app_handle().clone();
     static FILE_INDEX_RUNNING: AtomicBool = AtomicBool::new(false);
     if FILE_INDEX_RUNNING.swap(true, Ordering::AcqRel) {
@@ -101,7 +103,10 @@ fn create_file_index(app: AppHandle) {
         return;
     }
     tauri::async_runtime::spawn_blocking(move || {
-        create_file_index_to_sql(app_handle);
+        create_file_index_to_sql(app_handle.clone());
+        if let Some(service) = app_handle.try_state::<Mutex<api::file_watcher::FileIndexUpdateService>>() {
+            let _ = service.lock().unwrap().finish_rebuild();
+        }
         FILE_INDEX_RUNNING.store(false, Ordering::Release);
     });
 }
@@ -472,7 +477,10 @@ fn save_plugin_settings(
 ) -> Result<(), String> {
     let keys = plugin_config_keys(&app, &plugin_id)?;
     let filtered = select_plugin_settings(values, &keys);
-    if filtered.as_object().map_or(true, |object| object.is_empty()) {
+    if filtered
+        .as_object()
+        .map_or(true, |object| object.is_empty())
+    {
         return Err("没有可保存的配置项，请确认配置项名称与插件声明一致".into());
     }
     let encoded = serde_json::to_string(&filtered).map_err(|error| error.to_string())?;
@@ -552,6 +560,32 @@ fn main() {
         .plugin(win_file_drop::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
+            let file_watch_config = build_file_watch_config();
+            let index_service = api::file_watcher::FileIndexUpdateService::start();
+            let index_sender = index_service.sender();
+            app.manage(Mutex::new(index_service));
+            match api::file_watcher::FileWatcher::start(file_watch_config, move |events| {
+                let changes = api::file_watcher::events_to_index_changes(
+                    &events,
+                    api::explorer::file_path_to_index,
+                );
+                println!(
+                    "[FileWatcher] 收到 {} 个事件，转换为 {} 个索引变更",
+                    events.len(),
+                    changes.len()
+                );
+                if !changes.is_empty() {
+                    if let Err(error) = index_sender.send(api::file_watcher::IndexMessage::Batch(changes)) {
+                        eprintln!("[FileWatcher] 无法提交增量索引任务: {error}");
+                    }
+                }
+            }) {
+                Ok(watcher) => {
+                    app.manage(Mutex::new(watcher));
+                    println!("[FileWatcher] 文件监听已启动");
+                }
+                Err(error) => eprintln!("[FileWatcher] 文件监听启动失败，应用继续运行: {error}"),
+            }
             app.manage(api::listary_jump::ListaryJumpHandle::start());
             let plugins_dir = crate::utils::dirs::app_plugins_dir()?;
             app.asset_protocol_scope()
@@ -628,4 +662,38 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn build_file_watch_config() -> api::file_watcher::WatchConfig {
+    let config = config::Config::read_local_config().unwrap_or_default();
+    let roots = file_watch_roots();
+    api::file_watcher::WatchConfig {
+        roots,
+        excluded_paths: config
+            .base
+            .local_file_search_exclude_paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+        excluded_extensions: config.base.local_file_search_exclude_types,
+        ..Default::default()
+    }
+}
+
+fn file_watch_roots() -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        ('A'..='Z')
+            .map(|drive| PathBuf::from(format!("{}:\\", drive)))
+            .filter(|path| path.is_dir())
+            .collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME").map(PathBuf::from).into_iter().collect()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Vec::new()
+    }
 }
