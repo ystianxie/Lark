@@ -1,0 +1,14 @@
+[package]
+name = "win-file-drop"
+version = "0.1.0"
+description = "Windows 上从 HTML5 拖放里取回被拖入文件的真实路径"
+edition = "2021"
+
+[dependencies]
+tauri = "2"
+serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+# 必须与 wry 使用的版本一致，否则 COM 接口类型不匹配。
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi"] }
