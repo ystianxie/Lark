@@ -63,6 +63,14 @@ pub struct FileIndexUpdateService {
     sender: Sender<IndexMessage>,
     stop: Arc<Mutex<bool>>,
     thread: Option<JoinHandle<()>>,
+    status: Arc<Mutex<IndexStatus>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum IndexStatus { Idle, Rebuilding, IncrementalUpdating, Stale }
+
+impl std::fmt::Display for IndexStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{:?}", self) }
 }
 
 impl FileIndexUpdateService {
@@ -70,11 +78,14 @@ impl FileIndexUpdateService {
         let (sender, receiver) = mpsc::channel::<IndexMessage>();
         let stop = Arc::new(Mutex::new(false));
         let thread_stop = Arc::clone(&stop);
-        let thread = thread::spawn(move || run_index_service(receiver, thread_stop));
+        let status = Arc::new(Mutex::new(IndexStatus::Idle));
+        let thread_status = Arc::clone(&status);
+        let thread = thread::spawn(move || run_index_service(receiver, thread_stop, thread_status));
         Self {
             sender,
             stop,
             thread: Some(thread),
+            status,
         }
     }
 
@@ -84,9 +95,18 @@ impl FileIndexUpdateService {
 
     pub fn begin_rebuild(&self) -> Result<(), String> { self.sender.send(IndexMessage::BeginRebuild).map_err(|e| e.to_string()) }
     pub fn finish_rebuild(&self) -> Result<(), String> { self.sender.send(IndexMessage::FinishRebuild).map_err(|e| e.to_string()) }
+    pub fn status(&self) -> IndexStatus { *self.status.lock().unwrap() }
+    pub fn apply_batches_sync(&self, batches: Vec<Vec<FileIndexChange>>) -> Result<(), String> {
+        for batch in batches {
+            self.sender.send(IndexMessage::Batch(batch)).map_err(|e| e.to_string())?;
+        }
+        let (tx, rx) = mpsc::channel();
+        self.sender.send(IndexMessage::Flush(tx)).map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())
+    }
 }
 
-pub enum IndexMessage { Batch(Vec<FileIndexChange>), BeginRebuild, FinishRebuild }
+pub enum IndexMessage { Batch(Vec<FileIndexChange>), BeginRebuild, FinishRebuild, Flush(Sender<()>), MarkStale }
 
 impl Drop for FileIndexUpdateService {
     fn drop(&mut self) {
@@ -98,29 +118,42 @@ impl Drop for FileIndexUpdateService {
     }
 }
 
-fn run_index_service(receiver: Receiver<IndexMessage>, stop: Arc<Mutex<bool>>) {
+fn run_index_service(receiver: Receiver<IndexMessage>, stop: Arc<Mutex<bool>>, status: Arc<Mutex<IndexStatus>>) {
     let mut index = crate::utils::database::IndexSQL::new();
     let mut rebuilding = false;
     let mut pending = Vec::new();
     while !*stop.lock().unwrap() {
         match receiver.recv_timeout(Duration::from_millis(250)) {
-            Ok(IndexMessage::BeginRebuild) => rebuilding = true,
+            Ok(IndexMessage::BeginRebuild) => { rebuilding = true; *status.lock().unwrap() = IndexStatus::Rebuilding; }
             Ok(IndexMessage::Batch(changes)) if rebuilding => pending.extend(changes),
             Ok(IndexMessage::Batch(changes)) if !changes.is_empty() => {
+                *status.lock().unwrap() = IndexStatus::IncrementalUpdating;
                 println!("[FileWatcher] 开始写入 {} 个增量索引变更", changes.len());
-                if let Err(error) = index.apply_file_changes(&changes) {
-                    eprintln!("[FileWatcher] 增量索引写入失败: {error}");
-                } else {
-                    println!("[FileWatcher] 增量索引写入完成");
+                let mut failed = false;
+                for chunk in changes.chunks(5000) {
+                    if let Err(error) = index.apply_file_changes(chunk) {
+                        eprintln!("[FileWatcher] 增量索引写入失败: {error}");
+                        failed = true;
+                        break;
+                    }
                 }
+                *status.lock().unwrap() = if failed { IndexStatus::Stale } else { IndexStatus::Idle };
             }
             Ok(IndexMessage::FinishRebuild) => {
                 rebuilding = false;
                 if !pending.is_empty() {
-                    if let Err(error) = index.apply_file_changes(&pending) { eprintln!("[FileWatcher] 重建后补写增量索引失败: {error}"); }
+                    if let Err(error) = index.apply_file_changes(&pending) {
+                        eprintln!("[FileWatcher] 重建后补写增量索引失败: {error}");
+                        *status.lock().unwrap() = IndexStatus::Stale;
+                    }
                     pending.clear();
                 }
+                if *status.lock().unwrap() != IndexStatus::Stale {
+                    *status.lock().unwrap() = IndexStatus::Idle;
+                }
             }
+            Ok(IndexMessage::Flush(done)) => { let _ = done.send(()); }
+            Ok(IndexMessage::MarkStale) => { *status.lock().unwrap() = IndexStatus::Stale; }
             Ok(IndexMessage::Batch(_)) => {}
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -155,6 +188,13 @@ impl FileWatcher {
     }
 
     pub fn stop(mut self) {
+        *self.stop.lock().unwrap() = true;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+
+    pub fn stop_in_place(&mut self) {
         *self.stop.lock().unwrap() = true;
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -202,7 +242,7 @@ fn run<F>(
         match rx.recv_timeout(config.debounce) {
             Ok(Ok(event)) => {
                 let normalized = normalize(event.clone(), &config);
-                if !normalized.is_empty() {
+            if !normalized.is_empty() {
                     println!("[FileWatcher] 原始事件: {:?}, paths={:?}", event.kind, event.paths);
                     pending.extend(normalized);
                 }
@@ -278,14 +318,11 @@ pub fn is_excluded(path: &Path, config: &WatchConfig) -> bool {
     if config.excluded_paths.iter().any(|excluded| path_is_under(path, excluded)) {
         return true;
     }
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| {
-            config
-                .excluded_extensions
-                .iter()
-                .any(|x| x.trim_start_matches('.').eq_ignore_ascii_case(ext))
+    path.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
+        config.excluded_extensions.iter().any(|x| {
+            x.trim().trim_start_matches('.').eq_ignore_ascii_case(ext)
         })
+    })
 }
 
 pub(crate) fn path_is_under(path: &Path, excluded: &Path) -> bool {
@@ -317,31 +354,54 @@ pub fn events_to_index_changes(
     events: &[FileEvent],
     to_index: impl Fn(&Path) -> Option<FileIndex>,
 ) -> Vec<FileIndexChange> {
-    let changes: Vec<_> = events
-        .iter()
-        .filter_map(|event| match &event.kind {
+    let mut changes = Vec::new();
+    for event in events {
+        match &event.kind {
             FileEventKind::Created | FileEventKind::Changed => {
-                to_index(&event.path).map(FileIndexChange::Upsert)
+                append_path_changes(&mut changes, &event.path, &to_index);
             }
-            FileEventKind::Removed => Some(FileIndexChange::Remove {
-                path: event.path.to_string_lossy().into_owned(),
-                recursive: true,
-            }),
-            FileEventKind::Renamed { from } => to_index(&event.path)
-                .map(|to| FileIndexChange::Rename {
-                    from: from.to_string_lossy().into_owned(),
-                    to,
-                })
-                .or_else(|| {
-                    Some(FileIndexChange::Remove {
-                        path: from.to_string_lossy().into_owned(),
-                        recursive: true,
-                    })
-                }),
-        })
-        .collect();
+            FileEventKind::Removed => {
+                changes.push(FileIndexChange::Remove {
+                    path: event.path.to_string_lossy().into_owned(),
+                    recursive: true,
+                });
+            }
+            FileEventKind::Renamed { from } => {
+                if let Some(to) = to_index(&event.path) {
+                    if Path::new(&to.path).is_dir() {
+                        changes.push(FileIndexChange::Remove { path: from.to_string_lossy().into_owned(), recursive: true });
+                        append_path_changes(&mut changes, &event.path, &to_index);
+                    } else {
+                        changes.push(FileIndexChange::Rename { from: from.to_string_lossy().into_owned(), to });
+                    }
+                } else {
+                    // Destination disappeared or could not be read: remove the old subtree.
+                    changes.push(FileIndexChange::Remove { path: from.to_string_lossy().into_owned(), recursive: true });
+                }
+            }
+        }
+    }
     println!("[FileWatcher] 事件转换结果: {} 个变更", changes.len());
     changes
+}
+
+fn append_path_changes(
+    changes: &mut Vec<FileIndexChange>,
+    path: &Path,
+    to_index: &impl Fn(&Path) -> Option<FileIndex>,
+) {
+    let Some(index) = to_index(path) else { return };
+    let is_dir = Path::new(&index.path).is_dir();
+    changes.push(FileIndexChange::Upsert(index));
+    if is_dir {
+        for entry in walkdir::WalkDir::new(path).follow_links(false).into_iter().filter_map(Result::ok) {
+            if entry.path() == path || entry.file_type().is_dir() { continue; }
+            if let Some(index) = to_index(entry.path()) {
+                changes.push(FileIndexChange::Upsert(index));
+            }
+        }
+    }
+
 }
 
 fn coalesce(events: Vec<FileEvent>) -> Vec<FileEvent> {

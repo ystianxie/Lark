@@ -792,7 +792,9 @@ fn file_scanning(
             .path()
             .extension()
             .and_then(|ext| ext.to_str())
-            .map_or(false, |ext| skip_extensions.contains(&ext.to_lowercase()))
+            .is_some_and(|ext| skip_extensions.iter().any(|value| {
+                value.trim().trim_start_matches('.').eq_ignore_ascii_case(ext)
+            }))
     }
 
     fn should_skip_dir(entry: &DirEntry, skip_dirs: &[String]) -> bool {

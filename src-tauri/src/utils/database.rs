@@ -59,6 +59,7 @@ pub struct FileIndex {
 pub enum FileIndexChange {
     Upsert(FileIndex),
     Remove { path: String, recursive: bool },
+    RemoveByType { file_type: String, roots: Vec<String> },
     Rename { from: String, to: FileIndex },
 }
 
@@ -534,6 +535,14 @@ impl IndexSQL {
                         )?;
                     } else {
                         tx.execute("DELETE FROM file_index WHERE path = ?1", [path])?;
+                    }
+                }
+                FileIndexChange::RemoveByType { file_type, roots } => {
+                    for root in roots {
+                        let base = root.trim_end_matches(['\\', '/']);
+                        let win_prefix = format!(r#"{}\%"#, base);
+                        let unix_prefix = format!("{}/%", base);
+                        tx.execute("DELETE FROM file_index WHERE type = ?1 AND (path = ?2 OR path = ?3 OR path LIKE ?4 OR path LIKE ?5)", rusqlite::params![file_type, base, base, win_prefix, unix_prefix])?;
                     }
                 }
                 FileIndexChange::Rename { from, to } => {
