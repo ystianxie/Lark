@@ -469,6 +469,14 @@ pub fn open_app(app_path: &str, app_name: &str) {
 #[tauri::command(rename_all = "camelCase")]
 #[cfg(target_os = "windows")]
 pub fn open_app(app_path: &str, app_name: &str) {
+    if app_path
+        .to_ascii_lowercase()
+        .starts_with("shell:appsfolder\\")
+    {
+        open_file(app_path);
+        return;
+    }
+
     // Some entries are indexed as "apps" for launcher purposes even though
     // they are files opened by a registered default application. Delegate
     // those paths to the file association handler instead of CreateProcessW.

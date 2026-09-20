@@ -34,6 +34,9 @@ pub struct BaseConfig {
     clipboard_record_image_time: Option<i32>,
     clipboard_record_file_switch: bool,
     clipboard_record_file_time: Option<i32>,
+    /// None = 尚未初始化；Some([]) = 用户明确不包含任何目录。
+    #[serde(default)]
+    pub local_file_search_paths: Option<Vec<String>>,
     pub local_file_search_exclude_paths: Vec<String>,
     pub local_file_search_exclude_types: Vec<String>,
     #[serde(default)]
@@ -76,6 +79,7 @@ impl Default for BaseConfig {
             clipboard_record_image_time: Some(5),
             clipboard_record_file_switch: false,
             clipboard_record_file_time: Some(1),
+            local_file_search_paths: None,
             local_file_search_exclude_paths: vec![
                 "/Library".to_string(),
                 "/System".to_string(),
@@ -128,6 +132,7 @@ impl Default for BaseConfig {
             clipboard_record_image_time: Some(5),
             clipboard_record_file_switch: false,
             clipboard_record_file_time: Some(1),
+            local_file_search_paths: None,
             local_file_search_exclude_paths: vec![
                 r"C:\Windows".to_string(),
                 r"C:\ProgramData".to_string(),
@@ -203,6 +208,7 @@ enum ConfigUpdate {
     ClipboardRecordImageTime(Option<i32>),
     ClipboardRecordFileSwitch(bool),
     ClipboardRecordFileTime(Option<i32>),
+    LocalFileSearchPaths(Option<Vec<String>>),
     LocalFileSearchExcludePaths(Vec<String>),
     LocalFileSearchExcludeTypes(Vec<String>),
     LocalAppSearchPaths(Vec<String>),
@@ -316,6 +322,9 @@ impl Config {
             }
             ConfigUpdate::ClipboardRecordFileTime(value) => {
                 self.config.base.clipboard_record_file_time = value
+            }
+            ConfigUpdate::LocalFileSearchPaths(value) => {
+                self.config.base.local_file_search_paths = value
             }
             ConfigUpdate::LocalFileSearchExcludePaths(value) => {
                 self.config.base.local_file_search_exclude_paths = value
@@ -570,8 +579,34 @@ pub fn save_snippet_settings_data(setting_info: Value) -> Result<(bool, String, 
     Ok((enabled, trigger, snippets))
 }
 
+pub fn ensure_file_search_paths_initialized(default_paths: Vec<String>) -> Result<Vec<String>> {
+    let mut config = Config::new();
+    if let Some(paths) = config.config.base.local_file_search_paths.clone() {
+        return Ok(paths);
+    }
+
+    config.update_local_config(ConfigUpdate::LocalFileSearchPaths(Some(
+        default_paths.clone(),
+    )));
+    config.save_local_config()?;
+    Ok(default_paths)
+}
+
 pub fn save_index_settings_data(setting_info: Value) -> Result<()> {
     let mut config = Config::new();
+    if setting_info.get("localFileSearchPaths").is_some() {
+        let paths = setting_info
+            .get("localFileSearchPaths")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            });
+        config.update_local_config(ConfigUpdate::LocalFileSearchPaths(paths));
+    }
     if let Some(value) = setting_info
         .get("localAppSearchPaths")
         .and_then(Value::as_array)
@@ -628,6 +663,7 @@ pub fn index_settings() -> Result<Value> {
     Ok(serde_json::json!({
         "localAppSearchPaths": config.base.local_app_search_paths,
         "localAppSearchExcludePaths": config.base.local_app_search_exclude_paths,
+        "localFileSearchPaths": config.base.local_file_search_paths,
         "localFileSearchExcludePaths": config.base.local_file_search_exclude_paths,
         "localFileSearchExcludeTypes": config.base.local_file_search_exclude_types,
     }))

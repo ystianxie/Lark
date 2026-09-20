@@ -16,7 +16,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::any::type_name;
 use std::ascii::escape_default;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -741,7 +741,7 @@ fn activate_explorer_window(folder_name: &str) {
 }
 
 #[cfg(target_os = "windows")]
-fn get_drives() -> Vec<(String, String)> {
+pub(crate) fn get_drives() -> Vec<(String, String)> {
     let mut drives = Vec::new();
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStrExt;
@@ -796,31 +796,17 @@ fn file_scanning(
     }
 
     fn should_skip_dir(entry: &DirEntry, skip_dirs: &[String]) -> bool {
-        let mut is_skip = skip_dirs.iter().any(|dir| entry.path().starts_with(dir));
         if entry
             .file_name()
             .to_str()
-            .map_or(false, |name| name.starts_with("$"))
+            .is_some_and(|name| name.starts_with('$') || name.starts_with('.'))
         {
             return true;
         }
-        if !is_skip {
-            is_skip = skip_dirs.iter().any(|dir| {
-                if dir.starts_with("*/") {
-                    let skip_key = dir.replace("*/", "");
-                    entry
-                        .file_name()
-                        .to_str()
-                        .unwrap_or("")
-                        .contains(skip_key.as_str())
-                } else {
-                    false
-                }
-            });
-        }
-        is_skip
+        skip_dirs
+            .iter()
+            .any(|dir| super::file_watcher::path_is_under(entry.path(), Path::new(dir)))
     }
-
     println!("开始扫描固定磁盘:{:?}", roots);
     let skip_extensions_data = Arc::new(skip_extensions);
     let skip_dirs_data = Arc::new(skip_dirs);
@@ -903,13 +889,10 @@ fn file_scanning(
 pub fn create_app_index_to_sql(app_handle: AppHandle) {
     let config = config::Config::read_local_config().unwrap().base;
     let mut index_db = IndexSQL::new();
-    if let Err(error) = index_db.clear_discovered_app_indexes() {
-        eprintln!("清理自动应用索引失败: {error}");
-        return;
-    }
-    let mut result = Vec::new();
+
     #[cfg(target_os = "macos")]
-    {
+    let result = {
+        let mut result = Vec::new();
         result.extend(get_apps_with_depth(
             "/System/Applications",
             true,
@@ -931,103 +914,186 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
             false,
             &config.local_app_search_exclude_paths,
         ));
-    }
+        result
+    };
+
     #[cfg(target_os = "windows")]
-    {
-        //  todo 添加到库
-        let home_dir = tauri::Manager::path(&app_handle)
-            .home_dir()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-        println!("{:?}", home_dir);
-        // result.extend(get_apps(r"C:\Program Files\"));
-        // result.extend(get_apps(r"C:\Program Files (x86)\"));
-        result.extend(get_apps_with_depth(
-            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\",
-            true,
-            true,
-            false,
-            &config.local_app_search_exclude_paths,
-        ));
-        result.extend(get_apps_with_depth(
-            &format!(
-                r"{}\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\",
-                home_dir.as_str()
-            ),
-            true,
-            true,
-            false,
-            &config.local_app_search_exclude_paths,
-        ));
-        result.extend(get_apps_with_depth(
-            &format!(r"{}\Desktop\", home_dir),
-            false,
-            true,
-            false,
-            &config.local_app_search_exclude_paths,
-        ));
+    let items = {
+        let registered = crate::api::windows_apps::get_all_app();
+        let mut seen = HashSet::new();
+        let mut items = Vec::new();
+
+        // AppsFolder is Windows' user-facing application catalog. Insert it first so
+        // registered applications win over portable-directory duplicates.
+        for app in registered {
+            let title = app.name.trim();
+            let start = app.start.trim();
+            if title.is_empty() || start.is_empty() {
+                continue;
+            }
+            let identity = if app.executable.is_empty() {
+                start
+            } else {
+                app.executable.as_str()
+            };
+            let key = normalize_app_launch_key(identity);
+            if key.is_empty() || !seen.insert(key) {
+                continue;
+            }
+            let (pinyin, abb) = text_to_pinyin(title);
+            let icon = if !app.icon.is_empty() {
+                read_file_to_base64(&app.icon).unwrap_or_default()
+            } else if !app.executable.is_empty() {
+                read_icon_to_base64(app.executable.clone())
+            } else {
+                String::new()
+            };
+            items.push(FileIndex {
+                title: title.to_string(),
+                path: start.to_string(),
+                desc: app.executable,
+                icon,
+                pinyin,
+                abb,
+                file_type: "app".to_string(),
+                ..Default::default()
+            });
+        }
+
+        // AppsFolder does not include every shortcut or standalone executable that users
+        // place on the desktop. Scan the current and public desktops non-recursively as
+        // a secondary source, after registered applications and before portable roots.
+        let mut desktop_roots = Vec::new();
+        if let Ok(path) = app_handle.path().desktop_dir() {
+            desktop_roots.push(path);
+        }
+        if let Some(public_dir) = std::env::var_os("PUBLIC") {
+            desktop_roots.push(PathBuf::from(public_dir).join("Desktop"));
+        }
+        desktop_roots.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+        desktop_roots.dedup_by(|left, right| {
+            left.to_string_lossy()
+                .eq_ignore_ascii_case(&right.to_string_lossy())
+        });
+
+        for desktop_root in desktop_roots.iter().filter(|path| path.is_dir()) {
+            println!("扫描桌面应用: {}", desktop_root.display());
+            for app in get_apps_with_depth(&desktop_root.to_string_lossy(), false, true, false, &[])
+            {
+                let (Some(title), Some(path)) = (app.get("title"), app.get("data")) else {
+                    continue;
+                };
+                let extension = Path::new(path)
+                    .extension()
+                    .and_then(|extension| extension.to_str());
+                if !matches!(extension, Some(value) if value.eq_ignore_ascii_case("exe")
+                    || value.eq_ignore_ascii_case("rdp"))
+                {
+                    continue;
+                }
+                let key = normalize_app_launch_key(path);
+                if title.trim().is_empty() || key.is_empty() || !seen.insert(key) {
+                    continue;
+                }
+                let (pinyin, abb) = text_to_pinyin(title);
+                items.push(FileIndex {
+                    title: title.clone(),
+                    path: path.clone(),
+                    desc: app.get("desc").cloned().unwrap_or_else(|| path.clone()),
+                    icon: read_icon_to_base64(path.clone()),
+                    pinyin,
+                    abb,
+                    file_type: "app".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
         for portable_root in config
             .local_app_search_paths
             .iter()
             .filter(|path| Path::new(path).is_dir())
         {
             println!("扫描便携应用目录: {}", portable_root);
-            result.extend(get_apps_with_depth(
+            for app in get_apps_with_depth(
                 portable_root,
                 true,
                 true,
                 true,
                 &config.local_app_search_exclude_paths,
-            ));
+            ) {
+                let (Some(title), Some(path)) = (app.get("title"), app.get("data")) else {
+                    continue;
+                };
+                if !Path::new(path)
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(|extension| extension.eq_ignore_ascii_case("exe"))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let key = normalize_app_launch_key(path);
+                if title.trim().is_empty() || key.is_empty() || !seen.insert(key) {
+                    continue;
+                }
+                let (pinyin, abb) = text_to_pinyin(title);
+                items.push(FileIndex {
+                    title: title.clone(),
+                    path: path.clone(),
+                    desc: app.get("desc").cloned().unwrap_or_else(|| path.clone()),
+                    icon: read_icon_to_base64(path.clone()),
+                    pinyin,
+                    abb,
+                    file_type: "app".to_string(),
+                    ..Default::default()
+                });
+            }
         }
-        // result.extend();
-        // result.extend(&std::env::var_os("USERPROFILE").unwrap().join("Desktop"));
-        // result.extend(&std::env::var_os("ProgramData").unwrap().join(r"Microsoft\Windows\Start Menu\Programs"));
-    }
+        items
+    };
+
+    #[cfg(target_os = "macos")]
     let items = result
         .into_iter()
         .map(|app| {
             let title = app.get("title").unwrap().to_string();
             let (pinyin, abb) = text_to_pinyin(&title);
-            let mut icon_base64 = String::new();
-            #[cfg(target_os = "macos")]
-            {
-                let local_icon_file =
-                    vec!["日历", "迁移助理", "Photo Booth", "系统信息", "系统设置"];
-                let mut icon_file_path = String::new();
-                if !local_icon_file.contains(&title.as_str()) {
-                    icon_file_path = read_app_info(&app.get("data").unwrap());
-                } else {
-                    icon_file_path = format!("icons/{}.png", title);
-                }
-                icon_base64 = match read_icns_to_base64(&icon_file_path) {
-                    Ok(base64) => base64,
-                    Err(e) => {
-                        println!("错误 {}", e);
-                        "".to_string()
-                    }
-                }
-            }
-            #[cfg(target_os = "windows")]
-            {
-                //todo 获取应用图标
-                icon_base64 = read_icon_to_base64(app.get("desc").unwrap().to_string());
-                println!("{}===>{}", app.get("data").unwrap(), title);
-            }
+            let local_icon_file = vec!["日历", "迁移助理", "Photo Booth", "系统信息", "系统设置"];
+            let icon_file_path = if !local_icon_file.contains(&title.as_str()) {
+                read_app_info(&app.get("data").unwrap())
+            } else {
+                format!("icons/{}.png", title)
+            };
+            let icon = read_icns_to_base64(&icon_file_path).unwrap_or_default();
             FileIndex {
-                title: title.clone(),
+                title,
                 path: app.get("data").unwrap().to_string(),
                 desc: app.get("desc").unwrap().to_string(),
-                icon: icon_base64,
+                icon,
                 pinyin,
                 abb,
                 ..Default::default()
             }
         })
         .collect();
-    index_db.insert_app_indexes(items).unwrap();
+
+    let discovered = items.len();
+    println!("应用索引扫描完成，准备写入 {discovered} 条自动应用记录");
+    match index_db.replace_discovered_app_indexes(items) {
+        Ok(inserted) => {
+            println!("应用索引重建完成：扫描 {discovered} 条，实际写入 {inserted} 条自动应用记录")
+        }
+        Err(error) => eprintln!("应用索引重建失败: {error}"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_app_launch_key(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .to_lowercase()
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1145,13 +1211,14 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
 
     #[cfg(target_os = "windows")]
     {
-        let drivers = get_drives();
-        println!("扫描所有分区: {:?}", drivers);
-        let roots = drivers
+        let roots = config
+            .local_file_search_paths
+            .clone()
+            .unwrap_or_default()
             .into_iter()
-            .filter(|driver| driver.1 == "Fixed Drive")
-            .map(|driver| driver.0)
-            .collect();
+            .filter(|path| Path::new(path).is_dir())
+            .collect::<Vec<_>>();
+        println!("扫描配置目录: {:?}", roots);
         file_scanning(
             app_handle.clone(),
             roots,
@@ -1298,6 +1365,19 @@ pub(crate) fn find_windows_with_partial_title(partial_title: &str) {
             wide_partial_title.as_ptr() as LPARAM,
         );
     }
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+fn app_launch_keys_normalize_case_slashes_and_quotes() {
+    assert_eq!(
+        normalize_app_launch_key(r#""C:/Apps/Tool.exe""#),
+        r"c:\apps\tool.exe"
+    );
+    assert_eq!(
+        normalize_app_launch_key(r"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"),
+        r"shell:appsfolder\microsoft.windowscalculator_8wekyb3d8bbwe!app"
+    );
 }
 
 #[test]

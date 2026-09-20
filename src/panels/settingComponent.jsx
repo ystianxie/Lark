@@ -664,10 +664,12 @@ const Component = () => {
     const [hotkeyFileJump, setHotkeyFileJump] = useState("Ctrl+G");
     const [appSearchPaths, setAppSearchPaths] = useState([]);
     const [appExcludePaths, setAppExcludePaths] = useState([]);
+    const [fileSearchPaths, setFileSearchPaths] = useState(null);
     const [excludePaths, setExcludePaths] = useState([]);
     const [excludeTypes, setExcludeTypes] = useState([]);
     const [newAppSearchPath, setNewAppSearchPath] = useState('');
     const [newAppExcludePath, setNewAppExcludePath] = useState('');
+    const [newFileSearchPath, setNewFileSearchPath] = useState('');
     const [newExcludePath, setNewExcludePath] = useState('');
     const [newExcludeType, setNewExcludeType] = useState('');
     const [customApps, setCustomApps] = useState([]);
@@ -715,6 +717,7 @@ const Component = () => {
         invoke("get_index_settings").then((settings) => {
             setAppSearchPaths(settings.localAppSearchPaths || []);
             setAppExcludePaths(settings.localAppSearchExcludePaths || []);
+            setFileSearchPaths(settings.localFileSearchPaths ?? null);
             setExcludePaths(settings.localFileSearchExcludePaths || []);
             setExcludeTypes(settings.localFileSearchExcludeTypes || []);
         }).catch((error) => console.error("读取索引设置失败", error));
@@ -912,6 +915,7 @@ const Component = () => {
         await invoke("save_index_settings", {settingInfo: {
             localAppSearchPaths: appSearchPaths,
             localAppSearchExcludePaths: appExcludePaths,
+            localFileSearchPaths: fileSearchPaths,
             localFileSearchExcludePaths: excludePaths,
             localFileSearchExcludeTypes: excludeTypes
         }})
@@ -968,6 +972,13 @@ const Component = () => {
         const value = newAppExcludePath.trim();
         if (value && !appExcludePaths.includes(value)) setAppExcludePaths([...appExcludePaths, value]);
         setNewAppExcludePath('');
+    }
+
+    const addFileSearchPath = () => {
+        const value = newFileSearchPath.trim();
+        const paths = fileSearchPaths || [];
+        if (value && !paths.includes(value)) setFileSearchPaths([...paths, value]);
+        setNewFileSearchPath('');
     }
 
     const addExcludePath = () => {
@@ -1232,6 +1243,25 @@ const Component = () => {
                             <div className="indexSettingAdd">
                                 <Input value={newAppExcludePath} placeholder="例如 D:\\Apps\\不需要扫描的目录" onChange={(event) => setNewAppExcludePath(event.target.value)} onPressEnter={addAppExcludePath}/>
                                 <Button type="primary" ghost onClick={addAppExcludePath}>添加</Button>
+                            </div>
+                        </section>
+
+                        <section className="indexSettingCard">
+                            <div className="indexSettingHeader">
+                                <div>
+                                    <h3 className="indexSettingHeading">文件包含路径</h3>
+                                    <div className="indexSettingHint">仅扫描和监听这些目录；包含与排除冲突时以排除为准</div>
+                                </div>
+                                <span className="indexSettingCount">{fileSearchPaths === null ? '未初始化' : `${fileSearchPaths.length} 项`}</span>
+                            </div>
+                            <div className="indexSettingList">
+                                {fileSearchPaths === null && <div className="indexSettingEmpty">尚未初始化，应用启动时将生成默认包含路径</div>}
+                                {fileSearchPaths?.length === 0 && <div className="indexSettingEmpty">已明确设置为空，不扫描任何目录</div>}
+                                {(fileSearchPaths || []).map((path) => <Tag title={path} key={path} closable onClose={() => setFileSearchPaths(fileSearchPaths.filter((item) => item !== path))}>{path}</Tag>)}
+                            </div>
+                            <div className="indexSettingAdd">
+                                <Input value={newFileSearchPath} placeholder="例如 C:\\Users\\admin\\Downloads 或 D:\\" onChange={(event) => setNewFileSearchPath(event.target.value)} onPressEnter={addFileSearchPath}/>
+                                <Button type="primary" ghost onClick={addFileSearchPath}>添加</Button>
                             </div>
                         </section>
 

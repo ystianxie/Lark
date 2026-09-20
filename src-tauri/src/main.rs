@@ -545,7 +545,15 @@ fn main() {
     ClipboardWatcher::start();
     IndexSQL::new();
     RecordSQL::new();
-    let config = config::Config::read_local_config().unwrap();
+    let mut config = config::Config::read_local_config().unwrap();
+    if config.base.local_file_search_paths.is_none() {
+        if let Err(error) =
+            config::ensure_file_search_paths_initialized(default_file_search_paths())
+        {
+            eprintln!("初始化文件包含路径失败: {error}");
+        }
+        config = config::Config::read_local_config().unwrap();
+    }
     let hotkey_awaken = config.base.hotkey_awaken.clone();
     let hotkey_clipboard = config.base.hotkey_clipboard.clone();
     let hotkey_file_jump = config.base.hotkey_file_jump.clone();
@@ -564,27 +572,32 @@ fn main() {
             let index_service = api::file_watcher::FileIndexUpdateService::start();
             let index_sender = index_service.sender();
             app.manage(Mutex::new(index_service));
-            match api::file_watcher::FileWatcher::start(file_watch_config, move |events| {
-                let changes = api::file_watcher::events_to_index_changes(
-                    &events,
-                    api::explorer::file_path_to_index,
-                );
-                println!(
-                    "[FileWatcher] 收到 {} 个事件，转换为 {} 个索引变更",
-                    events.len(),
-                    changes.len()
-                );
-                if !changes.is_empty() {
-                    if let Err(error) = index_sender.send(api::file_watcher::IndexMessage::Batch(changes)) {
-                        eprintln!("[FileWatcher] 无法提交增量索引任务: {error}");
+            if file_watch_config.roots.is_empty() {
+                println!("[FileWatcher] 文件包含路径为空，未启动监听");
+            } else {
+                println!("[FileWatcher] 监听配置目录: {:?}", file_watch_config.roots);
+                match api::file_watcher::FileWatcher::start(file_watch_config, move |events| {
+                    let changes = api::file_watcher::events_to_index_changes(
+                        &events,
+                        api::explorer::file_path_to_index,
+                    );
+                    println!(
+                        "[FileWatcher] 收到 {} 个事件，转换为 {} 个索引变更",
+                        events.len(),
+                        changes.len()
+                    );
+                    if !changes.is_empty() {
+                        if let Err(error) = index_sender.send(api::file_watcher::IndexMessage::Batch(changes)) {
+                            eprintln!("[FileWatcher] 无法提交增量索引任务: {error}");
+                        }
                     }
+                }) {
+                    Ok(watcher) => {
+                        app.manage(Mutex::new(watcher));
+                        println!("[FileWatcher] 文件监听已启动");
+                    }
+                    Err(error) => eprintln!("[FileWatcher] 文件监听启动失败，应用继续运行: {error}"),
                 }
-            }) {
-                Ok(watcher) => {
-                    app.manage(Mutex::new(watcher));
-                    println!("[FileWatcher] 文件监听已启动");
-                }
-                Err(error) => eprintln!("[FileWatcher] 文件监听启动失败，应用继续运行: {error}"),
             }
             app.manage(api::listary_jump::ListaryJumpHandle::start());
             let plugins_dir = crate::utils::dirs::app_plugins_dir()?;
@@ -666,7 +679,14 @@ fn main() {
 
 fn build_file_watch_config() -> api::file_watcher::WatchConfig {
     let config = config::Config::read_local_config().unwrap_or_default();
-    let roots = file_watch_roots();
+    let roots = config
+        .base
+        .local_file_search_paths
+        .unwrap_or_default()
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .collect();
     api::file_watcher::WatchConfig {
         roots,
         excluded_paths: config
@@ -680,20 +700,47 @@ fn build_file_watch_config() -> api::file_watcher::WatchConfig {
     }
 }
 
-fn file_watch_roots() -> Vec<PathBuf> {
+fn default_file_search_paths() -> Vec<String> {
+    let mut paths = Vec::<PathBuf>::new();
+
+    if let Some(user_profile) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+        for directory in ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos"] {
+            let path = user_profile.join(directory);
+            if path.is_dir() {
+                paths.push(path);
+            }
+        }
+    }
+    if let Some(one_drive) = std::env::var_os("OneDrive").map(PathBuf::from) {
+        if one_drive.is_dir() {
+            paths.push(one_drive);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
-        ('A'..='Z')
-            .map(|drive| PathBuf::from(format!("{}:\\", drive)))
-            .filter(|path| path.is_dir())
-            .collect()
+        let system_drive = std::env::var("SystemDrive")
+            .unwrap_or_else(|_| "C:".to_string())
+            .trim_end_matches('\\')
+            .to_ascii_lowercase();
+        paths.extend(
+            api::explorer::get_drives()
+                .into_iter()
+                .filter(|(_, drive_type)| drive_type == "Fixed Drive")
+                .map(|(path, _)| PathBuf::from(path))
+                .filter(|path| {
+                    path.to_string_lossy()
+                        .trim_end_matches('\\')
+                        .to_ascii_lowercase()
+                        != system_drive
+                }),
+        );
     }
-    #[cfg(target_os = "macos")]
-    {
-        std::env::var_os("HOME").map(PathBuf::from).into_iter().collect()
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        Vec::new()
-    }
+
+    paths.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+    paths.dedup_by(|left, right| left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy()));
+    paths
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
 }

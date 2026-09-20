@@ -113,6 +113,7 @@ pub struct AppInfo {
     pub name: String,
     pub icon: String,
     pub start: String,
+    pub executable: String,
 }
 
 pub fn get_all_app() -> Vec<AppInfo> {
@@ -162,7 +163,13 @@ pub fn get_all_app() -> Vec<AppInfo> {
                 continue;
             }
             let store: IPropertyStore = store.unwrap();
-            let count = store.GetCount().unwrap();
+            let count = match store.GetCount() {
+                Ok(count) => count,
+                Err(error) => {
+                    debug!("failed to read AppsFolder property count: {error}");
+                    continue;
+                }
+            };
             let mut app = AppInfo::default();
             let mut icon = String::new();
             let mut pack = String::new();
@@ -173,13 +180,19 @@ pub fn get_all_app() -> Vec<AppInfo> {
                 if ret.is_err() {
                     continue;
                 }
-                let pk_name = PSGetNameFromPropertyKey(&pk).unwrap();
+                let pk_name = match PSGetNameFromPropertyKey(&pk) {
+                    Ok(name) => name,
+                    Err(_) => continue,
+                };
                 let k = String::from_utf16_lossy(pk_name.as_wide());
-                let mut value = store.GetValue(&pk).unwrap();
+                let mut value = match store.GetValue(&pk) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
                 let mut arr = [0; 1024];
                 let _ = PropVariantToString(&value, &mut arr);
                 let _ = PropVariantClear(&mut value);
-                let pos = arr.iter().position(|c| *c == 0).unwrap();
+                let pos = arr.iter().position(|c| *c == 0).unwrap_or(arr.len());
                 let v = String::from_utf16_lossy(&arr[0..pos]);
                 // println!("{}={}", &k, &v);
                 // if app.name == "SQL Shell (psql)" {
@@ -201,16 +214,25 @@ pub fn get_all_app() -> Vec<AppInfo> {
                     icon = v;
                 }
             }
-            //跳过卸载软件
-            if target.to_lowercase().contains("uninstall") {
+            let target_lower = target.to_ascii_lowercase();
+            // 跳过卸载入口和 Shell 中明显不是可启动应用的文件。
+            if target_lower.contains("uninstall") || target_lower.contains("unins") {
                 continue;
             }
-            //跳过非可执行文件
-            if target.len() > 0
-                && !(target.ends_with(".exe")
-                    || target.ends_with(".msc")
-                    || target.ends_with(".bat"))
-            {
+            let target_is_launchable = target.is_empty()
+                || target_lower.ends_with(".exe")
+                || target_lower.ends_with(".msc")
+                || target_lower.ends_with(".bat");
+            if !target_is_launchable {
+                continue;
+            }
+            if !target.is_empty() {
+                app.executable = target.clone();
+                if app.start.is_empty() {
+                    app.start = target.clone();
+                }
+            }
+            if app.name.trim().is_empty() || app.start.trim().is_empty() {
                 continue;
             }
             //获取包图标
@@ -219,8 +241,7 @@ pub fn get_all_app() -> Vec<AppInfo> {
                 app.icon = match_icon_path(icon.as_path());
             }
             //exe程序优先
-            if target.ends_with(".exe") {
-                app.start = target.clone();
+            if target_lower.ends_with(".exe") {
                 let icon_save_path = Path::new(&ico_path);
                 let icon_save_path = icon_save_path.join(&app.name);
                 //图标不存在, 并且没有缓存
@@ -236,16 +257,14 @@ pub fn get_all_app() -> Vec<AppInfo> {
                 } else {
                     app.icon = icon_save_path.to_string_lossy().to_string();
                 }
-            } else if target.ends_with(".msc") {
-                app.start = target.clone();
+            } else if target_lower.ends_with(".msc") {
                 let icon_save_path = Path::new(&ico_path);
                 let icon_save_path = icon_save_path.join(&app.name);
                 if !icon_save_path.exists() {
                     msc_icon(&target, icon_save_path.to_str().unwrap());
                 }
                 app.icon = icon_save_path.to_string_lossy().to_string();
-            } else if target.ends_with(".bat") {
-                app.start = target.clone();
+            } else if target_lower.ends_with(".bat") {
                 let icon_save_path = Path::new(&ico_path);
                 let icon_save_path = icon_save_path.join(&app.name);
                 //图标不存在, 并且没有缓存
@@ -272,10 +291,18 @@ pub fn get_all_app() -> Vec<AppInfo> {
 }
 
 fn match_icon_path(icon: &Path) -> String {
-    let parent = icon.parent().unwrap();
-    let name_ext = icon.file_name().unwrap().to_str().unwrap();
-    let name = icon.file_stem().unwrap().to_str().unwrap();
-    let ext = icon.extension().unwrap().to_str().unwrap();
+    let Some(parent) = icon.parent() else {
+        return String::new();
+    };
+    let Some(name_ext) = icon.file_name().and_then(|value| value.to_str()) else {
+        return String::new();
+    };
+    let Some(name) = icon.file_stem().and_then(|value| value.to_str()) else {
+        return String::new();
+    };
+    let Some(ext) = icon.extension().and_then(|value| value.to_str()) else {
+        return String::new();
+    };
     let mut image_size = 0;
     let r_size = regex::Regex::new(r"(\d+)").unwrap();
 

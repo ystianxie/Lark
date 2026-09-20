@@ -646,6 +646,35 @@ impl IndexSQL {
         Ok(())
     }
 
+    pub fn replace_discovered_app_indexes(&mut self, paths: Vec<FileIndex>) -> Result<usize> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM app_index WHERE is_custom = 0", [])?;
+        let inserted = {
+            let mut stmt = tx.prepare(
+                r#"
+                INSERT INTO app_index (title, path, desc, icon, pinyin, abb, type, md5, is_custom)
+                SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'app', ?7, 0
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM app_index
+                    WHERE replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
+                )
+                "#,
+            )?;
+            let mut inserted = 0;
+            for app in paths {
+                let md5 = string_factory::md5(&app.path);
+                inserted += stmt.execute(rusqlite::params![
+                    app.title, app.path, app.desc, app.icon, app.pinyin, app.abb, md5,
+                ])?;
+            }
+            inserted
+        };
+        tx.commit()?;
+        Ok(inserted)
+    }
+
     pub fn upsert_custom_app_index(&mut self, app: &FileIndex) -> Result<()> {
         let md5 = string_factory::md5(&app.path);
         let tx = self
@@ -1031,11 +1060,32 @@ mod file_search_tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE file_index (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, path TEXT NOT NULL UNIQUE, desc TEXT, icon TEXT, pinyin TEXT, abb TEXT, type TEXT, md5 TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, create_time INTEGER);").unwrap();
         let mut db = IndexSQL { conn };
-        let file = FileIndex { title: "a.txt".into(), path: "a.txt".into(), file_type: "txt".into(), ..Default::default() };
-        db.apply_file_changes(&[FileIndexChange::Upsert(file.clone())]).unwrap();
-        db.apply_file_changes(&[FileIndexChange::Rename { from: "a.txt".into(), to: FileIndex { path: "b.txt".into(), title: "b.txt".into(), ..file.clone() } }]).unwrap();
-        db.apply_file_changes(&[FileIndexChange::Remove { path: "b.txt".into(), recursive: false }]).unwrap();
-        let count: i64 = db.conn.query_row("SELECT COUNT(*) FROM file_index", [], |row| row.get(0)).unwrap();
+        let file = FileIndex {
+            title: "a.txt".into(),
+            path: "a.txt".into(),
+            file_type: "txt".into(),
+            ..Default::default()
+        };
+        db.apply_file_changes(&[FileIndexChange::Upsert(file.clone())])
+            .unwrap();
+        db.apply_file_changes(&[FileIndexChange::Rename {
+            from: "a.txt".into(),
+            to: FileIndex {
+                path: "b.txt".into(),
+                title: "b.txt".into(),
+                ..file.clone()
+            },
+        }])
+        .unwrap();
+        db.apply_file_changes(&[FileIndexChange::Remove {
+            path: "b.txt".into(),
+            recursive: false,
+        }])
+        .unwrap();
+        let count: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM file_index", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -1143,6 +1193,45 @@ mod app_index_tests {
         let rows = db.list_custom_app_indexes().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].title, "Custom");
+    }
+
+    #[test]
+    fn replacing_discovered_apps_is_atomic_and_preserves_custom_priority() {
+        let mut db = test_index();
+        db.conn
+            .execute(
+                "INSERT INTO app_index (title, path, md5, is_custom) VALUES ('Old auto', 'C:\\old.exe', 'a', 0), ('Custom', 'C:\\custom.exe', 'b', 1)",
+                [],
+            )
+            .unwrap();
+
+        db.replace_discovered_app_indexes(vec![
+            FileIndex {
+                title: "New auto".to_string(),
+                path: r"C:\new.exe".to_string(),
+                ..Default::default()
+            },
+            FileIndex {
+                title: "Scanner duplicate".to_string(),
+                path: r"c:/CUSTOM.exe".to_string(),
+                ..Default::default()
+            },
+        ])
+        .unwrap();
+
+        let rows: Vec<(String, String, i64)> = db
+            .conn
+            .prepare("SELECT title, path, is_custom FROM app_index ORDER BY is_custom DESC, title")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, "Custom");
+        assert_eq!(rows[0].2, 1);
+        assert_eq!(rows[1].0, "New auto");
+        assert_eq!(rows[1].2, 0);
     }
 
     #[test]

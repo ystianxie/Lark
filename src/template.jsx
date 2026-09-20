@@ -363,19 +363,20 @@ const clipboardPluginComponent = {
     data: "clipboardComponent"
 };
 
-const FileIndexComponent = {
-    icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
-    title: '重建文件索引',
-    desc: 'Rebuild Index',
-    type: "action",
-    action: "rebuildFileIndex",
-};
 const AppIndexComponent = {
     icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
     title: '重建应用索引',
     desc: 'Rebuild Index',
     type: "action",
     action: "rebuildAppIndex",
+};
+
+const FileIndexComponent = {
+    icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
+    title: '重建文件索引',
+    desc: 'Rebuild Index',
+    type: "action",
+    action: "rebuildFileIndex",
 };
 
 const calcComponent = (result, input) => {

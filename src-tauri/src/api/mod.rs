@@ -8,6 +8,8 @@ pub mod listary_jump;
 pub mod proxy_pool;
 pub mod shell;
 pub mod snippets;
+#[cfg(target_os = "windows")]
+pub mod windows_apps;
 
 pub mod rclip;
 pub mod wclip;

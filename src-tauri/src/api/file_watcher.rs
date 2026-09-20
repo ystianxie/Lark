@@ -224,12 +224,23 @@ fn normalize(event: Event, config: &WatchConfig) -> Vec<FileEvent> {
         if event.paths.len() >= 2 {
             let from = event.paths[0].clone();
             let to = event.paths[1].clone();
-            if !is_excluded(&from, config) || !is_excluded(&to, config) {
-                return vec![FileEvent {
+            let from_excluded = is_excluded(&from, config);
+            let to_excluded = is_excluded(&to, config);
+            return match (from_excluded, to_excluded) {
+                (false, false) => vec![FileEvent {
                     kind: FileEventKind::Renamed { from },
                     path: to,
-                }];
-            }
+                }],
+                (false, true) => vec![FileEvent {
+                    kind: FileEventKind::Removed,
+                    path: from,
+                }],
+                (true, false) => vec![FileEvent {
+                    kind: FileEventKind::Created,
+                    path: to,
+                }],
+                (true, true) => Vec::new(),
+            };
         }
         return Vec::new();
     }
@@ -247,7 +258,7 @@ fn normalize(event: Event, config: &WatchConfig) -> Vec<FileEvent> {
     event
         .paths
         .into_iter()
-        .filter(|path| matches!(&kind, FileEventKind::Removed) || !is_excluded(path, config))
+        .filter(|path| !is_excluded(path, config))
         .map(|path| FileEvent {
             kind: kind.clone(),
             path,
@@ -256,7 +267,12 @@ fn normalize(event: Event, config: &WatchConfig) -> Vec<FileEvent> {
 }
 
 pub fn is_excluded(path: &Path, config: &WatchConfig) -> bool {
-    if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('$') || n.starts_with('.')) {
+    if path.components().any(|component| match component {
+        std::path::Component::Normal(name) => name
+            .to_str()
+            .is_some_and(|name| name.starts_with('$') || name.starts_with('.')),
+        _ => false,
+    }) {
         return true;
     }
     if config.excluded_paths.iter().any(|excluded| path_is_under(path, excluded)) {
@@ -272,9 +288,20 @@ pub fn is_excluded(path: &Path, config: &WatchConfig) -> bool {
         })
 }
 
-fn path_is_under(path: &Path, excluded: &Path) -> bool {
+pub(crate) fn path_is_under(path: &Path, excluded: &Path) -> bool {
     let path = normalize_compare_path(path);
     let excluded = normalize_compare_path(excluded);
+
+    if let Some(relative) = excluded.strip_prefix("*\\") {
+        if relative.is_empty() {
+            return false;
+        }
+        let needle = format!("\\{relative}");
+        return path == relative
+            || path.ends_with(&needle)
+            || path.contains(&(needle + "\\"));
+    }
+
     path == excluded || path.starts_with(&(excluded + "\\"))
 }
 
@@ -358,10 +385,66 @@ mod tests {
     }
 
     #[test]
+    fn rename_events_respect_excluded_paths() {
+        let config = WatchConfig {
+            excluded_paths: vec![PathBuf::from(r"C:\included\excluded")],
+            ..Default::default()
+        };
+
+        let into_excluded = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(PathBuf::from(r"C:\included\file.txt"))
+            .add_path(PathBuf::from(r"C:\included\excluded\file.txt"));
+        assert!(matches!(
+            normalize(into_excluded, &config).as_slice(),
+            [FileEvent { kind: FileEventKind::Removed, path }]
+                if path == Path::new(r"C:\included\file.txt")
+        ));
+
+        let out_of_excluded = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(PathBuf::from(r"C:\included\excluded\file.txt"))
+            .add_path(PathBuf::from(r"C:\included\file.txt"));
+        assert!(matches!(
+            normalize(out_of_excluded, &config).as_slice(),
+            [FileEvent { kind: FileEventKind::Created, path }]
+                if path == Path::new(r"C:\included\file.txt")
+        ));
+    }
+
+    #[test]
+    fn remove_events_in_excluded_paths_are_filtered() {
+        let config = WatchConfig {
+            excluded_paths: vec![PathBuf::from(r"C:\ProgramData")],
+            ..Default::default()
+        };
+        let event = Event::new(EventKind::Remove(notify::event::RemoveKind::Any))
+            .add_path(PathBuf::from(r"C:\ProgramData\Windhawk\mod-status"));
+
+        assert!(normalize(event, &config).is_empty());
+    }
+    #[test]
+    fn wildcard_excluded_paths_match_component_sequences() {
+        assert!(path_is_under(
+            Path::new(r"D:\Project\Lark\src-tauri\target\debug\config"),
+            Path::new(r"*/src-tauri/target"),
+        ));
+        assert!(path_is_under(
+            Path::new(r"D:\Project\Lark\node_modules\pkg"),
+            Path::new(r"*/node_modules"),
+        ));
+        assert!(!path_is_under(
+            Path::new(r"D:\Project\Lark\src-tauri\target2\debug"),
+            Path::new(r"*/src-tauri/target"),
+        ));
+    }
+
+    #[test]
     fn excluded_paths_and_extensions_are_filtered() {
         let config = WatchConfig { excluded_paths: vec![PathBuf::from("target")], excluded_extensions: vec!["tmp".into()], ..Default::default() };
         assert!(is_excluded(Path::new("target/a.txt"), &config));
         assert!(is_excluded(Path::new("a.TMP"), &config));
+        assert!(is_excluded(Path::new(r"project\.git\config"), &config));
+        assert!(is_excluded(Path::new(r"project\.cache\data.txt"), &config));
+        assert!(!is_excluded(Path::new(r"project\visible\data.txt"), &config));
         assert!(!is_excluded(Path::new("a.rs"), &config));
     }
 }
