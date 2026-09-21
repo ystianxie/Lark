@@ -979,6 +979,49 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
             });
         }
 
+        // AppsFolder omits a number of traditional Start Menu shortcuts (for
+        // example per-user installers and portable tools). Treat both the
+        // user's and the common Start Menu as secondary sources. Resolve
+        // shortcuts to their real launch target and reuse the same filters and
+        // identity de-duplication as desktop/portable discovery.
+        let mut start_menu_roots = Vec::new();
+        if let Some(app_data) = std::env::var_os("APPDATA") {
+            start_menu_roots.push(PathBuf::from(app_data).join(r"Microsoft\Windows\Start Menu\Programs"));
+        }
+        if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+            start_menu_roots.push(PathBuf::from(program_data).join(r"Microsoft\Windows\Start Menu\Programs"));
+        }
+        start_menu_roots.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+        start_menu_roots.dedup_by(|left, right| left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy()));
+        for root in start_menu_roots.iter().filter(|path| path.is_dir()) {
+            println!("扫描开始菜单应用: {}", root.display());
+            for app in get_apps_with_depth(&root.to_string_lossy(), true, true, false, &[]) {
+                let (Some(title), Some(path)) = (app.get("title"), app.get("data")) else { continue; };
+                let extension = Path::new(path).extension().and_then(|value| value.to_str());
+                // Start Menu is also used for scripts and MMC consoles. Keep
+                // concrete executables and RDP launch entries; exclude script
+                // and system-management file types from the app index.
+                if !matches!(extension, Some(value) if value.eq_ignore_ascii_case("exe") || value.eq_ignore_ascii_case("rdp")) {
+                    continue;
+                }
+                let key = normalize_app_launch_key(path);
+                if title.trim().is_empty() || key.is_empty() || is_portable_auxiliary_app(title, path) || !seen.insert(key) {
+                    continue;
+                }
+                let (pinyin, abb) = text_to_pinyin(title);
+                items.push(FileIndex {
+                    title: title.clone(),
+                    path: path.clone(),
+                    desc: app.get("desc").cloned().unwrap_or_else(|| path.clone()),
+                    icon: read_icon_to_base64(path.clone()),
+                    pinyin,
+                    abb,
+                    file_type: "app".to_string(),
+                    ..Default::default()
+                });
+            }
+        }
+
         // AppsFolder does not include every shortcut or standalone executable that users
         // place on the desktop. Scan the current and public desktops non-recursively as
         // a secondary source, after registered applications and before portable roots.

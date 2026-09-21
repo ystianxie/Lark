@@ -22,7 +22,9 @@ use windows::{
             Shell::{
                 Common::ITEMIDLIST, SHCNRF_InterruptLevel, SHCNRF_ShellLevel,
                 SHChangeNotifyDeregister, SHChangeNotifyEntry, SHChangeNotifyRegister,
-                SHParseDisplayName, SHCNE_ALLEVENTS,
+                SHParseDisplayName, SHCNE_ASSOCCHANGED, SHCNE_CREATE, SHCNE_DELETE,
+                SHCNE_MKDIR, SHCNE_RENAMEFOLDER, SHCNE_RENAMEITEM, SHCNE_RMDIR,
+                SHCNE_UPDATEITEM,
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
@@ -39,6 +41,16 @@ const SHELL_CHANGE_MESSAGE: u32 = WM_APP + 1;
 const STOP_MESSAGE: u32 = WM_APP + 2;
 #[cfg(target_os = "windows")]
 const DEBOUNCE: Duration = Duration::from_secs(2);
+
+#[cfg(target_os = "windows")]
+const APP_INDEX_SHELL_EVENTS: u32 = SHCNE_ASSOCCHANGED.0
+    | SHCNE_CREATE.0
+    | SHCNE_DELETE.0
+    | SHCNE_MKDIR.0
+    | SHCNE_RENAMEFOLDER.0
+    | SHCNE_RENAMEITEM.0
+    | SHCNE_RMDIR.0
+    | SHCNE_UPDATEITEM.0;
 
 #[cfg(target_os = "windows")]
 static CHANGE_SENDER: OnceLock<Mutex<Option<mpsc::SyncSender<RefreshRequest>>>> = OnceLock::new();
@@ -237,7 +249,7 @@ unsafe fn create_shell_listener() -> Result<(HWND, u32, *mut ITEMIDLIST), String
     let registration_id = SHChangeNotifyRegister(
         hwnd,
         SHCNRF_ShellLevel | SHCNRF_InterruptLevel,
-        SHCNE_ALLEVENTS.0 as i32,
+        APP_INDEX_SHELL_EVENTS as i32,
         SHELL_CHANGE_MESSAGE,
         1,
         &entry,
@@ -258,6 +270,13 @@ unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if message == SHELL_CHANGE_MESSAGE {
+        // Shell notifications share one window message. Only changes that can
+        // alter the AppsFolder contents should trigger the expensive rebuild;
+        // disk/free-space and unrelated visual notifications are ignored.
+        let event = wparam.0 as u32;
+        if event & APP_INDEX_SHELL_EVENTS == 0 {
+            return LRESULT(0);
+        }
         if let Some(sender) = CHANGE_SENDER.get().and_then(|value| value.lock().ok()) {
             if let Some(sender) = sender.as_ref() {
                 let _ = sender.try_send(RefreshRequest::ShellChanged);
