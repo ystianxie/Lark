@@ -21,7 +21,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use std::{default, panic};
@@ -343,18 +343,7 @@ fn is_common_app_excluded_dir(entry: &fs::DirEntry) -> bool {
 
 #[cfg(target_os = "windows")]
 fn is_auxiliary_app_file(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    [
-        "uninstall",
-        "updater",
-        "crashpad_handler",
-        "uninst",
-        "unins00",
-        "update",
-        "upgrade",
-    ]
-    .iter()
-    .any(|keyword| name.contains(keyword))
+    is_portable_auxiliary_app(name, name)
 }
 
 fn get_apps_with_depth(
@@ -779,7 +768,7 @@ fn file_scanning(
     roots: Vec<String>,
     skip_dirs: Vec<String>,
     skip_extensions: Vec<String>,
-) {
+) -> Result<(), String> {
     fn is_hidden(entry: &DirEntry) -> bool {
         entry
             .file_name()
@@ -792,9 +781,14 @@ fn file_scanning(
             .path()
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| skip_extensions.iter().any(|value| {
-                value.trim().trim_start_matches('.').eq_ignore_ascii_case(ext)
-            }))
+            .is_some_and(|ext| {
+                skip_extensions.iter().any(|value| {
+                    value
+                        .trim()
+                        .trim_start_matches('.')
+                        .eq_ignore_ascii_case(ext)
+                })
+            })
     }
 
     fn should_skip_dir(entry: &DirEntry, skip_dirs: &[String]) -> bool {
@@ -818,10 +812,7 @@ fn file_scanning(
         let mut index_db = IndexSQL::new();
         let generation = match index_db.begin_file_generation() {
             Ok(generation) => generation,
-            Err(error) => {
-                eprintln!("无法开始文件索引代次: {error}");
-                return;
-            }
+            Err(error) => return Err(format!("无法开始文件索引代次: {error}")),
         };
         for root in roots {
             let walker = WalkDir::new(root).follow_links(false).into_iter();
@@ -866,8 +857,7 @@ fn file_scanning(
                     let current = std::mem::take(&mut *batch);
                     drop(batch);
                     if let Err(error) = index_db.insert_file_generation(generation, &current) {
-                        eprintln!("写入文件索引失败: {error}");
-                        return;
+                        return Err(format!("写入文件索引失败: {error}"));
                     }
                     if let Some(window) = &main_window {
                         let _ = window.emit("file_index_count", current.len());
@@ -880,15 +870,21 @@ fn file_scanning(
             .insert_file_generation(generation, &remaining)
             .and_then(|_| index_db.commit_file_generation(generation))
         {
-            eprintln!("提交文件索引失败: {error}");
+            return Err(format!("提交文件索引失败: {error}"));
         } else if let Some(window) = &main_window {
             let _ = window.emit("file_index_complete", ());
         }
     }
-    println!("磁盘扫描完成！")
+    println!("磁盘扫描完成！");
+    Ok(())
 }
 
-pub fn create_app_index_to_sql(app_handle: AppHandle) {
+pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
+    static APP_INDEX_REBUILD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _rebuild_guard = APP_INDEX_REBUILD_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "应用索引重建锁异常".to_string())?;
     let config = config::Config::read_local_config().unwrap().base;
     let mut index_db = IndexSQL::new();
 
@@ -921,8 +917,25 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
 
     #[cfg(target_os = "windows")]
     let items = {
-        let registered = crate::api::windows_apps::get_all_app();
+        let registered = crate::api::windows_apps::get_all_app()?;
+        // A registered Win32 application's concrete executable directory is a
+        // high-confidence application boundary. Portable scanning must not
+        // re-publish every internal helper executable from that directory.
+        let registered_app_dirs = registered
+            .iter()
+            .filter_map(|app| {
+                let executable = app.executable.trim();
+                if executable.is_empty() {
+                    return None;
+                }
+                Path::new(executable)
+                    .parent()
+                    .map(|parent| normalize_app_launch_key(&parent.to_string_lossy()))
+                    .filter(|parent| !parent.is_empty())
+            })
+            .collect::<Vec<_>>();
         let mut seen = HashSet::new();
+        let mut seen_app_names = HashSet::new();
         let mut items = Vec::new();
 
         // AppsFolder is Windows' user-facing application catalog. Insert it first so
@@ -938,6 +951,9 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
             } else {
                 app.executable.as_str()
             };
+            if is_portable_auxiliary_app(title, identity) {
+                continue;
+            }
             let key = normalize_app_launch_key(identity);
             if key.is_empty() || !seen.insert(key) {
                 continue;
@@ -950,6 +966,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
             } else {
                 String::new()
             };
+            seen_app_names.insert(normalize_app_product_key(title));
             items.push(FileIndex {
                 title: title.to_string(),
                 path: start.to_string(),
@@ -994,7 +1011,11 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
                     continue;
                 }
                 let key = normalize_app_launch_key(path);
-                if title.trim().is_empty() || key.is_empty() || !seen.insert(key) {
+                if title.trim().is_empty()
+                    || key.is_empty()
+                    || is_portable_auxiliary_app(title, path)
+                    || !seen.insert(key)
+                {
                     continue;
                 }
                 let (pinyin, abb) = text_to_pinyin(title);
@@ -1010,6 +1031,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
                 });
             }
         }
+        let mut portable_candidates = Vec::new();
         for portable_root in config
             .local_app_search_paths
             .iter()
@@ -1026,30 +1048,61 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
                 let (Some(title), Some(path)) = (app.get("title"), app.get("data")) else {
                     continue;
                 };
-                if !Path::new(path)
+                let path_obj = Path::new(path);
+                if !path_obj
                     .extension()
-                    .and_then(|extension| extension.to_str())
-                    .map(|extension| extension.eq_ignore_ascii_case("exe"))
-                    .unwrap_or(false)
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+                    || is_portable_auxiliary_app(title, path)
+                    || is_under_registered_app_dir(path, &registered_app_dirs)
                 {
                     continue;
                 }
-                let key = normalize_app_launch_key(path);
-                if title.trim().is_empty() || key.is_empty() || !seen.insert(key) {
-                    continue;
-                }
-                let (pinyin, abb) = text_to_pinyin(title);
-                items.push(FileIndex {
-                    title: title.clone(),
-                    path: path.clone(),
-                    desc: app.get("desc").cloned().unwrap_or_else(|| path.clone()),
-                    icon: read_icon_to_base64(path.clone()),
-                    pinyin,
-                    abb,
-                    file_type: "app".to_string(),
-                    ..Default::default()
-                });
+                portable_candidates.push((
+                    path.clone(),
+                    title.clone(),
+                    app.get("desc").cloned().unwrap_or_else(|| path.clone()),
+                ));
             }
+        }
+        portable_candidates.sort_by_key(|(path, _, _)| {
+            (
+                Path::new(path).components().count(),
+                normalize_app_launch_key(path),
+            )
+        });
+        let mut portable_names = HashSet::new();
+        for (path, title, desc) in portable_candidates {
+            let key = normalize_app_launch_key(&path);
+            let product_key = normalize_app_product_key(
+                Path::new(&path)
+                    .file_stem()
+                    .and_then(|v| v.to_str())
+                    .unwrap_or(&title),
+            );
+            let family_key = portable_family_key(&path, &title);
+            if key.is_empty()
+                || product_key.is_empty()
+                || family_key.is_empty()
+                || seen.contains(&key)
+                || seen_app_names.contains(&product_key)
+                || !portable_names.insert(family_key)
+            {
+                continue;
+            }
+            seen.insert(key);
+            seen_app_names.insert(product_key);
+            let (pinyin, abb) = text_to_pinyin(&title);
+            items.push(FileIndex {
+                title,
+                path: path.clone(),
+                desc,
+                icon: read_icon_to_base64(path),
+                pinyin,
+                abb,
+                file_type: "app".to_string(),
+                ..Default::default()
+            });
         }
         items
     };
@@ -1081,11 +1134,245 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) {
 
     let discovered = items.len();
     println!("应用索引扫描完成，准备写入 {discovered} 条自动应用记录");
-    match index_db.replace_discovered_app_indexes(items) {
-        Ok(inserted) => {
-            println!("应用索引重建完成：扫描 {discovered} 条，实际写入 {inserted} 条自动应用记录")
+    let inserted = index_db
+        .replace_discovered_app_indexes(items)
+        .map_err(|error| format!("应用索引重建失败: {error}"))?;
+    println!("应用索引重建完成：扫描 {discovered} 条，实际写入 {inserted} 条自动应用记录");
+    if let Some(window) = app_handle.get_window("skylark") {
+        let _ = window.emit("app_index_complete", discovered);
+    }
+    config::save_index_initialization_flags(Some(true), None)
+        .map_err(|error| format!("保存应用索引初始化状态失败: {error}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_app_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace(['_', '-'], " ")
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_app_product_key(value: &str) -> String {
+    let normalized = normalize_app_name(value);
+    let compact = normalized.split_whitespace().collect::<String>();
+    let compact = compact.trim_end_matches("32").trim_end_matches("64");
+    let bytes = compact.as_bytes();
+    let mut cut = compact.len();
+    let mut digit_count = 0;
+    for index in (0..bytes.len()).rev() {
+        if bytes[index].is_ascii_digit() || bytes[index] == b'.' {
+            if bytes[index].is_ascii_digit() {
+                digit_count += 1;
+            }
+            cut = index;
+        } else {
+            break;
         }
-        Err(error) => eprintln!("应用索引重建失败: {error}"),
+    }
+    if digit_count >= 2 && cut > 3 {
+        compact[..cut].to_string()
+    } else {
+        compact.to_string()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn portable_family_key(path: &str, title: &str) -> String {
+    let parent = Path::new(path).parent();
+    let parent_key = parent
+        .into_iter()
+        .flat_map(|path| path.components())
+        .filter_map(|component| component.as_os_str().to_str())
+        .filter(|component| !is_version_directory_name(component))
+        .map(normalize_app_product_key)
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>()
+        .join("\\");
+    let executable_key = normalize_app_product_key(
+        Path::new(path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(title),
+    );
+    format!("{parent_key}|{executable_key}")
+}
+
+#[cfg(target_os = "windows")]
+fn is_version_directory_name(value: &str) -> bool {
+    let value = value.trim().trim_start_matches(['v', 'V']);
+    value.contains('.')
+        && value.split('.').all(|part| {
+            !part.is_empty() && part.chars().all(|character| character.is_ascii_digit())
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn is_under_registered_app_dir(path: &str, registered_dirs: &[String]) -> bool {
+    let path = normalize_app_launch_key(path);
+    if path.is_empty() {
+        return false;
+    }
+    registered_dirs
+        .iter()
+        .any(|directory| path == *directory || path.starts_with(&format!("{directory}\\")))
+}
+
+#[cfg(target_os = "windows")]
+fn is_portable_auxiliary_app(title: &str, path: &str) -> bool {
+    const AUXILIARY: &[&str] = &[
+        "agent",
+        "external",
+        "service",
+        "svr",
+        "helper",
+        "launcher",
+        "swap",
+        "crashpad",
+        "updater",
+        "uninstaller",
+        "uninstall",
+        "uninst",
+        "unins",
+        "readme",
+        "old",
+        "runtime",
+        "worker",
+        "bootstrap",
+    ];
+    let values = [
+        title,
+        Path::new(path)
+            .file_stem()
+            .and_then(|v| v.to_str())
+            .unwrap_or(""),
+    ];
+    values.iter().any(|value| {
+        let lower = value.to_ascii_lowercase();
+        if [
+            "qmbrowser",
+            "qmweiyun",
+            "desktopdynamiclyric",
+            "qmdesktopanimation",
+        ]
+        .contains(&lower.as_str())
+        {
+            return true;
+        }
+        let tokens = lower.split(|c: char| !c.is_ascii_alphanumeric());
+        if tokens.clone().any(|token| AUXILIARY.contains(&token)) {
+            return true;
+        }
+        // Also catch vendor naming such as QQMusicUp or ProductAgent without
+        // treating an unrelated product like ServerManager as auxiliary.
+        [
+            "agent",
+            "external",
+            "service",
+            "svr",
+            "helper",
+            "launcher",
+            "updater",
+            "swap",
+            "uninst",
+            "unins",
+            "musicup",
+            "driverhelper",
+            "desktopdynamiclyric",
+            "desktopanimation",
+            "projection",
+            "qmbrowser",
+            "qmweiyun",
+        ]
+        .iter()
+        .any(|suffix| lower.len() > suffix.len() + 3 && lower.ends_with(suffix))
+    })
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod app_scan_tests {
+    use super::{
+        is_portable_auxiliary_app, is_under_registered_app_dir, normalize_app_product_key,
+        portable_family_key,
+    };
+
+    #[test]
+    fn product_keys_keep_jetbrains_series_separate() {
+        assert_eq!(normalize_app_product_key("PyCharm 2026.1"), "pycharm");
+        assert_eq!(normalize_app_product_key("RustRover2026.1"), "rustrover");
+        assert_ne!(
+            normalize_app_product_key("PyCharm 2026.1"),
+            normalize_app_product_key("RustRover2026.1")
+        );
+    }
+
+    #[test]
+    fn family_keys_collapse_version_directories_but_keep_jetbrains_products_separate() {
+        assert_eq!(
+            portable_family_key(r"D:\App\Quark\quark.exe", "quark"),
+            portable_family_key(r"D:\App\Quark\7.1.7.975\quark.exe", "quark")
+        );
+        assert_ne!(
+            portable_family_key(
+                r"D:\App\JetBrains\PyCharm 2026.1\pycharm.exe",
+                "PyCharm 2026.1"
+            ),
+            portable_family_key(
+                r"D:\App\JetBrains\RustRover2026.1\rustrover.exe",
+                "RustRover2026.1"
+            )
+        );
+    }
+
+    #[test]
+    fn registered_app_directory_suppresses_internal_executables_but_not_siblings() {
+        let registered_dirs = vec![r"d:\app\qqmusic".to_string()];
+        assert!(is_under_registered_app_dir(
+            r"D:\App\QQMusic\QQMusicUp.exe",
+            &registered_dirs
+        ));
+        assert!(is_under_registered_app_dir(
+            r"D:\App\QQMusic\qmbrowser\qmbrowser.exe",
+            &registered_dirs
+        ));
+        assert!(!is_under_registered_app_dir(
+            r"D:\App\JetBrains\RustRover2026.1\rustrover.exe",
+            &registered_dirs
+        ));
+        assert!(!is_under_registered_app_dir(
+            r"D:\App\QQMusic2\player.exe",
+            &registered_dirs
+        ));
+    }
+
+    #[test]
+    fn auxiliary_rules_cover_known_background_processes_without_server_manager_false_positive() {
+        assert!(is_portable_auxiliary_app(
+            "QQMusicUp",
+            r"C:\Apps\QQMusicUp.exe"
+        ));
+        for name in [
+            "DesktopDynamicLyric",
+            "QMDesktopAnimation",
+            "QMDriverHelperx64",
+            "QMWeiyun",
+            "QQMusicUninst",
+            "StartDesktopProjection32",
+            "StartDesktopProjectionForXP",
+            "qmbrowser",
+        ] {
+            assert!(is_portable_auxiliary_app(
+                name,
+                &format!(r"C:\Apps\{name}.exe")
+            ));
+        }
+        assert!(is_portable_auxiliary_app(
+            "Quark PWA Launcher",
+            r"C:\Apps\quark_pwa_launcher.exe"
+        ));
+        assert!(!is_portable_auxiliary_app(
+            "ServerManager",
+            r"C:\Apps\ServerManager.exe"
+        ));
     }
 }
 
@@ -1164,7 +1451,7 @@ pub fn delete_custom_app_index(id: i64) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-pub fn create_file_index_to_sql(app_handle: AppHandle) {
+pub fn create_file_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
     let config = config::Config::read_local_config().unwrap().base;
     #[cfg(target_os = "macos")]
     {
@@ -1186,7 +1473,12 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
                     if dir.path().is_dir() {
                         let skip_paths = config.local_file_search_exclude_paths.clone();
                         let skip_extensions = config.local_file_search_exclude_types.clone();
-                        file_scanning(app_handle.clone(), &dir_path, skip_paths, skip_extensions);
+                        file_scanning(
+                            app_handle.clone(),
+                            vec![dir_path],
+                            skip_paths,
+                            skip_extensions,
+                        )?;
                     } else {
                         // 文件即入库
                         let title = dir.file_name().to_str().unwrap_or("").to_string();
@@ -1220,14 +1512,20 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) {
             .into_iter()
             .filter(|path| Path::new(path).is_dir())
             .collect::<Vec<_>>();
+        if roots.is_empty() {
+            return Err("没有可用的文件扫描路径".to_string());
+        }
         println!("扫描配置目录: {:?}", roots);
         file_scanning(
             app_handle.clone(),
             roots,
             config.local_file_search_exclude_paths.clone(),
             config.local_file_search_exclude_types.clone(),
-        );
+        )?;
     }
+    config::save_index_initialization_flags(None, Some(true))
+        .map_err(|error| format!("保存文件索引初始化状态失败: {error}"))?;
+    Ok(())
 }
 
 pub(crate) fn is_process_running(process_name: &str) -> bool {

@@ -9,6 +9,8 @@ pub mod proxy_pool;
 pub mod shell;
 pub mod snippets;
 #[cfg(target_os = "windows")]
+pub mod windows_app_watcher;
+#[cfg(target_os = "windows")]
 pub mod windows_apps;
 
 pub mod rclip;

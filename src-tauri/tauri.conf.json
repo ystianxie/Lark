@@ -68,12 +68,13 @@
     },
     "trayIcon": {
       "iconPath": "icons/icon.ico",
-      "iconAsTemplate": true
+      "iconAsTemplate": true,
+      "showMenuOnLeftClick": false
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": "nsis",
     "icon": [
       "icons/icon-32x32.png",
       "icons/icon-192x192.png",

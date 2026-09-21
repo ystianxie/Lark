@@ -58,9 +58,18 @@ pub struct FileIndex {
 #[derive(Debug, Clone)]
 pub enum FileIndexChange {
     Upsert(FileIndex),
-    Remove { path: String, recursive: bool },
-    RemoveByType { file_type: String, roots: Vec<String> },
-    Rename { from: String, to: FileIndex },
+    Remove {
+        path: String,
+        recursive: bool,
+    },
+    RemoveByType {
+        file_type: String,
+        roots: Vec<String>,
+    },
+    Rename {
+        from: String,
+        to: FileIndex,
+    },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
@@ -398,6 +407,20 @@ impl IndexSQL {
         c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
         let _ = c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         IndexSQL { conn: c }
+    }
+
+    pub fn has_app_indexes(&self) -> Result<bool> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM app_index", [], |row| row.get(0))?;
+        Ok(count > 0)
+    }
+
+    pub fn has_file_indexes(&self) -> Result<bool> {
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM file_index", [], |row| row.get(0))?;
+        Ok(count > 0)
     }
 
     pub fn init() {

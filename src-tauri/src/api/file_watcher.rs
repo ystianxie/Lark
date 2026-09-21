@@ -67,10 +67,17 @@ pub struct FileIndexUpdateService {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub enum IndexStatus { Idle, Rebuilding, IncrementalUpdating, Stale }
+pub enum IndexStatus {
+    Idle,
+    Rebuilding,
+    IncrementalUpdating,
+    Stale,
+}
 
 impl std::fmt::Display for IndexStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{:?}", self) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl FileIndexUpdateService {
@@ -93,20 +100,40 @@ impl FileIndexUpdateService {
         self.sender.clone()
     }
 
-    pub fn begin_rebuild(&self) -> Result<(), String> { self.sender.send(IndexMessage::BeginRebuild).map_err(|e| e.to_string()) }
-    pub fn finish_rebuild(&self) -> Result<(), String> { self.sender.send(IndexMessage::FinishRebuild).map_err(|e| e.to_string()) }
-    pub fn status(&self) -> IndexStatus { *self.status.lock().unwrap() }
+    pub fn begin_rebuild(&self) -> Result<(), String> {
+        self.sender
+            .send(IndexMessage::BeginRebuild)
+            .map_err(|e| e.to_string())
+    }
+    pub fn finish_rebuild(&self) -> Result<(), String> {
+        self.sender
+            .send(IndexMessage::FinishRebuild)
+            .map_err(|e| e.to_string())
+    }
+    pub fn status(&self) -> IndexStatus {
+        *self.status.lock().unwrap()
+    }
     pub fn apply_batches_sync(&self, batches: Vec<Vec<FileIndexChange>>) -> Result<(), String> {
         for batch in batches {
-            self.sender.send(IndexMessage::Batch(batch)).map_err(|e| e.to_string())?;
+            self.sender
+                .send(IndexMessage::Batch(batch))
+                .map_err(|e| e.to_string())?;
         }
         let (tx, rx) = mpsc::channel();
-        self.sender.send(IndexMessage::Flush(tx)).map_err(|e| e.to_string())?;
+        self.sender
+            .send(IndexMessage::Flush(tx))
+            .map_err(|e| e.to_string())?;
         rx.recv().map_err(|e| e.to_string())
     }
 }
 
-pub enum IndexMessage { Batch(Vec<FileIndexChange>), BeginRebuild, FinishRebuild, Flush(Sender<()>), MarkStale }
+pub enum IndexMessage {
+    Batch(Vec<FileIndexChange>),
+    BeginRebuild,
+    FinishRebuild,
+    Flush(Sender<()>),
+    MarkStale,
+}
 
 impl Drop for FileIndexUpdateService {
     fn drop(&mut self) {
@@ -118,13 +145,20 @@ impl Drop for FileIndexUpdateService {
     }
 }
 
-fn run_index_service(receiver: Receiver<IndexMessage>, stop: Arc<Mutex<bool>>, status: Arc<Mutex<IndexStatus>>) {
+fn run_index_service(
+    receiver: Receiver<IndexMessage>,
+    stop: Arc<Mutex<bool>>,
+    status: Arc<Mutex<IndexStatus>>,
+) {
     let mut index = crate::utils::database::IndexSQL::new();
     let mut rebuilding = false;
     let mut pending = Vec::new();
     while !*stop.lock().unwrap() {
         match receiver.recv_timeout(Duration::from_millis(250)) {
-            Ok(IndexMessage::BeginRebuild) => { rebuilding = true; *status.lock().unwrap() = IndexStatus::Rebuilding; }
+            Ok(IndexMessage::BeginRebuild) => {
+                rebuilding = true;
+                *status.lock().unwrap() = IndexStatus::Rebuilding;
+            }
             Ok(IndexMessage::Batch(changes)) if rebuilding => pending.extend(changes),
             Ok(IndexMessage::Batch(changes)) if !changes.is_empty() => {
                 *status.lock().unwrap() = IndexStatus::IncrementalUpdating;
@@ -137,7 +171,11 @@ fn run_index_service(receiver: Receiver<IndexMessage>, stop: Arc<Mutex<bool>>, s
                         break;
                     }
                 }
-                *status.lock().unwrap() = if failed { IndexStatus::Stale } else { IndexStatus::Idle };
+                *status.lock().unwrap() = if failed {
+                    IndexStatus::Stale
+                } else {
+                    IndexStatus::Idle
+                };
             }
             Ok(IndexMessage::FinishRebuild) => {
                 rebuilding = false;
@@ -152,8 +190,12 @@ fn run_index_service(receiver: Receiver<IndexMessage>, stop: Arc<Mutex<bool>>, s
                     *status.lock().unwrap() = IndexStatus::Idle;
                 }
             }
-            Ok(IndexMessage::Flush(done)) => { let _ = done.send(()); }
-            Ok(IndexMessage::MarkStale) => { *status.lock().unwrap() = IndexStatus::Stale; }
+            Ok(IndexMessage::Flush(done)) => {
+                let _ = done.send(());
+            }
+            Ok(IndexMessage::MarkStale) => {
+                *status.lock().unwrap() = IndexStatus::Stale;
+            }
             Ok(IndexMessage::Batch(_)) => {}
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -242,8 +284,11 @@ fn run<F>(
         match rx.recv_timeout(config.debounce) {
             Ok(Ok(event)) => {
                 let normalized = normalize(event.clone(), &config);
-            if !normalized.is_empty() {
-                    println!("[FileWatcher] 原始事件: {:?}, paths={:?}", event.kind, event.paths);
+                if !normalized.is_empty() {
+                    println!(
+                        "[FileWatcher] 原始事件: {:?}, paths={:?}",
+                        event.kind, event.paths
+                    );
                     pending.extend(normalized);
                 }
             }
@@ -315,14 +360,21 @@ pub fn is_excluded(path: &Path, config: &WatchConfig) -> bool {
     }) {
         return true;
     }
-    if config.excluded_paths.iter().any(|excluded| path_is_under(path, excluded)) {
+    if config
+        .excluded_paths
+        .iter()
+        .any(|excluded| path_is_under(path, excluded))
+    {
         return true;
     }
-    path.extension().and_then(|e| e.to_str()).is_some_and(|ext| {
-        config.excluded_extensions.iter().any(|x| {
-            x.trim().trim_start_matches('.').eq_ignore_ascii_case(ext)
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            config
+                .excluded_extensions
+                .iter()
+                .any(|x| x.trim().trim_start_matches('.').eq_ignore_ascii_case(ext))
         })
-    })
 }
 
 pub(crate) fn path_is_under(path: &Path, excluded: &Path) -> bool {
@@ -334,9 +386,7 @@ pub(crate) fn path_is_under(path: &Path, excluded: &Path) -> bool {
             return false;
         }
         let needle = format!("\\{relative}");
-        return path == relative
-            || path.ends_with(&needle)
-            || path.contains(&(needle + "\\"));
+        return path == relative || path.ends_with(&needle) || path.contains(&(needle + "\\"));
     }
 
     path == excluded || path.starts_with(&(excluded + "\\"))
@@ -344,8 +394,12 @@ pub(crate) fn path_is_under(path: &Path, excluded: &Path) -> bool {
 
 fn normalize_compare_path(path: &Path) -> String {
     let mut value = path.to_string_lossy().replace('/', "\\");
-    while value.ends_with('\\') && value.len() > 3 { value.pop(); }
-    if value.starts_with(r"\\?\") { value = value[4..].to_string(); }
+    while value.ends_with('\\') && value.len() > 3 {
+        value.pop();
+    }
+    if value.starts_with(r"\\?\") {
+        value = value[4..].to_string();
+    }
     value.to_ascii_lowercase()
 }
 
@@ -369,14 +423,23 @@ pub fn events_to_index_changes(
             FileEventKind::Renamed { from } => {
                 if let Some(to) = to_index(&event.path) {
                     if Path::new(&to.path).is_dir() {
-                        changes.push(FileIndexChange::Remove { path: from.to_string_lossy().into_owned(), recursive: true });
+                        changes.push(FileIndexChange::Remove {
+                            path: from.to_string_lossy().into_owned(),
+                            recursive: true,
+                        });
                         append_path_changes(&mut changes, &event.path, &to_index);
                     } else {
-                        changes.push(FileIndexChange::Rename { from: from.to_string_lossy().into_owned(), to });
+                        changes.push(FileIndexChange::Rename {
+                            from: from.to_string_lossy().into_owned(),
+                            to,
+                        });
                     }
                 } else {
                     // Destination disappeared or could not be read: remove the old subtree.
-                    changes.push(FileIndexChange::Remove { path: from.to_string_lossy().into_owned(), recursive: true });
+                    changes.push(FileIndexChange::Remove {
+                        path: from.to_string_lossy().into_owned(),
+                        recursive: true,
+                    });
                 }
             }
         }
@@ -394,14 +457,19 @@ fn append_path_changes(
     let is_dir = Path::new(&index.path).is_dir();
     changes.push(FileIndexChange::Upsert(index));
     if is_dir {
-        for entry in walkdir::WalkDir::new(path).follow_links(false).into_iter().filter_map(Result::ok) {
-            if entry.path() == path || entry.file_type().is_dir() { continue; }
+        for entry in walkdir::WalkDir::new(path)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if entry.path() == path || entry.file_type().is_dir() {
+                continue;
+            }
             if let Some(index) = to_index(entry.path()) {
                 changes.push(FileIndexChange::Upsert(index));
             }
         }
     }
-
 }
 
 fn coalesce(events: Vec<FileEvent>) -> Vec<FileEvent> {
@@ -427,9 +495,20 @@ mod tests {
     #[test]
     fn converts_file_events_to_index_changes() {
         let events = vec![
-            FileEvent { kind: FileEventKind::Created, path: PathBuf::from("a.txt") },
-            FileEvent { kind: FileEventKind::Removed, path: PathBuf::from("gone.txt") },
-            FileEvent { kind: FileEventKind::Renamed { from: PathBuf::from("old.txt") }, path: PathBuf::from("new.txt") },
+            FileEvent {
+                kind: FileEventKind::Created,
+                path: PathBuf::from("a.txt"),
+            },
+            FileEvent {
+                kind: FileEventKind::Removed,
+                path: PathBuf::from("gone.txt"),
+            },
+            FileEvent {
+                kind: FileEventKind::Renamed {
+                    from: PathBuf::from("old.txt"),
+                },
+                path: PathBuf::from("new.txt"),
+            },
         ];
         let changes = events_to_index_changes(&events, |path| {
             (path == Path::new("a.txt") || path == Path::new("new.txt")).then(|| FileIndex {
@@ -499,12 +578,19 @@ mod tests {
 
     #[test]
     fn excluded_paths_and_extensions_are_filtered() {
-        let config = WatchConfig { excluded_paths: vec![PathBuf::from("target")], excluded_extensions: vec!["tmp".into()], ..Default::default() };
+        let config = WatchConfig {
+            excluded_paths: vec![PathBuf::from("target")],
+            excluded_extensions: vec!["tmp".into()],
+            ..Default::default()
+        };
         assert!(is_excluded(Path::new("target/a.txt"), &config));
         assert!(is_excluded(Path::new("a.TMP"), &config));
         assert!(is_excluded(Path::new(r"project\.git\config"), &config));
         assert!(is_excluded(Path::new(r"project\.cache\data.txt"), &config));
-        assert!(!is_excluded(Path::new(r"project\visible\data.txt"), &config));
+        assert!(!is_excluded(
+            Path::new(r"project\visible\data.txt"),
+            &config
+        ));
         assert!(!is_excluded(Path::new("a.rs"), &config));
     }
 }

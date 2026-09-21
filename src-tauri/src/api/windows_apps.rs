@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use log::{debug, error};
+use log::debug;
 use windows::{
     core::{w, Interface},
     Win32::{
@@ -27,21 +27,15 @@ pub struct RegisteredApp {
     pub executable: String,
 }
 
-pub fn get_all_app() -> Vec<RegisteredApp> {
+pub fn get_all_app() -> Result<Vec<RegisteredApp>, String> {
     unsafe {
-        if CoInitialize(None).is_err() {
-            error!("failed to initialize COM for AppsFolder enumeration");
-            return Vec::new();
-        }
-        let result = enumerate_apps_folder();
+        CoInitialize(None).ok().map_err(|error| {
+            format!("failed to initialize COM for AppsFolder enumeration: {error}")
+        })?;
+        let result = enumerate_apps_folder()
+            .map_err(|error| format!("failed to enumerate shell:AppsFolder: {error}"));
         CoUninitialize();
-        match result {
-            Ok(items) => items,
-            Err(error) => {
-                error!("failed to enumerate shell:AppsFolder: {error}");
-                Vec::new()
-            }
-        }
+        result
     }
 }
 

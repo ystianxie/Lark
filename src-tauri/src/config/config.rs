@@ -44,6 +44,10 @@ pub struct BaseConfig {
     #[serde(default)]
     pub local_app_search_exclude_paths: Vec<String>,
     #[serde(default)]
+    pub app_index_initialized: bool,
+    #[serde(default)]
+    pub file_index_initialized: bool,
+    #[serde(default)]
     pub snippets_enabled: bool,
     #[serde(default = "default_snippet_trigger")]
     pub snippet_trigger: String,
@@ -109,6 +113,8 @@ impl Default for BaseConfig {
             ],
             local_app_search_paths: Vec::new(),
             local_app_search_exclude_paths: Vec::new(),
+            app_index_initialized: false,
+            file_index_initialized: false,
             snippets_enabled: false,
             snippet_trigger: default_snippet_trigger(),
             text_snippets: Vec::new(),
@@ -186,6 +192,8 @@ impl Default for BaseConfig {
                 r"C:\Apps".to_string(),
             ],
             local_app_search_exclude_paths: Vec::new(),
+            app_index_initialized: false,
+            file_index_initialized: false,
             snippets_enabled: false,
             snippet_trigger: default_snippet_trigger(),
             text_snippets: Vec::new(),
@@ -592,6 +600,33 @@ pub fn ensure_file_search_paths_initialized(default_paths: Vec<String>) -> Resul
     Ok(default_paths)
 }
 
+pub fn index_initialization_flags_present() -> Result<(bool, bool)> {
+    let path = config_path()?;
+    if !path.exists() {
+        return Ok((false, false));
+    }
+    let value: Value = serde_json::from_reader(std::fs::File::open(path)?)?;
+    let base = value.get("base").and_then(Value::as_object);
+    Ok((
+        base.is_some_and(|base| base.contains_key("app_index_initialized")),
+        base.is_some_and(|base| base.contains_key("file_index_initialized")),
+    ))
+}
+
+pub fn save_index_initialization_flags(
+    app_initialized: Option<bool>,
+    file_initialized: Option<bool>,
+) -> Result<()> {
+    let mut config = Config::new();
+    if let Some(value) = app_initialized {
+        config.config.base.app_index_initialized = value;
+    }
+    if let Some(value) = file_initialized {
+        config.config.base.file_index_initialized = value;
+    }
+    config.save_local_config()
+}
+
 pub fn save_index_settings_data(setting_info: Value) -> Result<()> {
     let mut config = Config::new();
     if setting_info.get("localFileSearchPaths").is_some() {
@@ -749,5 +784,20 @@ mod plugin_config_tests {
             serde_json::from_value(value).expect("缺少 plugins 键不应导致整个配置回退默认值");
         assert!(restored.plugins.is_empty());
         assert_eq!(restored.base.app_name, "lark");
+    }
+
+    #[test]
+    fn config_without_index_flags_defaults_to_not_initialized() {
+        let mut value = serde_json::to_value(ConfigData::default()).expect("配置应可序列化");
+        let base = value
+            .get_mut("base")
+            .and_then(Value::as_object_mut)
+            .expect("base 应为对象");
+        base.remove("app_index_initialized");
+        base.remove("file_index_initialized");
+
+        let restored: ConfigData = serde_json::from_value(value).expect("旧配置应可读取");
+        assert!(!restored.base.app_index_initialized);
+        assert!(!restored.base.file_index_initialized);
     }
 }

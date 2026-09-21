@@ -6,6 +6,8 @@ use crate::utils::{file_factory, img_factory, json_factory, string_factory};
 use anyhow::Result;
 use arboard::Clipboard;
 use chrono::Duration;
+#[cfg(target_os = "windows")]
+use clipboard_win::{formats::FileList, Clipboard as WindowsClipboard, Setter};
 use enigo::{Enigo, Key, Keyboard, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -250,19 +252,52 @@ impl ClipboardOperator {
         let digest = string_factory::md5(&serde_json::to_string(files)?);
         #[cfg(target_os = "windows")]
         {
-            let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("src/utils/clipboard_file_win.ps1");
-            let output = Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
-                .arg(script)
-                .args(file_paths)
-                .output()?;
-            if !output.status.success() {
+            let mut valid_paths = Vec::new();
+            let mut invalid_paths = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+
+            for file_path in file_paths {
+                let path = std::path::Path::new(&file_path);
+                let resolved = if path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("lnk"))
+                {
+                    lnk::ShellLink::open(path).ok().and_then(|shortcut| {
+                        shortcut
+                            .link_info()
+                            .as_ref()
+                            .and_then(|info| info.local_base_path().clone())
+                            .or_else(|| shortcut.relative_path().clone())
+                    })
+                } else {
+                    Some(file_path.clone())
+                };
+
+                let Some(resolved) = resolved else {
+                    invalid_paths.push(file_path);
+                    continue;
+                };
+                if !std::path::Path::new(&resolved).exists() {
+                    invalid_paths.push(format!("{file_path} -> {resolved}"));
+                    continue;
+                }
+                if seen.insert(resolved.to_lowercase()) {
+                    valid_paths.push(resolved);
+                }
+            }
+
+            if valid_paths.is_empty() {
                 return Err(anyhow::anyhow!(
-                    "写入文件剪贴板失败: {}",
-                    String::from_utf8_lossy(&output.stderr)
+                    "没有可写入剪贴板的有效文件路径：{}",
+                    invalid_paths.join("；")
                 ));
             }
+
+            let _clipboard = WindowsClipboard::new_attempts(10)
+                .map_err(|error| anyhow::anyhow!("打开 Windows 剪贴板失败: {error}"))?;
+            FileList
+                .write_clipboard(&valid_paths)
+                .map_err(|error| anyhow::anyhow!("写入文件剪贴板失败: {error}"))?;
             mark_internal_clipboard_binary(digest);
             mark_internal_clipboard_sequence();
             return Ok(());

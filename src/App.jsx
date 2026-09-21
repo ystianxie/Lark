@@ -965,6 +965,19 @@ const App = () => {
       await focusPanelInputAfterWake();
     });
 
+    const showTrayPanel = async (panelKey) => {
+      flushSync(() => initStatusRef.current?.());
+      const panel = insidePluginList[panelKey];
+      if (!panel) return;
+      setComponent(createActiveIcon(panel.icon));
+      setComponentInfo(panel);
+      await modifyWindowSize("expanded");
+      await appWindow.show();
+      await appWindow.setFocus();
+      await focusPanelInputAfterWake();
+    };
+    const unListenSettingsShowRequest = listen("settings-show-request", () => showTrayPanel("settingPluginComponent"));
+    const unListenComponentsShowRequest = listen("components-show-request", () => showTrayPanel("showPluginComponent"));
     const handleGlobalKeyDown = (event) => {
       if (componentInfoRef.current?.type === "panel") {
         if (event.key === "Escape" && isComposing.ppos === 0) {
@@ -1020,6 +1033,8 @@ const App = () => {
     return () => {
       unListenShowRequest.then((f) => f());
       unListenClipboardShowRequest.then((f) => f());
+      unListenSettingsShowRequest.then((f) => f());
+      unListenComponentsShowRequest.then((f) => f());
       unListenAutoHide.then((f) => f());
       unListenWindowFocus.then((f) => f());
       unListenFileDrop.then((f) => f());
@@ -1136,3 +1151,4 @@ const App = () => {
 };
 
 export default App;
+

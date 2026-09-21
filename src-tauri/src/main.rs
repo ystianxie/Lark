@@ -5,9 +5,9 @@
 )]
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::path::PathBuf;
 mod api;
 mod config;
 mod utils;
@@ -28,8 +28,9 @@ use crate::config::plugins::{
     create_plugin, load_plugin_editor, load_plugins, update_plugin, valid_plugin_id,
 };
 use crate::config::{
-    app_settings, clear_plugin_settings_data, hotkey_settings, index_settings, plugin_settings,
-    plugin_settings_map, save_index_settings_data, save_plugin_settings_data, save_setting_data,
+    app_settings, clear_plugin_settings_data, hotkey_settings, index_initialization_flags_present,
+    index_settings, plugin_settings, plugin_settings_map, save_index_initialization_flags,
+    save_index_settings_data, save_plugin_settings_data, save_setting_data,
     save_snippet_settings_data, snippet_settings,
 };
 use crate::utils::database::{FileIndex, IndexSQL, RecordSQL};
@@ -38,6 +39,7 @@ use crate::utils::window::set_window_show;
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
+    tray::{MouseButton, TrayIconEvent},
     App, AppHandle, Emitter, Manager,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -46,6 +48,7 @@ static HOTKEY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOTKEY_CAPTURE_BINDINGS: OnceLock<Mutex<Option<HotkeyBindings>>> = OnceLock::new();
 static HOTKEY_REGISTRATION_LOCK: Mutex<()> = Mutex::new(());
 static INDEX_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
+static FILE_INDEX_RUNNING: AtomicBool = AtomicBool::new(false);
 
 fn hotkey_capture_bindings() -> &'static Mutex<Option<HotkeyBindings>> {
     HOTKEY_CAPTURE_BINDINGS.get_or_init(|| Mutex::new(None))
@@ -96,16 +99,23 @@ async fn search_keyword(
 
 #[tauri::command]
 fn create_file_index(app: AppHandle) {
-    let _ = app.state::<Mutex<api::file_watcher::FileIndexUpdateService>>().lock().unwrap().begin_rebuild();
-    let app_handle = app.app_handle().clone();
-    static FILE_INDEX_RUNNING: AtomicBool = AtomicBool::new(false);
     if FILE_INDEX_RUNNING.swap(true, Ordering::AcqRel) {
         println!("文件索引任务已在运行");
         return;
     }
+    let _ = app
+        .state::<Mutex<api::file_watcher::FileIndexUpdateService>>()
+        .lock()
+        .unwrap()
+        .begin_rebuild();
+    let app_handle = app.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        create_file_index_to_sql(app_handle.clone());
-        if let Some(service) = app_handle.try_state::<Mutex<api::file_watcher::FileIndexUpdateService>>() {
+        if let Err(error) = create_file_index_to_sql(app_handle.clone()) {
+            eprintln!("文件索引重建失败: {error}");
+        }
+        if let Some(service) =
+            app_handle.try_state::<Mutex<api::file_watcher::FileIndexUpdateService>>()
+        {
             let _ = service.lock().unwrap().finish_rebuild();
         }
         FILE_INDEX_RUNNING.store(false, Ordering::Release);
@@ -114,9 +124,38 @@ fn create_file_index(app: AppHandle) {
 
 #[tauri::command]
 fn create_app_index(app: AppHandle) {
-    println!("创建");
-    let app_handle = app.app_handle().clone();
-    tauri::async_runtime::spawn_blocking(move || create_app_index_to_sql(app_handle));
+    println!("创建应用索引");
+    #[cfg(target_os = "windows")]
+    {
+        let submitted = {
+            let watcher_state =
+                app.state::<Mutex<Option<api::windows_app_watcher::WindowsAppWatcher>>>();
+            let watcher = watcher_state.lock().unwrap();
+            if let Some(watcher) = watcher.as_ref() {
+                watcher.request_refresh();
+                true
+            } else {
+                false
+            }
+        };
+        if !submitted {
+            let app_handle = app.app_handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) = create_app_index_to_sql(app_handle) {
+                    eprintln!("应用索引重建失败: {error}");
+                }
+            });
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let app_handle = app.app_handle().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = create_app_index_to_sql(app_handle) {
+                eprintln!("应用索引重建失败: {error}");
+            }
+        });
+    }
 }
 
 #[tauri::command]
@@ -420,7 +459,9 @@ fn save_snippet_settings(setting_info: serde_json::Value) -> Result<(), String> 
 
 #[tauri::command(rename_all = "camelCase")]
 fn save_index_settings(app: AppHandle, setting_info: serde_json::Value) -> Result<(), String> {
-    let _settings_guard = INDEX_SETTINGS_LOCK.lock().map_err(|_| "索引设置锁异常".to_string())?;
+    let _settings_guard = INDEX_SETTINGS_LOCK
+        .lock()
+        .map_err(|_| "索引设置锁异常".to_string())?;
     let before = config::Config::read_local_config().unwrap_or_default();
     save_index_settings_data(setting_info).map_err(|error| error.to_string())?;
     let after = config::Config::read_local_config().unwrap_or_default();
@@ -434,7 +475,10 @@ fn save_index_settings(app: AppHandle, setting_info: serde_json::Value) -> Resul
 #[tauri::command]
 fn get_file_index_status(app: AppHandle) -> String {
     app.state::<Mutex<api::file_watcher::FileIndexUpdateService>>()
-        .lock().unwrap().status().to_string()
+        .lock()
+        .unwrap()
+        .status()
+        .to_string()
 }
 
 fn apply_local_index_settings_delta(
@@ -447,59 +491,131 @@ fn apply_local_index_settings_delta(
     let old_excludes = &before.local_file_search_exclude_paths;
     let new_excludes = &after.local_file_search_exclude_paths;
     let mut changes = Vec::new();
-    for root in new_roots.iter().filter(|root| !old_roots.iter().any(|old| same_config_path(old, root))) {
+    for root in new_roots
+        .iter()
+        .filter(|root| !old_roots.iter().any(|old| same_config_path(old, root)))
+    {
         collect_local_index_changes(PathBuf::from(root).as_path(), after, &mut changes);
     }
     for root in old_roots.iter().filter(|root| {
-        !new_roots.iter().any(|new_root| same_config_path(new_root, root))
+        !new_roots
+            .iter()
+            .any(|new_root| same_config_path(new_root, root))
             && !new_roots.iter().any(|remaining| {
-                api::file_watcher::path_is_under(PathBuf::from(root).as_path(), PathBuf::from(remaining).as_path())
+                api::file_watcher::path_is_under(
+                    PathBuf::from(root).as_path(),
+                    PathBuf::from(remaining).as_path(),
+                )
             })
     }) {
-        changes.push(api::file_watcher::IndexMessage::Batch(vec![crate::utils::database::FileIndexChange::Remove { path: root.clone(), recursive: true }]));
+        changes.push(api::file_watcher::IndexMessage::Batch(vec![
+            crate::utils::database::FileIndexChange::Remove {
+                path: root.clone(),
+                recursive: true,
+            },
+        ]));
     }
-    for path in new_excludes.iter().filter(|path| !old_excludes.iter().any(|old| same_config_path(old, path))) {
-        if !new_roots.iter().any(|root| api::file_watcher::path_is_under(PathBuf::from(path).as_path(), PathBuf::from(root).as_path())) {
+    for path in new_excludes
+        .iter()
+        .filter(|path| !old_excludes.iter().any(|old| same_config_path(old, path)))
+    {
+        if !new_roots.iter().any(|root| {
+            api::file_watcher::path_is_under(
+                PathBuf::from(path).as_path(),
+                PathBuf::from(root).as_path(),
+            )
+        }) {
             continue;
         }
-        changes.push(api::file_watcher::IndexMessage::Batch(vec![crate::utils::database::FileIndexChange::Remove { path: path.clone(), recursive: true }]));
+        changes.push(api::file_watcher::IndexMessage::Batch(vec![
+            crate::utils::database::FileIndexChange::Remove {
+                path: path.clone(),
+                recursive: true,
+            },
+        ]));
     }
-    for extension in after.local_file_search_exclude_types.iter().filter(|ext| !before.local_file_search_exclude_types.contains(ext)) {
-        changes.push(api::file_watcher::IndexMessage::Batch(vec![crate::utils::database::FileIndexChange::RemoveByType {
-            file_type: extension.trim().trim_start_matches('.').to_ascii_lowercase(),
-            roots: new_roots.clone(),
-        }]));
+    for extension in after
+        .local_file_search_exclude_types
+        .iter()
+        .filter(|ext| !before.local_file_search_exclude_types.contains(ext))
+    {
+        changes.push(api::file_watcher::IndexMessage::Batch(vec![
+            crate::utils::database::FileIndexChange::RemoveByType {
+                file_type: extension
+                    .trim()
+                    .trim_start_matches('.')
+                    .to_ascii_lowercase(),
+                roots: new_roots.clone(),
+            },
+        ]));
     }
     // 取消排除目录或扩展名时，只补扫受影响的路径；扫描仍应用最终的全部规则。
-    for path in old_excludes.iter().filter(|path| !new_excludes.iter().any(|new| same_config_path(new, path))) {
+    for path in old_excludes
+        .iter()
+        .filter(|path| !new_excludes.iter().any(|new| same_config_path(new, path)))
+    {
         let target = PathBuf::from(path);
-        if new_roots.iter().any(|root| api::file_watcher::path_is_under(&target, PathBuf::from(root).as_path())) {
+        if new_roots
+            .iter()
+            .any(|root| api::file_watcher::path_is_under(&target, PathBuf::from(root).as_path()))
+        {
             collect_local_index_changes(&target, after, &mut changes);
         }
     }
-    for extension in before.local_file_search_exclude_types.iter().filter(|ext| !after.local_file_search_exclude_types.contains(ext)) {
-        let normalized = extension.trim().trim_start_matches('.').to_ascii_lowercase();
-        let indexes = new_roots.iter().flat_map(|root| {
-            let watch_config = api::file_watcher::WatchConfig {
-                roots: vec![],
-                excluded_paths: after.local_file_search_exclude_paths.iter().map(PathBuf::from).collect(),
-                excluded_extensions: after.local_file_search_exclude_types.clone(),
-                ..Default::default()
-            };
-            walkdir::WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok)
-                .filter(|entry| !api::file_watcher::is_excluded(entry.path(), &watch_config))
-                .filter(|entry| entry.path().extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(&normalized)))
-                .filter_map(|entry| api::explorer::file_path_to_index(entry.path()))
-                .map(crate::utils::database::FileIndexChange::Upsert)
-                .collect::<Vec<_>>()
-        }).collect::<Vec<_>>();
-        if !indexes.is_empty() { changes.push(api::file_watcher::IndexMessage::Batch(indexes)); }
+    for extension in before
+        .local_file_search_exclude_types
+        .iter()
+        .filter(|ext| !after.local_file_search_exclude_types.contains(ext))
+    {
+        let normalized = extension
+            .trim()
+            .trim_start_matches('.')
+            .to_ascii_lowercase();
+        let indexes = new_roots
+            .iter()
+            .flat_map(|root| {
+                let watch_config = api::file_watcher::WatchConfig {
+                    roots: vec![],
+                    excluded_paths: after
+                        .local_file_search_exclude_paths
+                        .iter()
+                        .map(PathBuf::from)
+                        .collect(),
+                    excluded_extensions: after.local_file_search_exclude_types.clone(),
+                    ..Default::default()
+                };
+                walkdir::WalkDir::new(root)
+                    .follow_links(false)
+                    .into_iter()
+                    .filter_map(Result::ok)
+                    .filter(|entry| !api::file_watcher::is_excluded(entry.path(), &watch_config))
+                    .filter(|entry| {
+                        entry
+                            .path()
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .is_some_and(|e| e.eq_ignore_ascii_case(&normalized))
+                    })
+                    .filter_map(|entry| api::explorer::file_path_to_index(entry.path()))
+                    .map(crate::utils::database::FileIndexChange::Upsert)
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        if !indexes.is_empty() {
+            changes.push(api::file_watcher::IndexMessage::Batch(indexes));
+        }
     }
     if let Some(state) = app.try_state::<Mutex<api::file_watcher::FileIndexUpdateService>>() {
         let service = state.lock().unwrap();
-        if let Err(error) = service.apply_batches_sync(changes.into_iter().filter_map(|message| {
-            match message { api::file_watcher::IndexMessage::Batch(batch) => Some(batch), _ => None }
-        }).collect()) {
+        if let Err(error) = service.apply_batches_sync(
+            changes
+                .into_iter()
+                .filter_map(|message| match message {
+                    api::file_watcher::IndexMessage::Batch(batch) => Some(batch),
+                    _ => None,
+                })
+                .collect(),
+        ) {
             eprintln!("[FileWatcher] 配置差异索引写入失败: {error}");
         }
     }
@@ -510,10 +626,16 @@ fn collect_local_index_changes(
     config: &config::BaseConfig,
     changes: &mut Vec<api::file_watcher::IndexMessage>,
 ) {
-    if !root.is_dir() { return; }
+    if !root.is_dir() {
+        return;
+    }
     let watch_config = api::file_watcher::WatchConfig {
         roots: vec![],
-        excluded_paths: config.local_file_search_exclude_paths.iter().map(PathBuf::from).collect(),
+        excluded_paths: config
+            .local_file_search_exclude_paths
+            .iter()
+            .map(PathBuf::from)
+            .collect(),
         excluded_extensions: config.local_file_search_exclude_types.clone(),
         ..Default::default()
     };
@@ -525,14 +647,21 @@ fn collect_local_index_changes(
         .filter_map(|entry| api::explorer::file_path_to_index(entry.path()))
         .map(crate::utils::database::FileIndexChange::Upsert)
         .collect::<Vec<_>>();
-    if !indexes.is_empty() { changes.push(api::file_watcher::IndexMessage::Batch(indexes)); }
+    if !indexes.is_empty() {
+        changes.push(api::file_watcher::IndexMessage::Batch(indexes));
+    }
 }
 
 fn same_config_path(left: &str, right: &str) -> bool {
     let normalize = |value: &str| {
         let mut value = value.trim().replace('/', "\\");
-        while value.ends_with('\\') && value.len() > 3 { value.pop(); }
-        value.strip_prefix(r"\\?\").unwrap_or(&value).to_ascii_lowercase()
+        while value.ends_with('\\') && value.len() > 3 {
+            value.pop();
+        }
+        value
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&value)
+            .to_ascii_lowercase()
     };
     normalize(left) == normalize(right)
 }
@@ -658,8 +787,9 @@ fn get_plugin_settings_status(app: AppHandle) -> Result<serde_json::Value, Strin
 
 fn main() {
     ClipboardWatcher::start();
-    IndexSQL::new();
+    let index_db = IndexSQL::new();
     RecordSQL::new();
+    let index_flag_presence = index_initialization_flags_present().unwrap_or((false, false));
     let mut config = config::Config::read_local_config().unwrap();
     if config.base.local_file_search_paths.is_none() {
         if let Err(error) =
@@ -668,6 +798,47 @@ fn main() {
             eprintln!("初始化文件包含路径失败: {error}");
         }
         config = config::Config::read_local_config().unwrap();
+    }
+    let mut migrated_app_flag = None;
+    let mut migrated_file_flag = None;
+    if !index_flag_presence.0 {
+        match index_db.has_app_indexes() {
+            Ok(initialized) => {
+                config.base.app_index_initialized = initialized;
+                migrated_app_flag = Some(initialized);
+            }
+            Err(error) => {
+                eprintln!("读取应用索引状态失败，本次启动跳过自动扫描: {error}");
+                config.base.app_index_initialized = true;
+            }
+        }
+    }
+    if !index_flag_presence.1 {
+        match index_db.has_file_indexes() {
+            Ok(initialized) => {
+                config.base.file_index_initialized = initialized;
+                migrated_file_flag = Some(initialized);
+            }
+            Err(error) => {
+                eprintln!("读取文件索引状态失败，本次启动跳过自动扫描: {error}");
+                config.base.file_index_initialized = true;
+            }
+        }
+    }
+    if config
+        .base
+        .local_file_search_paths
+        .as_ref()
+        .is_some_and(Vec::is_empty)
+        && !config.base.file_index_initialized
+    {
+        config.base.file_index_initialized = true;
+        migrated_file_flag = Some(true);
+    }
+    if migrated_app_flag.is_some() || migrated_file_flag.is_some() {
+        if let Err(error) = save_index_initialization_flags(migrated_app_flag, migrated_file_flag) {
+            eprintln!("保存索引初始化状态失败: {error}");
+        }
     }
     let hotkey_awaken = config.base.hotkey_awaken.clone();
     let hotkey_clipboard = config.base.hotkey_clipboard.clone();
@@ -687,7 +858,53 @@ fn main() {
             app.manage(Mutex::new(index_service));
             app.manage(Mutex::new(None::<api::file_watcher::FileWatcher>));
             restart_file_watcher(app.handle());
+            #[cfg(target_os = "windows")]
+            {
+                let watcher = match api::windows_app_watcher::WindowsAppWatcher::start(
+                    app.handle().clone(),
+                ) {
+                    Ok(watcher) => Some(watcher),
+                    Err(error) => {
+                        eprintln!(
+                            "[AppIndexWatcher] AppsFolder 监听启动失败，应用继续运行: {error}"
+                        );
+                        None
+                    }
+                };
+                app.manage(Mutex::new(watcher));
+            }
             app.manage(api::listary_jump::ListaryJumpHandle::start());
+            let bootstrap_app = app.handle().clone();
+            let bootstrap_config = config.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if !bootstrap_config.base.app_index_initialized {
+                    match create_app_index_to_sql(bootstrap_app.clone()) {
+                        Ok(()) => {}
+                        Err(error) => eprintln!("首次应用索引扫描失败: {error}"),
+                    }
+                }
+
+                if !bootstrap_config.base.file_index_initialized {
+                    let paths = bootstrap_config
+                        .base
+                        .local_file_search_paths
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_default();
+                    if !paths.is_empty() && !FILE_INDEX_RUNNING.swap(true, Ordering::AcqRel) {
+                        let service = bootstrap_app
+                            .state::<Mutex<api::file_watcher::FileIndexUpdateService>>();
+                        let _ = service.lock().unwrap().begin_rebuild();
+                        let result = create_file_index_to_sql(bootstrap_app.clone());
+                        let _ = service.lock().unwrap().finish_rebuild();
+                        match result {
+                            Ok(()) => {}
+                            Err(error) => eprintln!("首次文件索引扫描失败: {error}"),
+                        }
+                        FILE_INDEX_RUNNING.store(false, Ordering::Release);
+                    }
+                }
+            });
             let plugins_dir = crate::utils::dirs::app_plugins_dir()?;
             app.asset_protocol_scope()
                 .allow_directory(plugins_dir, true)?;
@@ -699,18 +916,52 @@ fn main() {
             let position = main_window.outer_position().unwrap();
             println!("{:?}", position);
 
-            // The tray icon itself is created from `tauri.conf.json`; attach its
-            // context menu here so the user can terminate the application.
-            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&quit_item])?;
+            let open_item = MenuItem::with_id(app, "tray-open", "打开应用", true, None::<&str>)?;
+            let clipboard_item =
+                MenuItem::with_id(app, "tray-clipboard", "剪贴板", true, None::<&str>)?;
+            let settings_item =
+                MenuItem::with_id(app, "tray-settings", "设置", true, None::<&str>)?;
+            let components_item =
+                MenuItem::with_id(app, "tray-components", "组件库", true, None::<&str>)?;
+            let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出应用", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(
+                app,
+                &[
+                    &open_item,
+                    &clipboard_item,
+                    &settings_item,
+                    &components_item,
+                    &separator,
+                    &quit_item,
+                ],
+            )?;
             if let Some(tray) = app.tray_by_id("main") {
                 tray.set_menu(Some(tray_menu))?;
             }
             Ok(())
         })
+        .on_tray_icon_event(|app, event| {
+            if let TrayIconEvent::DoubleClick { id, button, .. } = event {
+                if id.as_ref() == "main" && button == MouseButton::Left {
+                    let _ = app.emit("window-show-request", ());
+                }
+            }
+        })
         .on_menu_event(|app, event| {
-            if event.id() == "quit" {
-                app.exit(0);
+            let event_name = match event.id().as_ref() {
+                "tray-open" => Some("window-show-request"),
+                "tray-clipboard" => Some("clipboard-show-request"),
+                "tray-settings" => Some("settings-show-request"),
+                "tray-components" => Some("components-show-request"),
+                "quit" => {
+                    app.exit(0);
+                    None
+                }
+                _ => None,
+            };
+            if let Some(event_name) = event_name {
+                let _ = app.emit(event_name, ());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -782,7 +1033,8 @@ fn build_file_watch_config_from(config: &config::BaseConfig) -> api::file_watche
         .collect();
     api::file_watcher::WatchConfig {
         roots,
-        excluded_paths: config.local_file_search_exclude_paths
+        excluded_paths: config
+            .local_file_search_exclude_paths
             .clone()
             .into_iter()
             .map(PathBuf::from)
@@ -804,18 +1056,32 @@ fn restart_file_watcher(app: &AppHandle) {
             println!("[FileWatcher] 文件包含路径为空，未启动监听");
             return;
         }
-        let sender = app.state::<Mutex<api::file_watcher::FileIndexUpdateService>>().lock().unwrap().sender();
+        let sender = app
+            .state::<Mutex<api::file_watcher::FileIndexUpdateService>>()
+            .lock()
+            .unwrap()
+            .sender();
         println!("[FileWatcher] 监听配置目录: {:?}", config.roots);
         match api::file_watcher::FileWatcher::start(config, move |events| {
-            let changes = api::file_watcher::events_to_index_changes(&events, api::explorer::file_path_to_index);
-            println!("[FileWatcher] 收到 {} 个事件，转换为 {} 个索引变更", events.len(), changes.len());
+            let changes = api::file_watcher::events_to_index_changes(
+                &events,
+                api::explorer::file_path_to_index,
+            );
+            println!(
+                "[FileWatcher] 收到 {} 个事件，转换为 {} 个索引变更",
+                events.len(),
+                changes.len()
+            );
             if !changes.is_empty() {
                 if let Err(error) = sender.send(api::file_watcher::IndexMessage::Batch(changes)) {
                     eprintln!("[FileWatcher] 无法提交增量索引任务: {error}");
                 }
             }
         }) {
-            Ok(watcher) => { *guard = Some(watcher); println!("[FileWatcher] 文件监听已启动"); }
+            Ok(watcher) => {
+                *guard = Some(watcher);
+                println!("[FileWatcher] 文件监听已启动");
+            }
             Err(error) => eprintln!("[FileWatcher] 文件监听启动失败，应用继续运行: {error}"),
         }
     }
@@ -824,19 +1090,30 @@ fn restart_file_watcher(app: &AppHandle) {
 fn stop_file_watcher(app: &AppHandle) {
     if let Some(state) = app.try_state::<Mutex<Option<api::file_watcher::FileWatcher>>>() {
         let mut guard = state.lock().unwrap();
-        if let Some(watcher) = guard.as_mut() { watcher.stop_in_place(); }
+        if let Some(watcher) = guard.as_mut() {
+            watcher.stop_in_place();
+        }
         *guard = None;
     }
 }
 
 // 启动前会再次确认旧句柄已清理，供配置变更的串行流程调用。
-fn start_file_watcher(app: &AppHandle) { restart_file_watcher(app); }
+fn start_file_watcher(app: &AppHandle) {
+    restart_file_watcher(app);
+}
 
 fn default_file_search_paths() -> Vec<String> {
     let mut paths = Vec::<PathBuf>::new();
 
     if let Some(user_profile) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
-        for directory in ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos"] {
+        for directory in [
+            "Desktop",
+            "Documents",
+            "Downloads",
+            "Pictures",
+            "Music",
+            "Videos",
+        ] {
             let path = user_profile.join(directory);
             if path.is_dir() {
                 paths.push(path);
@@ -870,7 +1147,10 @@ fn default_file_search_paths() -> Vec<String> {
     }
 
     paths.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
-    paths.dedup_by(|left, right| left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy()));
+    paths.dedup_by(|left, right| {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    });
     paths
         .into_iter()
         .map(|path| path.to_string_lossy().into_owned())
