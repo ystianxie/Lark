@@ -2,6 +2,18 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 
 const runtimes = new Map();
 
+// 向导更新插件文件后，仅卸载该插件的旧运行时；下次执行时会从磁盘重新加载。
+export async function invalidatePluginRuntime(pluginId) {
+  const runtime = runtimes.get(pluginId);
+  try {
+    await runtime?.unmount?.();
+  } catch (error) {
+    console.warn(`插件 ${pluginId} 卸载失败`, error);
+  } finally {
+    runtimes.delete(pluginId);
+  }
+}
+
 const permissions = {
   "url.open": (url) => invoke("open_url", { url }),
   "file.open": (path) => invoke("open_file", { filePath: path }),

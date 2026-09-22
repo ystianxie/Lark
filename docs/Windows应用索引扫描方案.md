@@ -46,7 +46,9 @@ shell:AppsFolder\<AppUserModelID>
 
 ## 3. 已注册应用目录抑制
 
-如果 AppsFolder 已经注册：
+目录抑制只根据最终通过校验、辅助项过滤和启动标识去重，并成功加入本轮结果的 AppsFolder 应用建立。被过滤或去重失败的 AppsFolder 条目不能抑制其父目录，避免无效的更新器或启动器入口把同目录下的有效主程序一并隐藏。
+
+如果 AppsFolder 已经成功收录：
 
 ```text
 D:\App\QQMusic\QQMusic.exe
@@ -75,7 +77,11 @@ D:\App\JetBrains\RustRover2026.1
 
 ## 4. 过滤规则
 
-### 4.1 通用过滤
+### 4.1 来源分级过滤
+
+AppsFolder、开始菜单和桌面快捷方式属于 Windows 用户可见入口。它们根据展示名称识别更新器、卸载器和后台辅助项，不因实际目标文件名包含 `launcher`、`bootstrap` 等词而直接删除。例如展示名称为 `Reasonix`、目标为 `reasonix-launcher.exe` 的入口应保留。
+
+用户配置目录直接发现的裸 `.exe` 缺少用户入口语义，因此继续同时检查展示名称和可执行文件名，严格过滤 launcher、helper、updater、service 等辅助程序。
 
 以下条目不会进入自动应用索引：
 

@@ -918,22 +918,10 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let items = {
         let registered = crate::api::windows_apps::get_all_app()?;
-        // A registered Win32 application's concrete executable directory is a
-        // high-confidence application boundary. Portable scanning must not
-        // re-publish every internal helper executable from that directory.
-        let registered_app_dirs = registered
-            .iter()
-            .filter_map(|app| {
-                let executable = app.executable.trim();
-                if executable.is_empty() {
-                    return None;
-                }
-                Path::new(executable)
-                    .parent()
-                    .map(|parent| normalize_app_launch_key(&parent.to_string_lossy()))
-                    .filter(|parent| !parent.is_empty())
-            })
-            .collect::<Vec<_>>();
+        // Only an AppsFolder entry that survives validation and de-duplication may
+        // suppress its executable directory during portable discovery. Otherwise a
+        // rejected launcher/updater entry could hide a valid main executable nearby.
+        let mut registered_app_dirs = Vec::new();
         let mut seen = HashSet::new();
         let mut seen_app_names = HashSet::new();
         let mut items = Vec::new();
@@ -951,7 +939,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
             } else {
                 app.executable.as_str()
             };
-            if is_portable_auxiliary_app(title, identity) {
+            if is_user_visible_auxiliary_app(title) {
                 continue;
             }
             let key = normalize_app_launch_key(identity);
@@ -967,6 +955,11 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                 String::new()
             };
             seen_app_names.insert(normalize_app_product_key(title));
+            if let Some(directory) = registered_app_directory(&app.executable) {
+                if !registered_app_dirs.contains(&directory) {
+                    registered_app_dirs.push(directory);
+                }
+            }
             items.push(FileIndex {
                 title: title.to_string(),
                 path: start.to_string(),
@@ -982,30 +975,42 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
         // AppsFolder omits a number of traditional Start Menu shortcuts (for
         // example per-user installers and portable tools). Treat both the
         // user's and the common Start Menu as secondary sources. Resolve
-        // shortcuts to their real launch target and reuse the same filters and
-        // identity de-duplication as desktop/portable discovery.
+        // shortcuts to their real launch target, but classify auxiliaries by the
+        // user-visible title rather than the executable filename.
         let mut start_menu_roots = Vec::new();
         if let Some(app_data) = std::env::var_os("APPDATA") {
-            start_menu_roots.push(PathBuf::from(app_data).join(r"Microsoft\Windows\Start Menu\Programs"));
+            start_menu_roots
+                .push(PathBuf::from(app_data).join(r"Microsoft\Windows\Start Menu\Programs"));
         }
         if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
-            start_menu_roots.push(PathBuf::from(program_data).join(r"Microsoft\Windows\Start Menu\Programs"));
+            start_menu_roots
+                .push(PathBuf::from(program_data).join(r"Microsoft\Windows\Start Menu\Programs"));
         }
         start_menu_roots.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
-        start_menu_roots.dedup_by(|left, right| left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy()));
+        start_menu_roots.dedup_by(|left, right| {
+            left.to_string_lossy()
+                .eq_ignore_ascii_case(&right.to_string_lossy())
+        });
         for root in start_menu_roots.iter().filter(|path| path.is_dir()) {
             println!("扫描开始菜单应用: {}", root.display());
             for app in get_apps_with_depth(&root.to_string_lossy(), true, true, false, &[]) {
-                let (Some(title), Some(path)) = (app.get("title"), app.get("data")) else { continue; };
+                let (Some(title), Some(path)) = (app.get("title"), app.get("data")) else {
+                    continue;
+                };
                 let extension = Path::new(path).extension().and_then(|value| value.to_str());
                 // Start Menu is also used for scripts and MMC consoles. Keep
                 // concrete executables and RDP launch entries; exclude script
                 // and system-management file types from the app index.
-                if !matches!(extension, Some(value) if value.eq_ignore_ascii_case("exe") || value.eq_ignore_ascii_case("rdp")) {
+                if !matches!(extension, Some(value) if value.eq_ignore_ascii_case("exe") || value.eq_ignore_ascii_case("rdp"))
+                {
                     continue;
                 }
                 let key = normalize_app_launch_key(path);
-                if title.trim().is_empty() || key.is_empty() || is_portable_auxiliary_app(title, path) || !seen.insert(key) {
+                if title.trim().is_empty()
+                    || key.is_empty()
+                    || is_user_visible_auxiliary_app(title)
+                    || !seen.insert(key)
+                {
                     continue;
                 }
                 let (pinyin, abb) = text_to_pinyin(title);
@@ -1056,7 +1061,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                 let key = normalize_app_launch_key(path);
                 if title.trim().is_empty()
                     || key.is_empty()
-                    || is_portable_auxiliary_app(title, path)
+                    || is_user_visible_auxiliary_app(title)
                     || !seen.insert(key)
                 {
                     continue;
@@ -1261,7 +1266,19 @@ fn is_under_registered_app_dir(path: &str, registered_dirs: &[String]) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn is_portable_auxiliary_app(title: &str, path: &str) -> bool {
+fn registered_app_directory(executable: &str) -> Option<String> {
+    let executable = executable.trim();
+    if executable.is_empty() {
+        return None;
+    }
+    Path::new(executable)
+        .parent()
+        .map(|parent| normalize_app_launch_key(&parent.to_string_lossy()))
+        .filter(|parent| !parent.is_empty())
+}
+
+#[cfg(target_os = "windows")]
+fn is_auxiliary_app_value(value: &str) -> bool {
     const AUXILIARY: &[&str] = &[
         "agent",
         "external",
@@ -1282,60 +1299,65 @@ fn is_portable_auxiliary_app(title: &str, path: &str) -> bool {
         "worker",
         "bootstrap",
     ];
-    let values = [
-        title,
-        Path::new(path)
+    let lower = value.to_ascii_lowercase();
+    if [
+        "qmbrowser",
+        "qmweiyun",
+        "desktopdynamiclyric",
+        "qmdesktopanimation",
+    ]
+    .contains(&lower.as_str())
+    {
+        return true;
+    }
+    let tokens = lower.split(|c: char| !c.is_ascii_alphanumeric());
+    if tokens.clone().any(|token| AUXILIARY.contains(&token)) {
+        return true;
+    }
+    // Also catch vendor naming such as QQMusicUp or ProductAgent without
+    // treating an unrelated product like ServerManager as auxiliary.
+    [
+        "agent",
+        "external",
+        "service",
+        "svr",
+        "helper",
+        "launcher",
+        "updater",
+        "swap",
+        "uninst",
+        "unins",
+        "musicup",
+        "driverhelper",
+        "desktopdynamiclyric",
+        "desktopanimation",
+        "projection",
+        "qmbrowser",
+        "qmweiyun",
+    ]
+    .iter()
+    .any(|suffix| lower.len() > suffix.len() + 3 && lower.ends_with(suffix))
+}
+
+#[cfg(target_os = "windows")]
+fn is_user_visible_auxiliary_app(title: &str) -> bool {
+    is_auxiliary_app_value(title)
+}
+
+#[cfg(target_os = "windows")]
+fn is_portable_auxiliary_app(title: &str, path: &str) -> bool {
+    is_auxiliary_app_value(title)
+        || Path::new(path)
             .file_stem()
-            .and_then(|v| v.to_str())
-            .unwrap_or(""),
-    ];
-    values.iter().any(|value| {
-        let lower = value.to_ascii_lowercase();
-        if [
-            "qmbrowser",
-            "qmweiyun",
-            "desktopdynamiclyric",
-            "qmdesktopanimation",
-        ]
-        .contains(&lower.as_str())
-        {
-            return true;
-        }
-        let tokens = lower.split(|c: char| !c.is_ascii_alphanumeric());
-        if tokens.clone().any(|token| AUXILIARY.contains(&token)) {
-            return true;
-        }
-        // Also catch vendor naming such as QQMusicUp or ProductAgent without
-        // treating an unrelated product like ServerManager as auxiliary.
-        [
-            "agent",
-            "external",
-            "service",
-            "svr",
-            "helper",
-            "launcher",
-            "updater",
-            "swap",
-            "uninst",
-            "unins",
-            "musicup",
-            "driverhelper",
-            "desktopdynamiclyric",
-            "desktopanimation",
-            "projection",
-            "qmbrowser",
-            "qmweiyun",
-        ]
-        .iter()
-        .any(|suffix| lower.len() > suffix.len() + 3 && lower.ends_with(suffix))
-    })
+            .and_then(|value| value.to_str())
+            .is_some_and(is_auxiliary_app_value)
 }
 
 #[cfg(all(test, target_os = "windows"))]
 mod app_scan_tests {
     use super::{
-        is_portable_auxiliary_app, is_under_registered_app_dir, normalize_app_product_key,
-        portable_family_key,
+        is_portable_auxiliary_app, is_under_registered_app_dir, is_user_visible_auxiliary_app,
+        normalize_app_product_key, portable_family_key, registered_app_directory,
     };
 
     #[test]
@@ -1385,6 +1407,25 @@ mod app_scan_tests {
             r"D:\App\QQMusic2\player.exe",
             &registered_dirs
         ));
+    }
+
+    #[test]
+    fn user_visible_entries_ignore_auxiliary_words_in_the_target_filename() {
+        assert!(!is_user_visible_auxiliary_app("Reasonix"));
+        assert!(is_portable_auxiliary_app(
+            "Reasonix",
+            r"D:\App\Reasonix\reasonix-launcher.exe"
+        ));
+        assert!(is_user_visible_auxiliary_app("Reasonix Updater"));
+    }
+
+    #[test]
+    fn registered_directory_normalizes_the_accepted_executable_parent() {
+        assert_eq!(
+            registered_app_directory(r"D:\App\Reasonix\reasonix-launcher.exe"),
+            Some(r"d:\app\reasonix".to_string())
+        );
+        assert_eq!(registered_app_directory(""), None);
     }
 
     #[test]

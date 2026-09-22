@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useRef, useState} from "react";
 import {Alert, Button, Checkbox, Input, Select} from "antd";
 import {invoke} from "@tauri-apps/api/core";
 import {bitmapExtension, bitmapRejectionReason, codeExamples, generatePluginFiles, generateDefaultIcon, newConfigField, pluginConfigFieldTypes, pluginPermissions, svgRejectionReason} from "../pluginScaffold";
+import {invalidatePluginRuntime} from "../pluginRuntime";
 
 const svgMime = "image/svg+xml";
 const iconMimeByExtension = {svg: svgMime, png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
@@ -117,6 +118,7 @@ export default function PluginCreator({existingIds, onRegistered, onClose, editP
         try {
             if (!path) {
                 path = await invoke(editPlugin ? "update_plugin" : "create_plugin", {pluginId: config.id.trim(), files});
+                if (editPlugin) await invalidatePluginRuntime(config.id.trim());
                 setCreatedPath(path);
             }
             await onRegistered(config.id.trim());
