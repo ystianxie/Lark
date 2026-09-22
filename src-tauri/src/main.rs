@@ -42,6 +42,7 @@ use tauri::{
     tray::{MouseButton, TrayIconEvent},
     App, AppHandle, Emitter, Manager,
 };
+use auto_launch::AutoLaunchBuilder;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 static HOTKEY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -430,6 +431,24 @@ fn get_hotkey_settings() -> Result<serde_json::Value, String> {
 #[tauri::command]
 fn get_app_settings() -> Result<serde_json::Value, String> {
     app_settings().map_err(|error| error.to_string())
+}
+
+fn auto_launch_instance() -> Result<auto_launch::AutoLaunch, String> {
+    let path = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut builder = AutoLaunchBuilder::new();
+    builder.set_app_name("Lark").set_app_path(path.to_string_lossy().as_ref());
+    builder.build().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_auto_launch_enabled() -> Result<bool, String> {
+    auto_launch_instance()?.is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_auto_launch_enabled(enabled: bool) -> Result<(), String> {
+    let auto = auto_launch_instance()?;
+    if enabled { auto.enable() } else { auto.disable() }.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1001,6 +1020,8 @@ fn main() {
             get_hotkey_settings,
             trigger_listary_jump,
             get_app_settings,
+            get_auto_launch_enabled,
+            set_auto_launch_enabled,
             get_index_settings,
             save_index_settings,
             get_snippet_settings,

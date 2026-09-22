@@ -686,6 +686,7 @@ const Component = () => {
     const [pythonInterpreter, setPythonInterpreter] = useState(null);
     const [pythonProbe, setPythonProbe] = useState(null);
     const [pythonProbeError, setPythonProbeError] = useState('');
+    const [autoLaunch, setAutoLaunch] = useState(false);
     const hotkeyCaptureActive = useRef(false);
     const activeHotkeyField = useRef(null);
     const hotkeyCaptureTransition = useRef(Promise.resolve());
@@ -714,6 +715,7 @@ const Component = () => {
             setPythonInterpreter(interpreter);
             probePythonInterpreter(interpreter);
         }).catch((error) => console.error("读取应用设置失败", error));
+        invoke('get_auto_launch_enabled').then(setAutoLaunch).catch((error) => console.error('读取开机启动状态失败', error));
         invoke("get_index_settings").then((settings) => {
             setAppSearchPaths(settings.localAppSearchPaths || []);
             setAppExcludePaths(settings.localAppSearchExcludePaths || []);
@@ -896,6 +898,18 @@ const Component = () => {
             setSettingNotice({type: 'error', text: String(error)});
         }
     }
+
+    const handleAutoLaunchChange = async (checked) => {
+        const previous = autoLaunch;
+        setAutoLaunch(checked);
+        try {
+            await invoke('set_auto_launch_enabled', {enabled: checked});
+            setSettingNotice({type: 'success', text: checked ? '已开启开机启动' : '已关闭开机启动'});
+        } catch (error) {
+            setAutoLaunch(previous);
+            setSettingNotice({type: 'error', text: `开机启动设置失败：${error}`});
+        }
+    };
 
     const handleHotkeyCapture = async (active) => {
         hotkeyCaptureActive.current = active;
@@ -1360,6 +1374,15 @@ const Component = () => {
                     </section>
                 </div>}
                 {activeTab === 'app' && <div className="appSettingsPane">
+                    <section className="appSettingCard">
+                        <div className="snippetStatusRow">
+                            <div>
+                                <h3 className="snippetHeading">开机启动</h3>
+                                <div className="snippetHint">登录 Windows 后自动启动百灵鸟。</div>
+                            </div>
+                            <Switch checked={autoLaunch} onChange={handleAutoLaunchChange} />
+                        </div>
+                    </section>
                     <section className="appSettingCard">
                         <h3 className="snippetHeading">快捷键</h3>
                         <div className="snippetHint">点击快捷键框，然后按下新的组合键。</div>

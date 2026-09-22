@@ -3,6 +3,7 @@ import {Alert, Button, Checkbox, Input, Select} from "antd";
 import {invoke} from "@tauri-apps/api/core";
 import {bitmapExtension, bitmapRejectionReason, codeExamples, generatePluginFiles, generateDefaultIcon, newConfigField, pluginConfigFieldTypes, pluginPermissions, svgRejectionReason} from "../pluginScaffold";
 import {invalidatePluginRuntime} from "../pluginRuntime";
+import CodeEditor from "./CodeEditor";
 
 const svgMime = "image/svg+xml";
 const iconMimeByExtension = {svg: svgMime, png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
@@ -28,6 +29,7 @@ export default function PluginCreator({existingIds, onRegistered, onClose, editP
     const [saving, setSaving] = useState(false);
     const [createdPath, setCreatedPath] = useState("");
     const [registered, setRegistered] = useState(false);
+    const [focusedWorkflow, setFocusedWorkflow] = useState(null);
     const submitting = useRef(false);
     const nextWorkflowNumber = useRef(2);
     const [iconError, setIconError] = useState("");
@@ -141,7 +143,7 @@ export default function PluginCreator({existingIds, onRegistered, onClose, editP
             <Button disabled={saving} onClick={onClose}>{createdPath ? "完成" : "返回组件库"}</Button>
         </header>
         {error && <Alert type="error" showIcon message={error}/>}
-        <div className="library-list creator-content">
+        <div className={`library-list creator-content${focusedWorkflow !== null ? " creator-content-focus" : ""}`}>
             {createdPath ? <>
                 <Alert type={registered ? "success" : "info"} showIcon
                     message={registered ? (editPlugin ? "已保存并更新组件库" : "已开启并更新组件库") : "文件已保存，请重试开启及刷新"}
@@ -200,10 +202,12 @@ export default function PluginCreator({existingIds, onRegistered, onClose, editP
                     </div>
                     {workflow.type === "url" ? <label>完整网址<Input aria-label={`网址 ${index + 1}`} placeholder="https://example.com"
                         value={workflow.url} onChange={event => updateWorkflow(index, "url", event.target.value)}/></label> : <>
-                        <label>{workflow.type === "python" ? "Python 函数体" : "JS 异步函数体"}
-                            <Input.TextArea aria-label={`业务代码 ${index + 1}`} className="creator-code" rows={6} spellCheck={false}
+                        <div className="creator-code-shell"><label>{workflow.type === "python" ? "Python 函数体" : "JS 异步函数体"}
+                            <CodeEditor language={workflow.type === "python" ? "python" : "javascript"}
                                 value={workflow.type === "python" ? workflow.pythonCode : workflow.code}
-                                onChange={event => updateWorkflow(index, workflow.type === "python" ? "pythonCode" : "code", event.target.value)}/></label>
+                                onChange={value => updateWorkflow(index, workflow.type === "python" ? "pythonCode" : "code", value)}/></label>
+                            <Button size="small" onClick={() => setFocusedWorkflow(index)}>⛶ 专注编辑</Button>
+                        </div>
                     <p className="library-hint">可用参数：{workflow.type === "python" ? "text、file、config（已保存的插件配置，未配置时为空字典）" : "text、file、context"}。
                             返回文本、数字、{'{title, data, desc}'} 或数组；空返回不显示结果。</p>
                         {workflow.type === "python" ? <p className="library-hint">使用系统 Python 或已有解释器配置；本次不创建虚拟环境或安装依赖。
@@ -251,6 +255,19 @@ export default function PluginCreator({existingIds, onRegistered, onClose, editP
                         configFields: [...(current.configFields || []), newConfigField()]}))}>添加配置项</Button>
                 </fieldset>
             </>}
+            {focusedWorkflow !== null && config.workflows[focusedWorkflow] && (() => {
+                const workflow = config.workflows[focusedWorkflow];
+                const field = workflow.type === "python" ? "pythonCode" : "code";
+                return <div className="creator-editor-focus" role="dialog" aria-label="专注编辑模式">
+                    <div className="creator-editor-focus-toolbar">
+                        <strong>{workflow.type === "python" ? "Python 函数体" : "JS 异步函数体"} · 功能入口 {focusedWorkflow + 1}</strong>
+                        <Button size="small" onClick={() => setFocusedWorkflow(null)}>↙ 退出专注</Button>
+                    </div>
+                    <CodeEditor autoFocus className="creator-editor-focus-input"
+                        language={workflow.type === "python" ? "python" : "javascript"}
+                        value={workflow[field]} onChange={value => updateWorkflow(focusedWorkflow, field, value)}/>
+                </div>;
+            })()}
         </div>
         <footer className="library-actions creator-footer">
             {files && !createdPath && <Button disabled={saving} onClick={() => {setFiles(null); setError("");}}>返回修改</Button>}

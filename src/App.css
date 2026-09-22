@@ -59,6 +59,11 @@ body {
     opacity: 0.97;
 }
 
+/* workspace 比普通 panel 多出一条边框/舍入误差，避免子页面贴到底边。 */
+#mainDiv[data-window-mode="workspace"] #subPageFrame > div {
+    height: 99% !important;
+}
+
 #mainInput {
     max-width: 98.5%;
     height: 100%;

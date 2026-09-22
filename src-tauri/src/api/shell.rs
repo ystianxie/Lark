@@ -201,7 +201,22 @@ fn run_python_plugin_blocking(
         .unwrap()
         .map_err(|error| format!("传递 Python 参数失败：{error}"))?;
     let stdout = String::from_utf8_lossy(&output);
-    serde_json::from_str(stdout.trim()).map_err(|e| format!("invalid python response: {e}"))
+    let mut response: Value = serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("invalid python response: {e}"))?;
+    let stderr = String::from_utf8_lossy(&errors);
+    if !stderr.is_empty() {
+        let object = response
+            .as_object_mut()
+            .ok_or("invalid python response: expected a JSON object")?;
+        // stdout 仍然只承载 Python JSON 协议；业务代码的 print 被包装层重定向到
+        // stderr。将它放进宿主保留字段交给 WebView 输出，前端会在把响应交还插件前
+        // 删除该字段，因此不改变 runPython 的公开返回契约。
+        object.insert(
+            "__larkPythonStderr".to_string(),
+            Value::String(stderr.into_owned()),
+        );
+    }
+    Ok(response)
 }
 
 /// 从解释器所在目录向上逐级查找 `pyvenv.cfg`，判断它是否属于某个虚拟环境。
@@ -361,6 +376,26 @@ mod python_plugin_tests {
             .run(serde_json::json!({"text": text}), 10000)
             .unwrap();
         assert_eq!(result["result"], text);
+        assert!(result["__larkPythonStderr"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("diagnostic"));
+    }
+
+    #[test]
+    fn plugin_python_exposes_stderr_for_frontend_logging() {
+        let script = ScriptFile::new(
+            "import json, sys\nsys.stderr.write('print from plugin\\n')\nprint(json.dumps({'ok': True, 'result': 42}))\n",
+        );
+        let result = script.run(serde_json::json!({}), 5000).unwrap();
+        assert_eq!(result["result"], 42);
+        assert_eq!(
+            result["__larkPythonStderr"]
+                .as_str()
+                .unwrap_or_default()
+                .trim_end(),
+            "print from plugin"
+        );
     }
 
     #[test]

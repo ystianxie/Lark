@@ -435,7 +435,11 @@ const db_app_habit_params = {
 };
 
 const modifyWindowSize = async (size) => {
-    if (size === "expanded") {
+    document.getElementById("mainDiv")?.setAttribute("data-window-mode", String(size));
+    if (size === "workspace") {
+        size = new LogicalSize(980, 820);
+        document.getElementById("mainDiv").style.height = (size.height * 0.97) + "px";
+    } else if (size === "expanded") {
         size = new LogicalSize(718, 600);
         document.getElementById("mainDiv").style.height = (size.height * 0.97) + "px";
     } else if (size === "compact") {

@@ -4,6 +4,7 @@ import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import "./showComponent.css";
 import PluginCreator from "./PluginCreator";
 import PluginSettings from "./PluginSettings";
+import {modifyWindowSize} from "../template.jsx";
 
 function PluginIcon({plugin}) {
     const [failed, setFailed] = useState(false);
@@ -23,6 +24,11 @@ export default function Component({plugins = {}, pluginStatus, loading, error, o
     const [creating, setCreating] = useState(false);
     const [editing, setEditing] = useState(null);
     const [configuring, setConfiguring] = useState(null);
+    useEffect(() => {
+        if (!creating && !editing) return undefined;
+        modifyWindowSize("workspace");
+        return () => { modifyWindowSize("expanded"); };
+    }, [creating, editing]);
     // 由搜索结果拦截带过来的目标插件：组件库加载出插件后自动进入它的配置页。
     const openedConfigRequest = useRef("");
     useEffect(() => {

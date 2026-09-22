@@ -43,10 +43,16 @@ export function createPluginContext(manifest, state = {}) {
     // 解释器由宿主的「应用设置 → Python 环境」决定，不再从 manifest 读取：
     // manifest.runtime.pythonPath 从来没有写入端，是个只读不写的死字段（已移除）。
     // 同样不传 timeoutMs，由宿主用默认的 30 秒。
-    api.runPython = (task, args = {}) => invoke("run_python_plugin", {
-      scriptPath: `${normalizePluginPath(manifest.__root)}/python/main.py`,
-      request: { id: `${manifest.id}-${Date.now()}`, task, args },
-    });
+    api.runPython = async (task, args = {}) => {
+      const response = await invoke("run_python_plugin", {
+        scriptPath: `${normalizePluginPath(manifest.__root)}/python/main.py`,
+        request: { id: `${manifest.id}-${Date.now()}`, task, args },
+      });
+      const stderr = response?.__larkPythonStderr;
+      if (stderr) console.log(`[插件 ${manifest.id} / Python ${task}]\n${stderr}`);
+      if (response && typeof response === "object") delete response.__larkPythonStderr;
+      return response;
+    };
   }
   // 配置是插件自己的数据，不额外引入权限项：宿主只按 manifest 的 config 声明过滤键。
   // 必须每次调用都向宿主取值，不能在此快照——runtime 会按插件 id 缓存且 activate 只执行一次，

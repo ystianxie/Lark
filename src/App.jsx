@@ -174,6 +174,9 @@ const App = () => {
       // panel 仍由主输入框接收键盘事件，但不允许按键修改输入内容。
       if (event.key !== "Tab" || componentInfoRef.current?.data !== "showComponent") event.preventDefault();
       if (event.key === "Escape" && isComposing.ppos === 0) {
+        // workspace 内部页面（例如插件创建/编辑器）自己处理 Esc，
+        // 不要让宿主的全局处理器直接清空 panel。
+        if (document.getElementById("mainDiv")?.dataset.windowMode === "workspace") return;
         initStatusRef.current?.();
         setTimeout(() => inputBox.current?.focus(), 50);
       }
@@ -982,6 +985,7 @@ const App = () => {
       if (componentInfoRef.current?.type === "panel") {
         if (event.key === "Escape" && isComposing.ppos === 0) {
           event.preventDefault();
+          if (document.getElementById("mainDiv")?.dataset.windowMode === "workspace") return;
           initStatusRef.current?.();
           setTimeout(() => inputBox.current?.focus(), 50);
         }
