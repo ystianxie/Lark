@@ -1,4 +1,5 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { actions, createNotification, notify } from "./utils/notify";
 
 const runtimes = new Map();
 
@@ -62,7 +63,10 @@ export function createPluginContext(manifest, state = {}) {
   return {
     theme: state.theme || {},
     input: { text: state.text || "", file: state.file || null, selection: state.selection || null },
-    ui: state.ui || {},
+    ui: {
+      ...(state.ui || {}),
+      ...((manifest.permissions || []).includes("notification.send") ? { notify, actions } : {}),
+    },
     api,
   };
 }
@@ -94,5 +98,22 @@ export async function loadPluginRuntime(manifest, state = {}) {
 export async function executePluginWorkflow(manifest, workflow, state = {}, payload = {}) {
   const runtime = await loadPluginRuntime(manifest, state);
   if (typeof runtime?.execute !== "function") throw new Error(`插件 ${manifest.id} 未提供 execute()`);
-  return runtime.execute(workflow.handler || workflow.action || workflow.id, payload);
+  const value = await runtime.execute(workflow.handler || workflow.action || workflow.id, payload);
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Object.hasOwn(value, "notification")) {
+    return value;
+  }
+  if (value.ok !== true) throw new Error("Python 结果未成功，忽略其中的通知");
+  const result = value.result;
+  const notification = value.notification;
+  if (payload.allowResultNotification && (manifest.permissions || []).includes("notification.send")) {
+    if (!notification || typeof notification !== "object" || Array.isArray(notification)) {
+      throw new TypeError("Python 结果 notification 必须是通知对象");
+    }
+    const { level, ...options } = notification;
+    const normalized = createNotification(level, options);
+    await notify[level](normalized);
+  } else if (payload.allowResultNotification && notification !== undefined) {
+    console.warn(`插件 ${manifest.id} 返回了 notification，但未声明 notification.send，已忽略`);
+  }
+  return result;
 }

@@ -349,7 +349,7 @@ const App = () => {
       plugin,
       workflow,
       { text, file: pistol, ui: { close: () => initStatus() } },
-      { text, file: pistol }
+      { text, file: pistol, allowResultNotification: false }
     );
     return normalizePluginResults(response, plugin.name).map((item) => ({
       ...item,
@@ -395,9 +395,9 @@ const App = () => {
         return;
       }
       try {
-        const result = await executePluginWorkflow(plugin, currentComponent,
-          { text: inputValue, file: pistol, ui: { close: () => initStatus() } },
-          { text: inputValue, file: pistol });
+          const result = await executePluginWorkflow(plugin, currentComponent,
+            { text: inputValue, file: pistol, ui: { close: () => initStatus() } },
+          { text: inputValue, file: pistol, allowResultNotification: true });
         const results = normalizePluginResults(result, plugin.name);
         if (results.length) initStatus(results); else initStatus();
       } catch (error) {

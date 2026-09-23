@@ -1,4 +1,4 @@
-export const pluginPermissions = ["url.open", "file.open", "clipboard.read", "clipboard.write"];
+export const pluginPermissions = ["url.open", "file.open", "clipboard.read", "clipboard.write", "notification.send"];
 
 // 与后端 validate_plugin_config 的类型白名单保持一致。
 export const pluginConfigFieldTypes = [
@@ -216,10 +216,12 @@ export function generatePluginFiles(config, existingIds = []) {
     } else {
       if (!workflow.code.trim()) throw new Error(`请填写 ${workflowId} 的业务代码`);
       result.handler = workflowId;
-      result.interactive = true;
-      result.debounceMs = 200;
-      if (workflow.type === "python") permissions.add("python.execute");
-      else for (const permission of workflow.permissions || []) {
+      result.interactive = workflow.interactive !== false;
+      if (result.interactive) result.debounceMs = workflow.debounceMs === 200 ? 200 : 80;
+      if (workflow.type === "python") {
+        permissions.add("python.execute");
+      }
+      for (const permission of workflow.permissions || []) {
         if (!pluginPermissions.includes(permission)) throw new Error("不支持的 API 权限");
         permissions.add(permission);
       }
@@ -235,7 +237,7 @@ export function generatePluginFiles(config, existingIds = []) {
   if (configFields.length) scaffoldConfig.config = {schemaVersion: 1, fields: configFields};
   const handlers = config.workflows.filter(workflow => workflow.type !== "url").map(workflow => {
     const body = workflow.type === "python"
-      ? `const config = await context.api.getConfig();\nconst response = await context.api.runPython(${JSON.stringify(workflow.id.trim())}, {text, file, config});\nif (!response?.ok) throw new Error(response?.error || "Python 执行失败");\nreturn response.result;`
+      ? `const config = await context.api.getConfig();\nconst response = await context.api.runPython(${JSON.stringify(workflow.id.trim())}, {text, file, config});\nif (!response?.ok) throw new Error(response?.error || "Python 执行失败");\nreturn {ok: true, result: response.result, ...(response.notification === undefined ? {} : {notification: response.notification})};`
       : workflow.code;
     return `[${JSON.stringify(workflow.id.trim())}, async (text, file, context) => {\n${body}\n}]`;
   });
@@ -252,7 +254,11 @@ ${handlers.join(",\n")}
       const text = payload.text ?? "";
       const file = payload.file ?? null;
       const currentContext = {...context, input: {...context.input, text, file}};
-      return normalizePluginResults(await handler(text, file, currentContext), ${JSON.stringify(name)});
+      const value = await handler(text, file, currentContext);
+      if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "notification")) {
+        return {ok: value.ok === true, result: normalizePluginResults(value.result, ${JSON.stringify(name)}), notification: value.notification};
+      }
+      return normalizePluginResults(value, ${JSON.stringify(name)});
     }
   };
 }
@@ -274,7 +280,7 @@ ${handlers.join(",\n")}
     const functions = pythonWorkflows.map((workflow, index) =>
       `def handler_${index}(text, file, config):\n${workflow.code.split("\n").map(line => `    ${line}`).join("\n")}\n`);
     const dispatch = pythonWorkflows.map((workflow, index) => `${JSON.stringify(workflow.id.trim())}: handler_${index}`).join(", ");
-    files["python/main.py"] = `import contextlib\nimport json\nimport sys\n\n${functions.join("\n")}\nhandlers = {${dispatch}}\n\ntry:\n    request = json.load(sys.stdin)\n    args = request.get("args", {})\n    handler = handlers[request["task"]]\n    with contextlib.redirect_stdout(sys.stderr):\n        result = handler(args.get("text", ""), args.get("file"), args.get("config") or {})\n    response = {"ok": True, "result": result}\n    encoded = json.dumps(response, ensure_ascii=True)\nexcept Exception as error:\n    encoded = json.dumps({"ok": False, "error": str(error)}, ensure_ascii=True)\nprint(encoded, flush=True)\n`;
+    files["python/main.py"] = `import contextlib\nimport json\nimport sys\n\n${functions.join("\n")}\nhandlers = {${dispatch}}\n\ntry:\n    request = json.load(sys.stdin)\n    args = request.get("args", {})\n    handler = handlers[request["task"]]\n    with contextlib.redirect_stdout(sys.stderr):\n        result = handler(args.get("text", ""), args.get("file"), args.get("config") or {})\n    if isinstance(result, dict) and "notification" in result:\n        response = {"ok": True, "result": result.get("result"), "notification": result["notification"]}\n    else:\n        response = {"ok": True, "result": result}\n    encoded = json.dumps(response, ensure_ascii=True)\nexcept Exception as error:\n    encoded = json.dumps({"ok": False, "error": str(error)}, ensure_ascii=True)\nprint(encoded, flush=True)\n`;
   }
   return files;
 }

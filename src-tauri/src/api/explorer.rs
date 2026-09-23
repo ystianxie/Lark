@@ -677,24 +677,37 @@ pub fn read_app_info(app_path: &str) -> String {
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn open_explorer(path: &str) -> String {
+    match open_explorer_result(path) {
+        Ok(()) => "打开成功！".to_string(),
+        Err(error) => {
+            eprintln!("打开资源管理器失败：{error}");
+            "打开失败！".to_string()
+        }
+    }
+}
+
+pub fn open_explorer_result(path: &str) -> Result<(), String> {
     let mut cmd = if cfg!(target_os = "macos") {
         let mut command = Command::new("open");
-        command.arg("-R");
         command.arg(path);
         command
     } else if cfg!(target_os = "windows") {
         let mut command = Command::new("explorer");
-        command.arg(format!("/select,{}", path));
+        command.arg(path);
         command
     } else if cfg!(target_os = "linux") {
         let mut command = Command::new("xdg-open");
-        command.arg(path).spawn().expect("打开失败！");
         command
+            .arg(path)
+            .spawn()
+            .map_err(|error| format!("无法打开目录：{error}"))?;
+        return Ok(());
     } else {
-        panic!("Unsupported OS");
+        return Err("当前系统不支持打开资源管理器".into());
     };
 
-    cmd.spawn().expect("打开失败！");
+    cmd.spawn()
+        .map_err(|error| format!("无法打开目录：{error}"))?;
 
     #[cfg(target_os = "windows")]
     if let Some(folder_name) = Path::new(path)
@@ -709,7 +722,7 @@ pub fn open_explorer(path: &str) -> String {
         });
     }
 
-    "打开成功！".to_string()
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]

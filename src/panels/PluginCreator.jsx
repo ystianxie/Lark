@@ -211,9 +211,9 @@ export default function PluginCreator({existingIds, onRegistered, onClose, editP
                     <p className="library-hint">可用参数：{workflow.type === "python" ? "text、file、config（已保存的插件配置，未配置时为空字典）" : "text、file、context"}。
                             返回文本、数字、{'{title, data, desc}'} 或数组；空返回不显示结果。</p>
                         {workflow.type === "python" ? <p className="library-hint">使用系统 Python 或已有解释器配置；本次不创建虚拟环境或安装依赖。
-                            config 的键即变量名，用 config.get("api_key") 读取；未配置时请自行兜底默认值。</p>
-                            : <label>宿主 API 权限<Checkbox.Group options={pluginPermissions} value={workflow.permissions}
-                                onChange={value => updateWorkflow(index, "permissions", value)}/></label>}
+                            config 的键即变量名，用 config.get("api_key") 读取；未配置时请自行兜底默认值。</p> : null}
+                        <label>宿主 API 权限<Checkbox.Group options={pluginPermissions} value={workflow.permissions}
+                            onChange={value => updateWorkflow(index, "permissions", value)}/></label>
                     </>}
                     <Button danger size="small" disabled={config.workflows.length === 1} onClick={() => setConfig({...config,
                         workflows: config.workflows.filter((_, position) => position !== index)})}>删除此入口</Button>

@@ -22,9 +22,8 @@ use windows::{
             Shell::{
                 Common::ITEMIDLIST, SHCNRF_InterruptLevel, SHCNRF_ShellLevel,
                 SHChangeNotifyDeregister, SHChangeNotifyEntry, SHChangeNotifyRegister,
-                SHParseDisplayName, SHCNE_ASSOCCHANGED, SHCNE_CREATE, SHCNE_DELETE,
-                SHCNE_MKDIR, SHCNE_RENAMEFOLDER, SHCNE_RENAMEITEM, SHCNE_RMDIR,
-                SHCNE_UPDATEITEM,
+                SHParseDisplayName, SHCNE_ASSOCCHANGED, SHCNE_CREATE, SHCNE_DELETE, SHCNE_MKDIR,
+                SHCNE_RENAMEFOLDER, SHCNE_RENAMEITEM, SHCNE_RMDIR, SHCNE_UPDATEITEM,
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,

@@ -201,8 +201,8 @@ fn run_python_plugin_blocking(
         .unwrap()
         .map_err(|error| format!("传递 Python 参数失败：{error}"))?;
     let stdout = String::from_utf8_lossy(&output);
-    let mut response: Value = serde_json::from_str(stdout.trim())
-        .map_err(|e| format!("invalid python response: {e}"))?;
+    let mut response: Value =
+        serde_json::from_str(stdout.trim()).map_err(|e| format!("invalid python response: {e}"))?;
     let stderr = String::from_utf8_lossy(&errors);
     if !stderr.is_empty() {
         let object = response
@@ -597,12 +597,13 @@ pub fn open_url(url: &str) {
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn open_file(file_path: &str) {
-    let path = Path::new(file_path); // 替换为你的文件路径
-
-    // 使用默认应用程序打开文件
-    if let Err(e) = that(path) {
-        eprintln!("Failed to open file: {}", e);
+    if let Err(error) = open_file_result(file_path) {
+        eprintln!("Failed to open file: {}", error);
     }
+}
+
+pub fn open_file_result(file_path: &str) -> Result<(), String> {
+    that(Path::new(file_path)).map_err(|error| format!("无法打开文件：{error}"))
 }
 
 #[tauri::command(rename_all = "camelCase")]

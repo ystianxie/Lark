@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 mod api;
 mod config;
+mod notification;
 mod utils;
 
 use crate::api::clipboard::{
@@ -33,16 +34,17 @@ use crate::config::{
     save_index_settings_data, save_plugin_settings_data, save_setting_data,
     save_snippet_settings_data, snippet_settings,
 };
+use crate::notification::{NotificationAction, NotificationInput, NotificationManager};
 use crate::utils::database::{FileIndex, IndexSQL, RecordSQL};
 use crate::utils::dirs::get_app_dir;
 use crate::utils::window::set_window_show;
+use auto_launch::AutoLaunchBuilder;
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconEvent},
-    App, AppHandle, Emitter, Manager,
+    App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
-use auto_launch::AutoLaunchBuilder;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 static HOTKEY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -50,6 +52,277 @@ static HOTKEY_CAPTURE_BINDINGS: OnceLock<Mutex<Option<HotkeyBindings>>> = OnceLo
 static HOTKEY_REGISTRATION_LOCK: Mutex<()> = Mutex::new(());
 static INDEX_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 static FILE_INDEX_RUNNING: AtomicBool = AtomicBool::new(false);
+
+fn emit_notification_state(app: &AppHandle, manager: &Mutex<NotificationManager>) {
+    let snapshot = manager.lock().unwrap();
+    let payload = serde_json::json!({
+        "notifications": snapshot.notifications(),
+        "enabled": snapshot.is_enabled(),
+        "paused": snapshot.is_paused(),
+    });
+    drop(snapshot);
+    let _ = app.emit("notification-state", payload);
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn notify(app: AppHandle, notification: NotificationInput) -> Result<Option<String>, String> {
+    println!("[notification] notify command entered");
+    notification::validate_input(&notification)?;
+    let state = app.state::<Mutex<NotificationManager>>();
+    let added = state.lock().unwrap().enqueue(notification);
+    println!("[notification] enqueue completed: {}", added.is_some());
+    emit_notification_state(&app, &state);
+    println!("[notification] state emitted");
+    if added.is_some() && !state.lock().unwrap().is_paused() && state.lock().unwrap().is_enabled() {
+        let ui_app = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            println!("[notification] ui dispatch started");
+            if let Some(window) = ui_app.get_webview_window("notification") {
+                if let Err(error) = window.show() {
+                    eprintln!("[notification] show window failed: {error}");
+                }
+            } else {
+                eprintln!("[notification] window was not pre-created; notification queued");
+            }
+        });
+        println!("[notification] ui dispatch queued");
+    }
+    println!("[notification] notify command returning");
+    Ok(added.map(|item| item.id))
+}
+
+#[tauri::command]
+fn get_notifications(state: tauri::State<'_, Mutex<NotificationManager>>) -> serde_json::Value {
+    let manager = state.lock().unwrap();
+    serde_json::json!({
+        "notifications": manager.notifications(),
+        "enabled": manager.is_enabled(),
+        "paused": manager.is_paused(),
+    })
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn dismiss_notification(app: AppHandle, id: String) -> Result<(), String> {
+    let state = app.state::<Mutex<NotificationManager>>();
+    state.lock().unwrap().dismiss(&id);
+    emit_notification_state(&app, &state);
+    hide_notification_window_if_empty(&app, &state);
+    Ok(())
+}
+
+fn hide_notification_window_if_empty(app: &AppHandle, state: &Mutex<NotificationManager>) {
+    let manager = state.lock().unwrap();
+    if manager.notifications().is_empty() || manager.is_paused() || !manager.is_enabled() {
+        if let Some(window) = app.get_webview_window("notification") {
+            let _ = window.hide();
+        }
+    }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn set_notifications_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let state = app.state::<Mutex<NotificationManager>>();
+    state.lock().unwrap().set_enabled(enabled);
+    emit_notification_state(&app, &state);
+    if !enabled {
+        if let Some(window) = app.get_webview_window("notification") {
+            window.hide().map_err(|error| error.to_string())?;
+        }
+    } else if !state.lock().unwrap().is_paused()
+        && !state.lock().unwrap().notifications().is_empty()
+    {
+        ensure_notification_window(&app)?;
+        if let Some(window) = app.get_webview_window("notification") {
+            window.show().map_err(|error| error.to_string())?;
+        }
+    } else if let Some(window) = app.get_webview_window("notification") {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn set_notifications_paused(app: AppHandle, paused: bool) -> Result<(), String> {
+    let state = app.state::<Mutex<NotificationManager>>();
+    {
+        let mut manager = state.lock().unwrap();
+        let was_paused = manager.is_paused();
+        manager.set_paused(paused);
+        if was_paused && !paused {
+            manager.reset_warning_durations();
+        }
+    }
+    emit_notification_state(&app, &state);
+    if paused {
+        if let Some(window) = app.get_webview_window("notification") {
+            window.hide().map_err(|error| error.to_string())?;
+        }
+    } else if !state.lock().unwrap().notifications().is_empty()
+        && state.lock().unwrap().is_enabled()
+    {
+        ensure_notification_window(&app)?;
+        if let Some(window) = app.get_webview_window("notification") {
+            window.show().map_err(|error| error.to_string())?;
+        }
+    } else if let Some(window) = app.get_webview_window("notification") {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn invoke_notification_action(
+    app: AppHandle,
+    id: String,
+    action_index: usize,
+) -> Result<(), String> {
+    let state = app.state::<Mutex<NotificationManager>>();
+    let action = {
+        let manager = state.lock().unwrap();
+        let notification = manager
+            .notifications()
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| "通知不存在".to_string())?;
+        notification
+            .actions
+            .get(action_index)
+            .cloned()
+            .ok_or_else(|| "通知操作不存在".to_string())?
+    };
+    notification::action::execute_action(&action)?;
+    state.lock().unwrap().dismiss(&id);
+    emit_notification_state(&app, &state);
+    hide_notification_window_if_empty(&app, &state);
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn notification_window_resize(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err("通知窗口尺寸无效".into());
+    }
+    if let Some(window) = app.get_webview_window("notification") {
+        window
+            .set_size(tauri::LogicalSize::new(width.min(480.0), height.min(800.0)))
+            .map_err(|error| error.to_string())?;
+        position_notification_window(&app, &window)?;
+    }
+    Ok(())
+}
+
+fn ensure_notification_window(app: &AppHandle) -> Result<(), String> {
+    if app.get_webview_window("notification").is_none() {
+        println!("[notification] building notification window");
+        let url = WebviewUrl::App("index.html?window=notification".into());
+        WebviewWindowBuilder::new(app, "notification", url)
+            .title("Lark Notification")
+            .inner_size(380.0, 120.0)
+            .min_inner_size(320.0, 60.0)
+            .max_inner_size(480.0, 800.0)
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            .resizable(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .focused(false)
+            .visible(false)
+            .build()
+            .map_err(|error| format!("创建通知窗口失败：{error}"))?;
+        println!("[notification] notification window built");
+        // 新 WebView 尚未完成加载时读取 inner_size/current_monitor 可能阻塞。
+        // 先让窗口进入消息循环，尺寸同步后由 notification_window_resize 定位。
+        return Ok(());
+    }
+    if let Some(window) = app.get_webview_window("notification") {
+        println!("[notification] positioning existing notification window");
+        position_notification_window(app, &window)?;
+        println!("[notification] existing notification window positioned");
+    }
+    Ok(())
+}
+
+fn position_notification_window<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    let monitor = app
+        .get_webview_window("skylark")
+        .and_then(|main| main.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten())
+        .ok_or_else(|| "无法获取通知窗口显示器".to_string())?;
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let logical_size = window
+        .inner_size()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale);
+    let (x, y) = notification_position(
+        work.position.x,
+        work.position.y,
+        work.size.width,
+        work.size.height,
+        logical_size.width,
+        logical_size.height,
+        scale,
+        16.0,
+    );
+    window
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|error| error.to_string())
+}
+
+fn notification_position(
+    work_x: i32,
+    work_y: i32,
+    work_width: u32,
+    work_height: u32,
+    window_width_logical: f64,
+    window_height_logical: f64,
+    scale: f64,
+    margin_logical: f64,
+) -> (i32, i32) {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let margin = (margin_logical.max(0.0) * scale).round() as i32;
+    let width = (window_width_logical.max(0.0) * scale).round() as u32;
+    let height = (window_height_logical.max(0.0) * scale).round() as u32;
+    let available_width = work_width.saturating_sub(margin as u32);
+    let available_height = work_height.saturating_sub(margin as u32);
+    let width = width.min(available_width);
+    let height = height.min(available_height);
+    let right = work_x.saturating_add(work_width.min(i32::MAX as u32) as i32);
+    let x = right
+        .saturating_sub(width.min(i32::MAX as u32) as i32)
+        .saturating_sub(margin);
+    let y = work_y.saturating_add(margin);
+    (x, y)
+}
+
+#[cfg(test)]
+mod notification_position_tests {
+    use super::notification_position;
+
+    #[test]
+    fn positions_at_work_area_top_right_in_physical_pixels() {
+        assert_eq!(
+            notification_position(1920, 40, 2560, 1400, 380.0, 200.0, 1.5, 16.0),
+            (3886, 64)
+        );
+    }
+
+    #[test]
+    fn clamps_notification_to_small_work_area() {
+        assert_eq!(
+            notification_position(0, 0, 300, 120, 380.0, 200.0, 1.0, 16.0),
+            (0, 16)
+        );
+    }
+}
 
 fn hotkey_capture_bindings() -> &'static Mutex<Option<HotkeyBindings>> {
     HOTKEY_CAPTURE_BINDINGS.get_or_init(|| Mutex::new(None))
@@ -436,19 +709,28 @@ fn get_app_settings() -> Result<serde_json::Value, String> {
 fn auto_launch_instance() -> Result<auto_launch::AutoLaunch, String> {
     let path = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut builder = AutoLaunchBuilder::new();
-    builder.set_app_name("Lark").set_app_path(path.to_string_lossy().as_ref());
+    builder
+        .set_app_name("Lark")
+        .set_app_path(path.to_string_lossy().as_ref());
     builder.build().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_auto_launch_enabled() -> Result<bool, String> {
-    auto_launch_instance()?.is_enabled().map_err(|e| e.to_string())
+    auto_launch_instance()?
+        .is_enabled()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn set_auto_launch_enabled(enabled: bool) -> Result<(), String> {
     let auto = auto_launch_instance()?;
-    if enabled { auto.enable() } else { auto.disable() }.map_err(|e| e.to_string())
+    if enabled {
+        auto.enable()
+    } else {
+        auto.disable()
+    }
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -873,6 +1155,8 @@ fn main() {
         .plugin(win_file_drop::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
+            app.manage(Mutex::new(NotificationManager::default()));
+            notification::manager::start_expiration_worker(app.handle().clone());
             let index_service = api::file_watcher::FileIndexUpdateService::start();
             app.manage(Mutex::new(index_service));
             app.manage(Mutex::new(None::<api::file_watcher::FileWatcher>));
@@ -932,6 +1216,12 @@ fn main() {
             utils::window::set_window_shadow(app);
             println!("{:?}", &hotkey_awaken);
             let main_window = app.get_window("skylark").unwrap();
+            // Notification WebView is created during app startup, never on the
+            // notification command path. This keeps plugin/business calls
+            // independent from WebView construction.
+            if let Err(error) = ensure_notification_window(app.handle()) {
+                eprintln!("[notification] startup window creation failed: {error}");
+            }
             let position = main_window.outer_position().unwrap();
             println!("{:?}", position);
 
@@ -983,7 +1273,32 @@ fn main() {
                 let _ = app.emit(event_name, ());
             }
         })
+        .on_window_event(|window, event| {
+            if window.label() != "skylark"
+                || !matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_)
+                        | tauri::WindowEvent::Resized(_)
+                        | tauri::WindowEvent::ScaleFactorChanged { .. }
+                )
+            {
+                return;
+            }
+            let app = window.app_handle();
+            if let Some(notification) = app.get_webview_window("notification") {
+                if let Err(error) = position_notification_window(&app, &notification) {
+                    log::warn!("重新定位通知窗口失败：{error}");
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            notify,
+            get_notifications,
+            dismiss_notification,
+            invoke_notification_action,
+            set_notifications_enabled,
+            set_notifications_paused,
+            notification_window_resize,
             search_keyword,
             create_file_index,
             create_app_index,

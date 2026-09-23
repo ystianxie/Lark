@@ -162,7 +162,12 @@ fn validate_plugin_files(plugin_id: &str, files: &BTreeMap<String, String>) -> R
         !matches!(
             permission.as_str(),
             Some(
-                "url.open" | "file.open" | "clipboard.read" | "clipboard.write" | "python.execute"
+                "url.open"
+                    | "file.open"
+                    | "clipboard.read"
+                    | "clipboard.write"
+                    | "python.execute"
+                    | "notification.send"
             )
         )
     }) {
