@@ -1,0 +1,60 @@
+:root { color-scheme: light dark; }
+html, body, #root { margin: 0; min-width: 0; background: transparent; overflow: hidden; }
+.notification-stack {
+  --notification-width: 380px;
+  --notification-collapsed-limit: 520px;
+  --notification-expanded-limit: 800px;
+  box-sizing: border-box;
+  width: min(var(--notification-width), 100vw);
+  max-height: var(--notification-collapsed-limit);
+  padding: 5px 6px 9px;
+  overflow: hidden;
+  color: CanvasText;
+  font: 14px/1.45 "Segoe UI", sans-serif;
+}
+.notification-stack--expanded {
+  /* 调参入口：实验通知完全展开后的最大高度，可按实际屏幕体验调整。 */
+  max-height: var(--notification-expanded-limit);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.notification-stack__cards { position: relative; display: flex; flex-direction: column; gap: 9px; }
+.notification-card {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  padding: 13px 42px 13px 16px;
+  border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, Canvas 92%, CanvasText 8%);
+  box-shadow: 0 8px 28px #0003;
+  animation: notification-enter 180ms cubic-bezier(.2,.8,.2,1) both;
+  animation-delay: calc(var(--card-index) * 25ms);
+}
+.notification-card--success { border-left: 4px solid #36a269; }
+.notification-card--info { border-left: 4px solid #3985d8; }
+.notification-card--warning { border-left: 4px solid #d69725; }
+.notification-card--error { border-left: 4px solid #d94d4d; }
+.notification-card__content { min-width: 0; }
+.notification-card__title { display: -webkit-box; overflow: hidden; font-weight: 650; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.notification-card__message { position: relative; margin-top: 4px; }
+.notification-card__message p { display: -webkit-box; margin: 0; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.notification-card__message--expanded p { display: block; max-height: var(--notification-expanded-limit); overflow-y: auto; }
+.notification-card__more { margin-top: 3px; padding: 0; border: 0; background: transparent; color: #3985d8; cursor: pointer; }
+.notification-card__close { position: absolute; top: 6px; right: 8px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 20px; line-height: 1; cursor: pointer; }
+.notification-card__close:hover { background: color-mix(in srgb, CanvasText 10%, transparent); }
+.notification-card footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.notification-card footer button { padding: 5px 10px; border: 0; border-radius: 7px; cursor: pointer; }
+.notification-card--has-error { border-color: #d94d4d; }
+.notification-card--exiting { animation: notification-exit 150ms ease-in both; pointer-events: none; }
+.notification-card__error { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; color: #d94d4d; overflow-wrap: anywhere; }
+.notification-card__error button { border: 0; background: transparent; color: inherit; cursor: pointer; }
+.notification-stack__pile { position: relative; height: 35px; margin: 0 9px; border: 0; background: transparent; color: CanvasText; cursor: pointer; }
+.notification-stack__pile-shadow, .notification-stack__pile-face { position: absolute; left: 4px; right: 4px; height: 15px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 0 0 10px 10px; background: color-mix(in srgb, Canvas 82%, CanvasText 18%); }
+.notification-stack__pile-shadow:first-child { top: 0; transform: translateY(0); }
+.notification-stack__pile-shadow:nth-child(2) { top: 4px; left: 2px; right: 2px; }
+.notification-stack__pile-face { top: 8px; height: 24px; display: grid; place-items: center; border-radius: 0 0 10px 10px; font-size: 12px; }
+.notification-stack__collapse { display: block; margin: 9px auto 0; padding: 5px 10px; border: 0; border-radius: 8px; background: color-mix(in srgb, CanvasText 10%, transparent); color: inherit; cursor: pointer; }
+@keyframes notification-enter { from { opacity: 0; transform: translateY(-7px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes notification-exit { to { opacity: 0; transform: translateX(18px) scale(.96); max-height: 0; margin: 0; padding-top: 0; padding-bottom: 0; } }
+@media (prefers-reduced-motion: reduce) { .notification-card { animation: none; } }
