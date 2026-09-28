@@ -44,6 +44,9 @@ importers:
       antd:
         specifier: ^5.23.0
         version: 5.23.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      dayjs:
+        specifier: ^1.11.23
+        version: 1.11.23
       file-extension-icon-js:
         specifier: ^1.1.6
         version: 1.1.6(@testing-library/dom@7.31.2)(@types/webpack@4.41.40)(eslint@7.32.0)(sockjs-client@1.6.1)(typescript@4.9.5)
@@ -2871,8 +2874,8 @@ packages:
     resolution: {integrity: sha512-BS8PfmtDGnrgYdOonGZQdLZslWIeCGFP9tpan0hi1Co2Zr2NKADsvGYA8XxuG/4UWgJ6Cjtv+YJnB6MM69QGlQ==}
     engines: {node: '>= 0.4'}
 
-  dayjs@1.11.12:
-    resolution: {integrity: sha512-Rt2g+nTbLlDWZTwwrIXjy9MeiZmSDI375FvZs72ngxx8PDC6YXOeR3q5LAuPzjZQxhiWdRKac7RKV+YyQYfYIg==}
+  dayjs@1.11.23:
+    resolution: {integrity: sha512-QDTCU0M0MxR3hQfnlDJfwekQiaanm1ubOD231u73WBckQ/fsamwRLiE2GBz6D3a/xF1NgfiDLJjXBa1hYOYTtQ==}
 
   debug@2.6.9:
     resolution: {integrity: sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==}
@@ -9989,7 +9992,7 @@ snapshots:
       '@rc-component/trigger': 2.2.6(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       classnames: 2.5.1
       copy-to-clipboard: 3.3.3
-      dayjs: 1.11.12
+      dayjs: 1.11.23
       rc-cascader: 3.32.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       rc-checkbox: 3.5.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       rc-collapse: 3.9.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
@@ -10005,7 +10008,7 @@ snapshots:
       rc-motion: 2.9.5(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       rc-notification: 5.6.2(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       rc-pagination: 5.0.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
-      rc-picker: 4.9.2(dayjs@1.11.12)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
+      rc-picker: 4.9.2(dayjs@1.11.23)(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       rc-progress: 4.0.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       rc-rate: 2.13.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
       rc-resize-observer: 1.4.3(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
@@ -11203,7 +11206,7 @@ snapshots:
       es-errors: 1.3.0
       is-data-view: 1.0.2
 
-  dayjs@1.11.12: {}
+  dayjs@1.11.23: {}
 
   debug@2.6.9(supports-color@6.1.0):
     dependencies:
@@ -15071,7 +15074,7 @@ snapshots:
       react: 19.0.0
       react-dom: 19.0.0(react@19.0.0)
 
-  rc-picker@4.9.2(dayjs@1.11.12)(react-dom@19.0.0(react@19.0.0))(react@19.0.0):
+  rc-picker@4.9.2(dayjs@1.11.23)(react-dom@19.0.0(react@19.0.0))(react@19.0.0):
     dependencies:
       '@babel/runtime': 7.26.0
       '@rc-component/trigger': 2.2.6(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
@@ -15082,7 +15085,7 @@ snapshots:
       react: 19.0.0
       react-dom: 19.0.0(react@19.0.0)
     optionalDependencies:
-      dayjs: 1.11.12
+      dayjs: 1.11.23
 
   rc-progress@4.0.0(react-dom@19.0.0(react@19.0.0))(react@19.0.0):
     dependencies:

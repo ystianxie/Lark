@@ -1,11 +1,9 @@
 import "./app.css";
-import React, {lazy, Suspense} from "react";
+import React, {Suspense} from "react";
 import {flushSync} from "react-dom";
 import {LogicalPosition} from "@tauri-apps/api/window";
 import {
-    WebviewWindow,
-    getCurrentWebviewWindow,
-    getAllWebviewWindows
+    getCurrentWebviewWindow
 } from "@tauri-apps/api/webviewWindow";
 import {getCurrentWebview} from "@tauri-apps/api/webview";
 import {useEffect, useRef, useState} from "react";
@@ -749,9 +747,11 @@ const App = () => {
                 if (searchType === "app") {
                     for (let pluginName in insidePluginList) {
                         let plugin = insidePluginList[pluginName];
+                        const keywords = Array.isArray(plugin.keywords) ? plugin.keywords : [];
                         if (
                             plugin.title.startsWith(inputValue) ||
-                            plugin.desc.startsWith(inputValue)
+                            plugin.desc.startsWith(inputValue) ||
+                            keywords.some((keyword) => keyword.startsWith(inputValue))
                         ) {
                             result.push(plugin);
                         }

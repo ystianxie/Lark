@@ -1,0 +1,169 @@
+.memo-page {
+    height: 100%;
+    display: flex;
+    background: #f6f6f4;
+    color: #292929
+}
+
+.memo-sidebar {
+    width: 250px;
+    border-right: 1px solid #e4e4df;
+    padding: 22px 14px;
+    box-sizing: border-box
+}
+
+.memo-sidebar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 4px 16px
+}
+
+.memo-sidebar h1 {
+    margin: 0;
+    font-size: 24px
+}
+
+.memo-sidebar-head button, .memo-placeholder button {
+    border: 0;
+    border-radius: 7px;
+    padding: 5px 11px;
+    background: #4f7df3;
+    color: #fff;
+    font-size: 20px;
+    cursor: pointer
+}
+
+.memo-search {
+    box-sizing: border-box;
+    width: 100%;
+    height: 34px;
+    border: 1px solid #ddd;
+    border-radius: 7px;
+    padding: 0 10px;
+    outline: none;
+    color: #292929;
+    background: #fff
+}
+
+.memo-list {
+    display: grid;
+    gap: 5px;
+    margin-top: 14px
+}
+
+.memo-list-item {
+    display: grid;
+    gap: 3px;
+    text-align: left;
+    border: 0;
+    border-radius: 8px;
+    padding: 10px;
+    background: transparent;
+    cursor: pointer;
+    color: inherit
+}
+
+.memo-list-item:hover, .memo-list-item.active {
+    background: #e9e9e5
+}
+
+.memo-list-item strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.memo-list-item span {
+    overflow: hidden;
+    color: #888;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.memo-list-item time {
+    color: #aaa;
+    font-size: 11px
+}
+
+.memo-empty {
+    padding: 20px 8px;
+    color: #999;
+    font-size: 13px
+}
+
+.memo-editor {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    padding: 30px 34px;
+    background: #fff;
+    color: #292929
+}
+
+.memo-title {
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: #292929;
+    font-size: 27px;
+    font-weight: 700
+}
+
+.memo-editor textarea {
+    flex: 1;
+    min-height: 180px;
+    margin-top: 18px;
+    border: 0;
+    outline: 0;
+    resize: none;
+    background: transparent;
+    color: #292929;
+    font: inherit;
+    line-height: 1.8;
+    font-size: 16px;
+}
+
+.memo-title::placeholder, .memo-editor textarea::placeholder {
+    color: #999;
+    opacity: 1
+}
+
+.memo-editor-foot {
+    display: flex;
+    justify-content: space-between;
+    color: #888;
+    font-size: 12px
+}
+
+.memo-editor-foot button {
+    border: 0;
+    background: transparent;
+    color: #b34b4b;
+    cursor: pointer
+}
+
+.memo-placeholder {
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 14px;
+    height: 100%;
+    color: #777
+}
+
+.memo-placeholder button {
+    font-size: 14px
+}
+
+@media (max-width: 620px) {
+    .memo-sidebar {
+        width: 190px;
+        padding: 18px 10px
+    }
+
+    .memo-editor {
+        padding: 24px 18px
+    }
+}

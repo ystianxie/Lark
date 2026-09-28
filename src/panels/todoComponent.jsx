@@ -17,12 +17,27 @@ const FILTERS = [
 function sortTasks(tasks) {
     return [...tasks].sort((left, right) => {
         if (left.completed !== right.completed) return left.completed ? 1 : -1;
-        return right.createdAt - left.createdAt;
+        return (right.updatedAt || right.createdAt) - (left.updatedAt || left.createdAt);
     });
 }
 
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error || "操作失败，请稍后重试");
+}
+
+function formatCreatedAt(timestamp) {
+    if (!timestamp) return "";
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return "";
+    const now = new Date();
+    const sameYear = date.getFullYear() === now.getFullYear();
+    const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const dateLabel = sameYear ? `${month}/${day}` : `${date.getFullYear()}/${month}/${day}`;
+    return `${dateLabel} 周${weekdays[date.getDay()]} ${hours}:${minutes}`;
 }
 
 function TaskEditor({initialTitle, initialNote, submitLabel, onSubmit, onCancel, onEscape, disabled, clearAfterSubmit = false}) {
@@ -149,6 +164,9 @@ function TodoTaskRow({task, onToggle, onEdit, onDelete, busy}) {
                 {task.note && <div className="todo-task-note" title={task.note}>{task.note}</div>}
             </div>
             <div className="todo-task-actions">
+                <time className="todo-task-created" dateTime={task.createdAt ? new Date(task.createdAt).toISOString() : undefined}>
+                    {formatCreatedAt(task.createdAt)}
+                </time>
                 <button type="button" className="todo-icon-button" onClick={() => setEditing(true)} disabled={busy}>
                     编辑
                 </button>
@@ -171,6 +189,7 @@ function TodoTaskRow({task, onToggle, onEdit, onDelete, busy}) {
 export default function TodoComponent({onClose}) {
     const [tasks, setTasks] = useState([]);
     const [filter, setFilter] = useState("all");
+    const [query, setQuery] = useState("");
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
@@ -210,9 +229,13 @@ export default function TodoComponent({onClose}) {
         if (filter === "active") return !task.completed;
         if (filter === "completed") return task.completed;
         return true;
-    }), [tasks, filter]);
+    }).filter((task) => {
+        const keyword = query.trim().toLowerCase();
+        return !keyword || `${task.title} ${task.note}`.toLowerCase().includes(keyword);
+    }), [tasks, filter, query]);
 
     const activeCount = tasks.filter((task) => !task.completed).length;
+    const completedCount = tasks.length - activeCount;
 
     return (
         <div className="todo-page">
@@ -254,7 +277,33 @@ export default function TodoComponent({onClose}) {
                         </button>
                     ))}
                 </div>
-                <span className="todo-total-count">共 {tasks.length} 项</span>
+                <div className="todo-toolbar-right">
+                    <span className="todo-total-count">共 {tasks.length} 项</span>
+                    {completedCount > 0 && (
+                        <Popconfirm
+                            title={`清除 ${completedCount} 项已完成待办？`}
+                            description="删除后无法恢复。"
+                            okText="清除"
+                            cancelText="取消"
+                            onConfirm={() => runMutation(async () => {
+                                await Promise.all(tasks.filter((task) => task.completed).map((task) => deleteTodoItem(task.id)));
+                            })}
+                        >
+                            <button type="button" className="todo-clear-button" disabled={busy}>清除已完成</button>
+                        </Popconfirm>
+                    )}
+                </div>
+            </div>
+
+            <div className="todo-search-wrap">
+                <input
+                    className="todo-search-input"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="搜索标题或备注…"
+                    aria-label="搜索待办"
+                />
+                {query && <button type="button" className="todo-search-clear" onClick={() => setQuery("")} aria-label="清除搜索">×</button>}
             </div>
 
             {error && (
@@ -268,7 +317,7 @@ export default function TodoComponent({onClose}) {
                 <div className="todo-state"><Spin size="small" /><span>正在加载待办…</span></div>
             ) : visibleTasks.length === 0 ? (
                 <div className="todo-empty">
-                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={filter === "completed" ? "还没有已完成的待办" : "还没有待办"} />
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={query ? "没有匹配的待办" : filter === "completed" ? "还没有已完成的待办" : filter === "active" ? "所有待办都完成了" : "还没有待办"} />
                 </div>
             ) : (
                 <ul className="todo-list">

@@ -1,0 +1,248 @@
+.weekly-page {
+    height: 100%;
+    box-sizing: border-box;
+    padding: 25px 28px 34px;
+    background: #f5f5f3;
+    color: #292929;
+    overflow: auto;
+    scrollbar-color: #b8c0cc #edf0f4;
+    scrollbar-width: thin
+}
+
+.weekly-page::-webkit-scrollbar,
+.weekly-tabs::-webkit-scrollbar,
+.weekly-table-wrap::-webkit-scrollbar { width: 9px; height: 9px }
+.weekly-page::-webkit-scrollbar-track,
+.weekly-tabs::-webkit-scrollbar-track,
+.weekly-table-wrap::-webkit-scrollbar-track { background: #edf0f4; border-radius: 8px }
+.weekly-page::-webkit-scrollbar-thumb,
+.weekly-tabs::-webkit-scrollbar-thumb,
+.weekly-table-wrap::-webkit-scrollbar-thumb { background: #b8c0cc; border-radius: 8px; border: 2px solid #edf0f4 }
+
+.weekly-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start
+}
+
+.weekly-head h1 {
+    margin: 0;
+    font-size: 27px
+}
+
+.weekly-head p {
+    margin: 7px 0 18px;
+    color: #8b8b8b;
+    font-size: 13px
+}
+
+.weekly-add {
+    border: 0;
+    border-radius: 8px;
+    padding: 9px 14px;
+    background: #4f7df3;
+    color: #fff;
+    cursor: pointer
+}
+
+.weekly-head-actions { display: flex; align-items: center; gap: 8px }
+.weekly-copy { border: 1px solid #d8deea; border-radius: 7px; padding: 7px 10px; background: #fff; color: #667085; cursor: pointer; font-size: 12px }
+.weekly-copy:hover { border-color: #9eb2e9; color: #416ce0; background: #f8faff }
+
+.weekly-tabs {
+    display: flex;
+    gap: 5px;
+    overflow-x: auto;
+    padding-bottom: 10px
+}
+
+.weekly-tabs button {
+    min-width: 88px;
+    border: 1px solid #e1e1dc;
+    border-radius: 8px;
+    padding: 7px 9px;
+    background: #fff;
+    color: #777;
+    cursor: pointer;
+    font-size: 12px
+}
+
+.weekly-tabs button.active {
+    border-color: #4f7df3;
+    background: #edf2ff;
+    color: #315dcc
+}
+
+.weekly-tabs small {
+    display: block;
+    margin-top: 3px;
+    color: #aaa;
+    font-size: 10px
+}
+
+.weekly-table-wrap {
+    overflow: auto;
+    border: 1px solid #e2e2dd;
+    border-radius: 10px;
+    background: #fff;
+    scrollbar-color: #b8c0cc #edf0f4;
+    scrollbar-width: thin
+}
+
+.weekly-table-wrap table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 800px;
+    table-layout: fixed
+}
+
+.weekly-table-wrap th:nth-child(1) { width: 25% }
+.weekly-table-wrap th:nth-child(2) { width: 9% }
+.weekly-table-wrap th:nth-child(3) { width: 25% }
+.weekly-table-wrap th:nth-child(4) { width: 15% }
+.weekly-table-wrap th:nth-child(5) { width: 10% }
+.weekly-table-wrap th:nth-child(6) { width: 12% }
+.weekly-table-wrap th:nth-child(7) { width: 4% }
+
+.weekly-table-wrap th {
+    padding: 10px;
+    text-align: left;
+    background: #f8f8f6;
+    color: #777;
+    font-size: 12px;
+    font-weight: 500
+}
+
+.weekly-table-wrap td {
+    padding: 7px;
+    border-top: 1px solid #eeeeea
+}
+
+.weekly-table-wrap input, .weekly-table-wrap select {
+    box-sizing: border-box;
+    width: 100%;
+    height: 32px;
+    border: 1px solid #e1e1dc;
+    border-radius: 6px;
+    padding: 0 8px;
+    outline: 0;
+    background: #fff;
+    color: #333;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.2
+}
+
+.weekly-table-wrap th,
+.weekly-table-wrap td,
+.weekly-delete { font-size: 13px }
+
+.weekly-table-wrap .hours {
+    width: 64px
+}
+
+.weekly-delete {
+    border: 0;
+    background: transparent;
+    color: #b34b4b;
+    cursor: pointer
+}
+
+.weekly-empty {
+    padding: 42px;
+    text-align: center;
+    color: #999;
+    font-size: 13px
+}
+
+.weekly-summary {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-top: 14px;
+    padding: 12px 15px;
+    border: 1px solid #e5e8ed;
+    border-radius: 9px;
+    background: #fff;
+    color: #444
+}
+
+.weekly-total { display: flex; align-items: baseline; gap: 8px; padding-right: 16px; border-right: 1px solid #eceef2; white-space: nowrap }
+.weekly-total span { color: #8b94a3; font-size: 12px }
+.weekly-total strong { color: #344054; font-size: 20px }
+.weekly-total small { font-size: 12px; font-weight: 500 }
+
+.daily-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    color: #888;
+    font-size: 12px
+}
+
+.daily-summary span { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid #edf0f3; border-radius: 7px; background: #f8f9fb }
+.daily-summary b { color: #667085; font-size: 12px; font-weight: 600 }
+.daily-summary em { color: #557ff0; font-style: normal; font-weight: 600;padding-top: 3px; }
+
+@media (max-width: 620px) {
+    .weekly-page {
+        padding: 20px 16px 28px
+    }
+
+    .weekly-summary {
+        display: block
+    }
+
+    .weekly-total { width: fit-content; padding: 0 0 8px; border-right: 0 }
+
+    .daily-summary {
+        margin-top: 8px
+    }
+}
+
+.weekly-date {
+    position: relative;
+    display: block;
+    height: 32px;
+    box-sizing: border-box;
+    border: 1px solid #e1e1dc;
+    border-radius: 6px;
+    padding: 0 34px 0 10px;
+    background: #fff;
+    color: #333;
+    font-size: 13px;
+    line-height: 33px;
+    cursor: pointer
+}
+
+.weekly-date::after {
+    content: "▣";
+    position: absolute;
+    top: 0;
+    right: 10px;
+    color: #667085;
+    font-size: 16px;
+    pointer-events: none
+}
+
+.weekly-date input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer
+}
+
+.weekly-table-wrap input[type=number] {
+    color-scheme: light
+}
+
+.weekly-weekday { color: #667085; font-size: 13px; white-space: nowrap }
+.weekly-delete { width: 30px; height: 30px; padding: 0; border-radius: 7px; font-size: 17px; line-height: 30px; color: #98a2b3 }
+.weekly-delete:hover { color: #c34d5a; background: #fff1f1 }
+
+.weekly-date-picker { width: 100%; height: 38px }
+.weekly-table-wrap td:nth-child(4) .weekly-date-picker { max-width: 108px }
+.weekly-date-picker .ant-picker-input > input { font-size: 13px }
+.weekly-date-picker .ant-picker-suffix { color: #667085 }

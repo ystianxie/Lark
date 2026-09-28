@@ -281,7 +281,9 @@ function SubpageComponent({component, keyDown, pluginLibraryProps}) {
         <>
             <div id="subPageFrame"
                  style={component?.type === "panel" ? {height: "calc(100vh - 75px)", marginTop: "5px"} : {}}>
-                {RenderComponent ? <div style={subpageStyle}><RenderComponent onKeyDown={keyDown} {...pluginLibraryProps}/></div> : <div/>}
+                {RenderComponent ?
+                    <div style={subpageStyle}><RenderComponent onKeyDown={keyDown} {...pluginLibraryProps}/></div> :
+                    <div/>}
             </div>
         </>
     );
@@ -343,12 +345,14 @@ const searchFileComponent = {
     icon: <img src={fileImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
     title: '文件搜索',
     desc: 'search file',
+    keywords: ['文件', '搜索', 'file', 'search', 'wjss'],
     type: "input-panel",
 };
 const showPluginComponent = {
     icon: <img src={componentImg} alt="components" className='activateComponent' data-tauri-drag-region/>,
     title: '组件库',
     desc: 'show component',
+    keywords: ['组件', '插件', 'component', 'plugin', 'zjk'],
     type: "panel",
     data: "showComponent"
 };
@@ -356,6 +360,7 @@ const settingPluginComponent = {
     icon: <img src={settingImg} alt="setting" className='activateComponent' data-tauri-drag-region/>,
     title: '应用设置',
     desc: 'app setting',
+    keywords: ['设置', '配置', 'setting', 'settings', 'yysz'],
     type: "panel",
     data: "settingComponent"
 };
@@ -363,29 +368,32 @@ const clipboardPluginComponent = {
     icon: <img src={clipboardImg} alt="clipboard" className='activateComponent' data-tauri-drag-region/>,
     title: '剪贴板',
     desc: 'clipboard',
+    keywords: ['剪贴板', 'clipboard', 'jtb'],
     type: "panel",
     data: "clipboardComponent"
 };
 
 const todoComponent = {
     icon: <img src={todoImg} alt="待办" className='activateComponent' data-tauri-drag-region/>,
-    title: '待办',
-    desc: '待办事项',
+    title: '待办事项',
+    desc: 'todoComponent',
+    keywords: ['待办', '任务', 'todo', 'task', 'dbsx'],
     type: "panel",
     data: "todoComponent",
 };
 const weeklyReportComponent = {
     icon: <img src={weeklyReportImg} alt="周报" className='activateComponent' data-tauri-drag-region/>,
     title: '周报',
-    desc: '周报',
+    desc: 'weeklyReport',
+    keywords: ['周报', 'weekly', 'report', 'zb'],
     type: "panel",
     data: "weeklyReport",
-    emptyPanel: true,
 };
 const alarmComponent = {
     icon: <img src={alarmImg} alt="闹钟" className='activateComponent' data-tauri-drag-region/>,
     title: '闹钟',
-    desc: '闹钟',
+    desc: 'alarm',
+    keywords: ['闹钟', '提醒', 'alarm', 'reminder', 'nz'],
     type: "panel",
     data: "alarm",
     emptyPanel: true,
@@ -393,16 +401,17 @@ const alarmComponent = {
 const memoComponent = {
     icon: <img src={memoImg} alt="备忘录" className='activateComponent' data-tauri-drag-region/>,
     title: '备忘录',
-    desc: '备忘录',
+    desc: 'memo',
+    keywords: ['备忘录', '笔记', 'memo', 'note', 'bwl'],
     type: "panel",
     data: "memo",
-    emptyPanel: true,
 };
 
 const AppIndexComponent = {
     icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
     title: '重建应用索引',
     desc: 'Rebuild Index',
+    keywords: ['重建应用索引', '应用索引', 'reapp', 'rebuild app index'],
     type: "action",
     action: "rebuildAppIndex",
 };
@@ -411,6 +420,7 @@ const FileIndexComponent = {
     icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
     title: '重建文件索引',
     desc: 'Rebuild Index',
+    keywords: ['重建文件索引', '文件索引', 'reindex', 'rebuild file index'],
     type: "action",
     action: "rebuildFileIndex",
 };
@@ -516,13 +526,15 @@ const loadCustomComponent = async () => {
             workflow.keywords.every(keyword => typeof keyword === "string")
         );
         const error = record.error || (typeof manifest.id !== "string" || !manifest.id ||
-            typeof manifest.name !== "string" || !manifest.name || !validWorkflows
+        typeof manifest.name !== "string" || !manifest.name || !validWorkflows
             ? "Manifest 缺少 id、name 或有效的 workflows，请按插件开发规范检查。" : null);
-        return [record.id, { ...manifest,
+        return [record.id, {
+            ...manifest,
             name: typeof manifest.name === "string" ? manifest.name : record.id,
             description: typeof manifest.description === "string" ? manifest.description : "",
             version: typeof manifest.version === "string" ? manifest.version : "",
-            __root: record.root, __pluginId: record.id, __error: error, __editable: record.editable === true }];
+            __root: record.root, __pluginId: record.id, __error: error, __editable: record.editable === true
+        }];
     }));
 };
 
