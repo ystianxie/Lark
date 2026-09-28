@@ -152,7 +152,7 @@ body {
 
 .templateDesc {
     font-size: 13px;
-    color: #9a9797;
+    color: #919195;
     width: 100%;
     max-width: 590px;
     height: 16px;
@@ -162,10 +162,23 @@ body {
 }
 
 .templateHint {
-    font-size: 18px;
-    color: #606060;
     position: absolute;
     right: 3%;
+    width: 36px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #85858b;
+    font-family: "Segoe UI Symbol", "Apple Symbols", sans-serif;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    letter-spacing: 0.2px;
+}
+
+.activate .templateHint {
+    color: #e1eeee;
 }
 
 .activate {
@@ -173,11 +186,11 @@ body {
 }
 
 .activate .templateTitle {
-    color: #023005;
+    color: #f4f7f8;
 }
 
 .activate .templateDesc {
-    color: #cdbb7c;
+    color: #9fc4c7;
 }
 
 .activateComponent {

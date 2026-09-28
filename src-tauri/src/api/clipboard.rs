@@ -503,9 +503,8 @@ impl ClipboardWatcher {
                                 file_count: files.len(),
                                 files: files_string,
                                 title: format!(
-                                    "{} File{}: {}",
+                                    "[Files] · {} · {}",
                                     files.len(),
-                                    if files.len() > 1 { "s" } else { "" },
                                     files[0].0.split("/").last().unwrap()
                                 ),
                             };
@@ -597,12 +596,15 @@ impl ClipboardWatcher {
                         // 有新图片产生
                         println!("获取到新图片md5: {}", img_md5);
                         let base64 = img_factory::rgba8_to_base64(&img);
+                        let img_size_text = format!("{:.2} KB", img_size);
                         let content_db = ImageDataDB {
                             width: img.width,
                             height: img.height,
                             base64,
-                            title: format!("Image:{}×{}({:.2}kb)", img.width, img.height, img_size)
-                                .to_string(),
+                            title: format!(
+                                "[Image] · {} × {} · {}",
+                                img.width, img.height, img_size_text
+                            ),
                         };
                         // 压缩画质作为预览图，防止渲染时非常卡顿
                         let jpeg_base64 = img_factory::rgba8_to_jpeg_base64(&img, 70);
@@ -611,8 +613,10 @@ impl ClipboardWatcher {
                             width: img.width,
                             height: img.height,
                             base64: jpeg_base64,
-                            title: format!("Image:{}×{}({:.2}kb)", img.width, img.height, img_size)
-                                .to_string(),
+                            title: format!(
+                                "[Image] · {} × {} · {}",
+                                img.width, img.height, img_size_text
+                            ),
                         };
                         let content = json_factory::stringify(&content_db).unwrap();
                         let content_preview = json_factory::stringify(&content_preview_db).unwrap();

@@ -149,15 +149,19 @@ export class IndexDBCache {
     }
     // 更新指定主键数据
     update(params) {
-        var request = this._db.transaction([this._cacheTableName], 'readwrite')
-            .objectStore(this._cacheTableName)
-            .put(params);
-        request.onsuccess = function (event) {
-            console.log('数据更新成功');
-        };
-        request.onerror = function (event) {
-            console.log('数据更新失败');
-        };
+        return new Promise((resolve, reject) => {
+            const request = this._db.transaction([this._cacheTableName], 'readwrite')
+                .objectStore(this._cacheTableName)
+                .put(params);
+            request.onsuccess = function (event) {
+                console.log('数据更新成功');
+                resolve(event);
+            };
+            request.onerror = function (event) {
+                console.log('数据更新失败');
+                reject(event);
+            };
+        });
     }
     // 关闭数据库
     closeDB() {

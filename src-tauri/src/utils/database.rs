@@ -808,34 +808,43 @@ impl IndexSQL {
     }
 
     pub fn find_app(&self, keyword: &str, offset: i32) -> Result<Vec<FileIndex>> {
-        let mut sql: String = String::new();
-        sql.push_str(
-            "SELECT id, title, path, desc, icon FROM app_index
-             WHERE (lower(title) LIKE lower(?1) OR lower(pinyin) LIKE lower(?2)
-             OR lower(abb) LIKE lower(?2) OR lower(path) LIKE lower(?3))",
-        );
-        let mut limit: usize = 30;
-        let mut params: Vec<String> = vec![];
-        params.push(format!("{}%", keyword));
-        params.push(format!("{}%", keyword));
-        params.push(format!("%{}%", keyword));
-        params.push(limit.to_string());
-        params.push(offset.to_string());
-        let sql = format!(
-            "{} ORDER BY
+        const LIMIT: i64 = 30;
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Treat LIKE metacharacters in user input as literal characters.
+        let escaped = keyword
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let prefix = format!("{}%", escaped);
+        let contains = format!("%{}%", escaped);
+        let offset = offset.max(0) as i64;
+
+        let sql = "SELECT id, title, path, desc, icon FROM app_index
+             WHERE title COLLATE NOCASE LIKE ?2 ESCAPE '\\'
+                OR pinyin COLLATE NOCASE LIKE ?2 ESCAPE '\\'
+                OR abb COLLATE NOCASE LIKE ?2 ESCAPE '\\'
+                OR title COLLATE NOCASE LIKE ?3 ESCAPE '\\'
+                OR path COLLATE NOCASE LIKE ?3 ESCAPE '\\'
+             ORDER BY
              CASE
-               WHEN lower(title) = lower(?1) THEN 0
-               WHEN lower(title) LIKE lower(?1) THEN 1
-               WHEN instr(replace(lower(path), '\\', '/'), '/' || lower(title) || '/') > 0 THEN 2
-               WHEN lower(path) LIKE lower(?3) THEN 3
-               ELSE 4
+               WHEN title = ?1 COLLATE NOCASE THEN 0
+               WHEN title COLLATE NOCASE LIKE ?2 ESCAPE '\\' THEN 1
+               WHEN abb = ?1 COLLATE NOCASE THEN 2
+               WHEN abb COLLATE NOCASE LIKE ?2 ESCAPE '\\' THEN 3
+               WHEN pinyin = ?1 COLLATE NOCASE THEN 4
+               WHEN pinyin COLLATE NOCASE LIKE ?2 ESCAPE '\\' THEN 5
+               WHEN title COLLATE NOCASE LIKE ?3 ESCAPE '\\' THEN 6
+               WHEN path COLLATE NOCASE LIKE ?3 ESCAPE '\\' THEN 7
+               ELSE 8
              END,
              length(title), title COLLATE NOCASE
-             LIMIT ?4 OFFSET ?5",
-            sql
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+             LIMIT ?4 OFFSET ?5";
+        let mut stmt = self.conn.prepare(sql)?;
+        let mut rows = stmt.query(rusqlite::params![keyword, prefix, contains, LIMIT, offset])?;
         let mut res = vec![];
         while let Some(row) = rows.next()? {
             let r = FileIndex {
@@ -949,60 +958,102 @@ impl IndexSQL {
         let mut results = Vec::with_capacity(target_count);
         let mut remaining = target_count as i64;
 
-        // Layer 1: exact title. This is index-friendly and preserves the strongest match.
-        let exact = self.query_file_search_layer(
-            "SELECT id, title, path, desc, icon, type FROM file_index \
-             WHERE title = ?1 COLLATE NOCASE \
-             ORDER BY length(title), title COLLATE NOCASE LIMIT ?2",
-            &[&keyword, &remaining],
+        // A basename without its extension is as useful as the complete filename.
+        // Require exactly one suffix segment so "report" does not treat
+        // "report.old.docx" as an exact stem match.
+        let stem_prefix = format!("{}.%", escaped);
+        let stem_condition = "type <> 'folder' AND title COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                              AND length(title) > length(?2) + 1 AND instr(substr(title, length(?2) + 2), '.') = 0";
+        let stem = self.query_file_search_layer(
+            &format!(
+                "SELECT id, title, path, desc, icon, type FROM file_index \
+                 WHERE {stem_condition} \
+                 ORDER BY length(title), title COLLATE NOCASE, path COLLATE NOCASE LIMIT ?3"
+            ),
+            &[&stem_prefix, &keyword, &remaining],
         )?;
-        remaining -= exact.len() as i64;
-        results.extend(exact);
+        remaining -= stem.len() as i64;
+        results.extend(stem);
 
-        // Layer 2: title prefix, excluding the exact-title layer.
+        // Exact full title (including folders), excluding already returned stems.
         if remaining > 0 {
             let rows = self.query_file_search_layer(
                 "SELECT id, title, path, desc, icon, type FROM file_index \
-                 WHERE title COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
-                   AND title <> ?2 COLLATE NOCASE \
-                 ORDER BY length(title), title COLLATE NOCASE LIMIT ?3",
-                &[&prefix, &keyword, &remaining],
+                 WHERE title = ?1 COLLATE NOCASE \
+                 ORDER BY length(title), title COLLATE NOCASE, path COLLATE NOCASE LIMIT ?2",
+                &[&keyword, &remaining],
             )?;
             remaining -= rows.len() as i64;
             results.extend(rows);
         }
 
-        // A one-character substring/path search is extremely broad. Keep it responsive by
-        // returning only exact and prefix title matches until the user types another character.
+        // Filename prefix, excluding the two exact layers.
+        if remaining > 0 {
+            let rows = self.query_file_search_layer(
+                "SELECT id, title, path, desc, icon, type FROM file_index \
+                     WHERE title COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                       AND title <> ?2 COLLATE NOCASE \
+                       AND NOT (type <> 'folder' AND title COLLATE NOCASE LIKE ?3 ESCAPE '\\' AND length(title) > length(?2) + 1 AND instr(substr(title, length(?2) + 2), '.') = 0) \
+                     ORDER BY length(title), title COLLATE NOCASE, path COLLATE NOCASE LIMIT ?4",
+                &[&prefix, &keyword, &stem_prefix, &remaining],
+            )?;
+            remaining -= rows.len() as i64;
+            results.extend(rows);
+        }
+
+        // Keep one-character queries index-friendly and avoid broad pinyin/path scans.
         if keyword.chars().count() < 2 {
             return Ok(results.into_iter().skip(offset).take(LIMIT).collect());
         }
 
-        // Layer 3: title substring, excluding all prefix matches already considered above.
+        // The index already stores full pinyin and initials. Keep filename matches
+        // ahead of transliteration, then distinguish exact from prefix matches.
+        if remaining > 0 {
+            let rows = self.query_file_search_layer(
+                "SELECT id, title, path, desc, icon, type FROM file_index \
+                 WHERE (abb COLLATE NOCASE LIKE ?2 ESCAPE '\\' \
+                     OR pinyin COLLATE NOCASE LIKE ?2 ESCAPE '\\') \
+                   AND title COLLATE NOCASE NOT LIKE ?2 ESCAPE '\\' \
+                 ORDER BY CASE \
+                   WHEN abb = ?1 COLLATE NOCASE THEN 0 \
+                   WHEN abb COLLATE NOCASE LIKE ?2 ESCAPE '\\' THEN 1 \
+                   WHEN pinyin = ?1 COLLATE NOCASE THEN 2 \
+                   ELSE 3 END, \
+                   length(title), title COLLATE NOCASE, path COLLATE NOCASE LIMIT ?3",
+                &[&keyword, &prefix, &remaining],
+            )?;
+            remaining -= rows.len() as i64;
+            results.extend(rows);
+        }
+
+        // Filename substring, excluding all prefix and transliteration matches.
         if remaining > 0 {
             let rows = self.query_file_search_layer(
                 "SELECT id, title, path, desc, icon, type FROM file_index \
                  WHERE title COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
                    AND title COLLATE NOCASE NOT LIKE ?2 ESCAPE '\\' \
-                 ORDER BY length(title), title COLLATE NOCASE LIMIT ?3",
+                   AND abb COLLATE NOCASE NOT LIKE ?2 ESCAPE '\\' \
+                   AND pinyin COLLATE NOCASE NOT LIKE ?2 ESCAPE '\\' \
+                 ORDER BY length(title), title COLLATE NOCASE, path COLLATE NOCASE LIMIT ?3",
                 &[&contains, &prefix, &remaining],
             )?;
             remaining -= rows.len() as i64;
             results.extend(rows);
         }
 
-        // Layer 4: path substring only when title matching still did not fill the page.
+        // Path-only matches are the weakest and potentially most expensive layer.
         if remaining > 0 {
             let rows = self.query_file_search_layer(
                 "SELECT id, title, path, desc, icon, type FROM file_index \
                  WHERE path COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
                    AND title COLLATE NOCASE NOT LIKE ?1 ESCAPE '\\' \
-                 ORDER BY length(title), title COLLATE NOCASE LIMIT ?2",
-                &[&contains, &remaining],
+                   AND abb COLLATE NOCASE NOT LIKE ?2 ESCAPE '\\' \
+                   AND pinyin COLLATE NOCASE NOT LIKE ?2 ESCAPE '\\' \
+                 ORDER BY length(title), title COLLATE NOCASE, path COLLATE NOCASE LIMIT ?3",
+                &[&contains, &prefix, &remaining],
             )?;
             results.extend(rows);
         }
-
         Ok(results.into_iter().skip(offset).take(LIMIT).collect())
     }
 
@@ -1071,7 +1122,8 @@ mod file_search_tests {
             CREATE TABLE file_index (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT DEFAULT '', path TEXT NOT NULL UNIQUE, desc TEXT DEFAULT '',
-                icon TEXT DEFAULT '', type TEXT DEFAULT 'file'
+                icon TEXT DEFAULT '', type TEXT DEFAULT 'file',
+                pinyin TEXT DEFAULT '', abb TEXT DEFAULT ''
             );
             CREATE INDEX idx_file_title_nocase ON file_index (title COLLATE NOCASE);
             "#,
@@ -1085,6 +1137,137 @@ mod file_search_tests {
             .unwrap();
         }
         IndexSQL { conn }
+    }
+
+    fn add_search_file(
+        db: &IndexSQL,
+        title: &str,
+        path: &str,
+        kind: &str,
+        pinyin: &str,
+        abb: &str,
+    ) {
+        db.conn.execute(
+            "INSERT INTO file_index (title, path, type, pinyin, abb) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![title, path, kind, pinyin, abb],
+        ).unwrap();
+    }
+
+    #[test]
+    fn file_search_prioritizes_stem_full_title_prefix_pinyin_substring_and_path() {
+        let db = test_index(&[]);
+        add_search_file(&db, "Report.docx", r"C:\a\Report.docx", "docx", "", "");
+        add_search_file(&db, "Report", r"C:\b\Report", "folder", "", "");
+        add_search_file(
+            &db,
+            "Report draft.txt",
+            r"C:\c\Report draft.txt",
+            "txt",
+            "",
+            "",
+        );
+        add_search_file(
+            &db,
+            "报告文件.txt",
+            r"C:\d\报告文件.txt",
+            "txt",
+            "baogaowenjian",
+            "report",
+        );
+        add_search_file(
+            &db,
+            "报表文件.txt",
+            r"C:\e\报表文件.txt",
+            "txt",
+            "baobiaowenjian",
+            "reportx",
+        );
+        add_search_file(&db, "翻译器.txt", r"C:\f\翻译器.txt", "txt", "report", "");
+        add_search_file(&db, "任务.txt", r"C:\g\任务.txt", "txt", "reporttask", "");
+        add_search_file(&db, "Old Report.txt", r"C:\h\Old Report.txt", "txt", "", "");
+        add_search_file(&db, "notes.txt", r"C:\report\notes.txt", "txt", "", "");
+        let titles: Vec<_> = db
+            .find_by_keyword("file", "report", 0)
+            .unwrap()
+            .into_iter()
+            .map(|file| file.title)
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                "Report.docx",
+                "Report",
+                "Report draft.txt",
+                "报告文件.txt",
+                "报表文件.txt",
+                "翻译器.txt",
+                "任务.txt",
+                "Old Report.txt",
+                "notes.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn file_search_pinyin_and_initials_are_available_after_two_characters() {
+        let db = test_index(&[]);
+        add_search_file(
+            &db,
+            "项目计划.xlsx",
+            r"C:\project\项目计划.xlsx",
+            "xlsx",
+            "xiangmujihua.xlsx",
+            "xmjh",
+        );
+        assert!(db
+            .find_by_keyword("file", "xm", 0)
+            .unwrap()
+            .iter()
+            .any(|file| file.title == "项目计划.xlsx"));
+        assert!(db
+            .find_by_keyword("file", "xiangmu", 0)
+            .unwrap()
+            .iter()
+            .any(|file| file.title == "项目计划.xlsx"));
+        assert!(db.find_by_keyword("file", "x", 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn file_search_pagination_does_not_repeat_stem_matches() {
+        let db = test_index(&[]);
+        add_search_file(&db, "plan.txt", r"C:\a\plan.txt", "txt", "", "");
+        add_search_file(&db, "plan.md", r"C:\b\plan.md", "md", "", "");
+        add_search_file(&db, "planet.txt", r"C:\c\planet.txt", "txt", "", "");
+        let titles: Vec<_> = db
+            .find_by_keyword("file", "plan", 1)
+            .unwrap()
+            .into_iter()
+            .map(|file| file.title)
+            .collect();
+        assert_eq!(titles, vec!["plan.txt", "planet.txt"]);
+    }
+
+    #[test]
+    fn file_search_stem_does_not_promote_longer_or_empty_extensions() {
+        let db = test_index(&[]);
+        add_search_file(
+            &db,
+            "report.old.docx",
+            r"C:\a\report.old.docx",
+            "docx",
+            "",
+            "",
+        );
+        add_search_file(&db, "report.", r"C:\b\report.", "file", "", "");
+        add_search_file(&db, "report.txt", r"C:\c\report.txt", "txt", "", "");
+        let titles: Vec<_> = db
+            .find_by_keyword("file", "report", 0)
+            .unwrap()
+            .into_iter()
+            .map(|file| file.title)
+            .collect();
+        assert_eq!(titles[0], "report.txt");
+        assert_eq!(titles.len(), 3);
     }
 
     #[test]
@@ -1184,6 +1367,94 @@ mod app_index_tests {
         )
         .unwrap();
         IndexSQL { conn }
+    }
+
+    fn insert_search_app(
+        db: &IndexSQL,
+        title: &str,
+        path: &str,
+        pinyin: &str,
+        abb: &str,
+        md5: &str,
+    ) {
+        db.conn
+            .execute(
+                "INSERT INTO app_index (title, path, pinyin, abb, md5) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![title, path, pinyin, abb, md5],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn app_search_ranks_exact_prefix_pinyin_and_contains_matches() {
+        let db = test_index();
+        insert_search_app(&db, "Code", r"C:\apps\code.exe", "", "", "1");
+        insert_search_app(&db, "Code Runner", r"C:\apps\code-runner.exe", "", "", "2");
+        insert_search_app(
+            &db,
+            "微信开发者工具",
+            r"C:\apps\wechat-dev.exe",
+            "weixinkaifazhegongju",
+            "code",
+            "3",
+        );
+        insert_search_app(
+            &db,
+            "测试面板",
+            r"C:\apps\test-panel.exe",
+            "ceshimianban",
+            "codepanel",
+            "4",
+        );
+        insert_search_app(&db, "编辑器", r"C:\apps\editor.exe", "code", "", "5");
+        insert_search_app(&db, "编码工具", r"C:\apps\encoder.exe", "codetool", "", "6");
+        insert_search_app(
+            &db,
+            "Visual Studio Code",
+            r"C:\apps\visual-studio-code.exe",
+            "",
+            "",
+            "7",
+        );
+        insert_search_app(&db, "Terminal", r"C:\code-tools\terminal.exe", "", "", "8");
+
+        let results = db.find_app("code", 0).unwrap();
+        let titles: Vec<_> = results.iter().map(|item| item.title.as_str()).collect();
+
+        assert_eq!(
+            titles,
+            vec![
+                "Code",
+                "Code Runner",
+                "微信开发者工具",
+                "测试面板",
+                "编辑器",
+                "编码工具",
+                "Visual Studio Code",
+                "Terminal",
+            ]
+        );
+    }
+
+    #[test]
+    fn app_search_treats_like_wildcards_as_literal_text() {
+        let db = test_index();
+        insert_search_app(&db, "100% Tool", r"C:\apps\percent.exe", "", "", "1");
+        insert_search_app(&db, "1000 Tool", r"C:\apps\number.exe", "", "", "2");
+
+        let results = db.find_app("100%", 0).unwrap();
+        let titles: Vec<_> = results.iter().map(|item| item.title.as_str()).collect();
+
+        assert_eq!(titles, vec!["100% Tool"]);
+    }
+
+    #[test]
+    fn app_search_ignores_blank_queries_and_negative_offsets() {
+        let db = test_index();
+        insert_search_app(&db, "Code", r"C:\apps\code.exe", "", "", "1");
+
+        assert!(db.find_app("   ", 0).unwrap().is_empty());
+        assert_eq!(db.find_app("code", -10).unwrap()[0].title, "Code");
     }
 
     #[test]

@@ -1,12 +1,10 @@
-import React, {useState, useRef, useEffect, useCallback} from 'react';
+import React, {useState, useRef, useEffect} from 'react';
 import {createGlobalStyle} from 'styled-components';
 import {List, Avatar} from 'antd';
 import {invoke} from "@tauri-apps/api/core";
 import InfiniteScroll from 'react-infinite-scroll-component';
-import throttle from 'lodash/throttle';
 import {getMaterialFileIcon, getMaterialFolderIcon} from "file-extension-icon-js";
 import baseComponent from "../baseComponent.jsx";
-import {debounce} from "lodash/function.js";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {modifyWindowSize} from "../template.jsx";
 
@@ -86,6 +84,72 @@ const Wrapper = createGlobalStyle`
         margin-top: 2px;
         height: 40px;
     }
+    .clipboard-list-surface {
+        position: relative;
+        width: 50%;
+        height: 100%;
+        min-width: 0;
+        overflow: hidden;
+        border-top-left-radius: 10px;
+        border-bottom-left-radius: 10px;
+        background: #242424;
+    }
+    .clipboard-list-surface #scrollableDiv {
+        position: relative;
+        box-sizing: border-box;
+        width: 100% !important;
+        background: #242424;
+    }
+    .clipboard-list-surface .ant-list,
+    .clipboard-list-surface .ant-list-items {
+        background: #242424;
+    }
+    .clipboard-list-surface .ant-list-item {
+        padding-right: 48px !important;
+        background-color: #242424;
+    }
+    .clipboard-list-surface .ant-list-item:hover:not(.activate) {
+        background-color: #2d2d2d;
+    }
+    .clipboard-list-surface .ant-list-item.activate {
+        background-color: #31575b;
+        box-shadow: inset 2px 0 #70b9bf;
+    }
+    .clipboard-list-surface .clipboard-item {
+        width: 100%;
+        color: #c9c9cc;
+    }
+    .clipboard-list-surface .ant-list-item.activate .clipboard-item {
+        color: #f0f3f3;
+    }
+    .clipboard-shortcuts {
+        position: absolute;
+        z-index: 2;
+        top: 0;
+        right: 12px;
+        width: 34px;
+        pointer-events: none;
+        font-family: "Segoe UI Symbol", "Apple Symbols", sans-serif;
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+    }
+    .clipboard-shortcut {
+        display: flex;
+        box-sizing: border-box;
+        width: 100%;
+        height: 35px;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        color: #777b82;
+    }
+    .clipboard-shortcut.activate {
+        color: #e8f2f2;
+        font-size: 14px;
+    }
+    .clipboard-list-surface .ant-list-item {
+        cursor: pointer;
+    }
     .clipboard-item{
         overflow: hidden;
         text-overflow: ellipsis;
@@ -95,37 +159,118 @@ const Wrapper = createGlobalStyle`
         -ms-user-select: none;
         cursor: default;
         width: 70%;
-    }
-    .activate-item{
-        background-color: #3a7f87;
+        color: #d5d5d6;
     }
     .ant-list-item{
+        box-sizing: border-box;
         justify-content: start !important;
         height: 35px !important;
         flex: none !important;
         width: 100%;
+        padding: 0 10px !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.035) !important;
+        color: #d5d5d6;
+        transition: background-color 120ms ease;
+    }
+    .ant-list-item:hover:not(.activate){
+        background-color: rgba(255, 255, 255, 0.045);
     }
     .ant-list-item-meta{
         flex: none !important;
-        
+        margin-inline-end: 10px !important;
     }
-   .clipboard-item-wrapper{
-       display: flex;
-       justify-content: space-between;
-       width: 100%;
-       overflow: hidden;
-   }
-   #showCopyContent {
+    .ant-list-item-meta-avatar{
+        display: flex;
+        align-items: center;
+    }
+    .ant-list-item-meta-avatar .ant-avatar{
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.08);
+    }
+    .ant-list-item.activate{
+        background-color: rgba(58, 127, 135, 0.38);
+        box-shadow: inset 2px 0 #62aeb4;
+    }
+    .clipboard-item-wrapper{
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        overflow: hidden;
+        align-items: center;
+    }
+    #showCopyContent {
+        box-sizing: border-box;
         display: flex;
         justify-content: space-between;
         flex-direction: column;
         width: 50%;
-        background-color: rgb(180, 176, 176);
-   }
-}
+        padding: 14px 16px 12px;
+        background-color: #242424;
+        color: #d5d5d6;
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .clipboard-preview{
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 0;
+        flex: 1;
+        overflow: auto;
+        padding: 12px;
+        border-radius: 10px;
+        background-color: rgba(255, 255, 255, 0.045);
+        color: #dedee0;
+        font-size: 14px;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+    }
+    .clipboard-preview img{
+        display: block;
+        object-fit: contain;
+        margin: auto;
+    }
+    .clipboard-preview-file{
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 28px;
+        color: #dedee0;
+    }
+    .clipboard-preview-file img{
+        flex: none;
+        width: 18px !important;
+        height: 18px;
+        object-fit: contain;
+        margin: 0 !important;
+    }
+    .clipboard-preview-file span{
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+    }
+    .clipboard-preview-empty{
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #8f9095;
+        font-size: 14px;
+    }
+    .clipboard-metadata{
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        padding-top: 10px;
+        color: #929399;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
 `
 
-const ClipboardComponent = ({onKeyDown}) => {
+const ClipboardComponent = ({onKeyDown, onClose}) => {
     const [initLoading, setInitLoading] = useState(true);
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState([]);
@@ -134,45 +279,29 @@ const ClipboardComponent = ({onKeyDown}) => {
     const [frameHeight, setFrameHeight] = useState(0);
     const [selectIndex, setSelectIndex] = useState(0);
     const scrollContainerRef = useRef(null);
-    const selectIndexRef = useRef(selectIndex);
-    const [firstItemIndex, setFirstItemIndex] = useState(0);
-    useEffect(() => {
-        selectIndexRef.current = selectIndex;
-    }, [selectIndex]);
+    const selectIndexRef = useRef(0);
+    const firstItemIndexRef = useRef(0);
+    const dataRef = useRef(data);
+    const listRef = useRef(list);
+    const [shortcutViewport, setShortcutViewport] = useState({firstIndex: 0, offset: 0});
+    dataRef.current = data;
+    listRef.current = list;
 
-    const get_first_item = () => {
-        let list_items = document.getElementsByClassName("ant-list-item")
-        let cache = -1
-        for (let i = 0; i < list_items.length; i++) {
-            if (list_items[i].getBoundingClientRect().y > 32) {
-                return [i, -1]
-            } else if (list_items[i].getBoundingClientRect().y > 0 && cache === -1) {
-                cache = i
-            }
-        }
-        return [-1, cache !== -1 ? cache : 0]
-    }
-    const closeDefault = useCallback(throttle((deltaY) => {
-            // 滚动事件限制触发频率，并固定滚动距离
-            const scrollContainer = scrollContainerRef.current;
-            if (deltaY > 5) {
-                scrollContainer.scrollTop = scrollContainer.scrollTop + 35;
-            } else if (deltaY < -5) {
-                scrollContainer.scrollTop = scrollContainer.scrollTop - 35;
-            }
-            let index = get_first_item()
-            if (index[0] !== -1) {
-                setFirstItemIndex(index[0])
-            }
-        }, 100)
-        , [selectIndex])
+    const selectClipboardItem = (index) => {
+        selectIndexRef.current = index;
+        setSelectIndex(index);
+    };
 
-    const handleScroll = useCallback((e) => {
-        // 滚动事件处理，禁用原有滚动行为，并触发自定义滚动逻辑
-        e.preventDefault();
-        e.stopPropagation();
-        closeDefault(e.deltaY)
-    }, [closeDefault])
+    const syncShortcutViewport = (scrollTop) => {
+        const firstIndex = Math.floor(scrollTop / 35);
+        const offset = scrollTop % 35;
+        firstItemIndexRef.current = firstIndex;
+        setShortcutViewport((current) =>
+            current.firstIndex === firstIndex && current.offset === offset
+                ? current
+                : {firstIndex, offset}
+        );
+    };
 
     useEffect(() => {
         // 初始化剪贴板内容
@@ -185,46 +314,23 @@ const ClipboardComponent = ({onKeyDown}) => {
                 setOffset(30)
                 let frame = document.getElementById("subPageFrame")
                 setFrameHeight(frame.clientHeight)
-                scrollContainerRef.current.addEventListener('wheel', handleScroll, {passive: false})
             });
 
     }, []);
 
-    function changeFirstItemIndex(additional) {
-        // 按键处理 可视区域内第一项，找到其索引 用作快捷键提示
-        let list_items = document.getElementsByClassName("ant-list-item")
-        for (let i = 0; i < list_items.length; i++) {
-            if (additional < 0) {
-                //  上移
-                if (list_items[i].getBoundingClientRect().y === 30.5) {
-                    if (list_items[selectIndex].getBoundingClientRect().y !== 65.5) {
-                        return setFirstItemIndex(i + 1)
-                    }
-                    return setFirstItemIndex(i)
-                } else if (selectIndex === 0) {
-                    return setFirstItemIndex(list_items.length > 15 ? list_items.length - 15 : 0);
-                }
-            } else {
-                // 下移
-                if (list_items[i].getBoundingClientRect().y === 65.5) {
-                    if (i + 14 === selectIndex) {
-                        return setFirstItemIndex(i + 1)
-                    } else {
-                        return setFirstItemIndex(i)
-                    }
-                } else if (selectIndex === list.length - 1) {
-                    return setFirstItemIndex(0) || 0;
-                }
-            }
-        }
-    }
-
-    async function confirmClipboardContent() {
+    async function confirmClipboardContent(itemIndex = selectIndexRef.current, waitForModifierRelease = false) {
         // 确认剪贴板内容
-        const item = data?.[selectIndex];
-        if (item) {
+        const item = dataRef.current?.[itemIndex];
+        if (item && !item.loading) {
+            selectClipboardItem(itemIndex);
             await getCurrentWindow().hide();
-            await modifyWindowSize("small");
+            // await modifyWindowSize("compact");
+
+
+            // Alt+数字触发时，等待修饰键释放，避免模拟粘贴仍处于 Alt 状态而被系统当成菜单快捷键。
+            if (waitForModifierRelease) {
+                await new Promise((resolve) => setTimeout(resolve, 150));
+            }
 
             // 历史列表使用 content_preview；粘贴时必须按 id 读取完整 content。
             const fullItem = await invoke("get_history_id", {id: item.id});
@@ -237,58 +343,54 @@ const ClipboardComponent = ({onKeyDown}) => {
                 // 传递完整文件列表，支持多文件/文件夹粘贴。
                 content = JSON.parse(content).files
             }
-            invoke("clipboard_control", {
+            const result = await invoke("clipboard_control", {
                 text: content,
                 control: "write",
                 paste: true,
                 dataType
-            })
-                .then((res) => {
-                    console.log('确认剪贴板内容', res)
-                });
+            });
+            console.log('确认剪贴板内容', result);
+            onClose?.();
         }
     }
 
     useEffect(() => {
-        // 当按下键盘时，处理内容
-        if (onKeyDown.key === "ArrowUp") {
-            setSelectIndex(selectIndex > 0 ? selectIndex - 1 : list.length - 1)
-            changeFirstItemIndex(-1)
-        } else if (onKeyDown.key === "ArrowDown") {
-            setSelectIndex(selectIndex < list.length - 1 ? selectIndex + 1 : 0)
-            changeFirstItemIndex(1)
+        // 快捷提示和快捷操作都以当前滚动视口最上方的行作为序号起点。
+        if (!onKeyDown || !onKeyDown.key) return;
+        const items = listRef.current;
+        const currentIndex = selectIndexRef.current;
+        if (onKeyDown.key === "ArrowUp" && items.length) {
+            selectClipboardItem(currentIndex > 0 ? currentIndex - 1 : items.length - 1);
+        } else if (onKeyDown.key === "ArrowDown" && items.length) {
+            selectClipboardItem(currentIndex < items.length - 1 ? currentIndex + 1 : 0);
         } else if (onKeyDown.key === "Enter" && !initLoading) {
-            confirmClipboardContent()
+            confirmClipboardContent(currentIndex);
+        } else if (onKeyDown.metaKey || onKeyDown.altKey) {
+            // Windows 下 Alt+数字的 key 在不同输入法/浏览器环境中可能不是纯数字，优先使用 code。
+            const shortcutMatch = onKeyDown.code?.match(/^Digit([1-9])$/) || onKeyDown.key?.match(/^([1-9])$/);
+            const shortcutNumber = shortcutMatch ? Number(shortcutMatch[1]) : 0;
+            const targetIndex = firstItemIndexRef.current + shortcutNumber - 1;
+            if (shortcutNumber && targetIndex >= 0 && targetIndex < dataRef.current.length) {
+                void confirmClipboardContent(targetIndex, true);
+            }
         }
     }, [onKeyDown]);
 
     useEffect(() => {
-        //  更改当前选择项时 将其滚动到可视区域
+        // 只在选择项离开可视范围时滚动，避免平滑滚动期间快捷标记与行错位。
         const scrollContainer = scrollContainerRef.current;
-        const selectedItem = scrollContainer.querySelector(`[data-index="${selectIndex}"]`);
-        if (selectedItem) {
-            selectedItem.scrollIntoView({
-                behavior: 'smooth',
-                block: 'nearest'
-            });
-        }
+        const selectedItem = scrollContainer?.querySelector(`[data-index="${selectIndex}"]`);
+        if (!scrollContainer || !selectedItem) return;
 
-        // 防止因快速切换导致行元素对齐出现偏移
-        function standardizedDisplay() {
-            let index = get_first_item()
-            let item = document.getElementsByClassName("ant-list-item")[index[1]]
-            if (item && item.getBoundingClientRect().y !== 32) {
-                scrollContainerRef.current.scrollTop -= 32 - item.getBoundingClientRect().y
-            }
+        const itemTop = selectedItem.offsetTop;
+        const itemBottom = itemTop + selectedItem.offsetHeight;
+        if (itemTop < scrollContainer.scrollTop) {
+            scrollContainer.scrollTop = itemTop;
+        } else if (itemBottom > scrollContainer.scrollTop + scrollContainer.clientHeight) {
+            scrollContainer.scrollTop = itemBottom - scrollContainer.clientHeight;
         }
-
-        const debouncedStandardizedDisplay = debounce(standardizedDisplay, 100)
-        debouncedStandardizedDisplay()
-        return () => {
-            debouncedStandardizedDisplay.cancel()
-        }
+        syncShortcutViewport(scrollContainer.scrollTop);
     }, [selectIndex]);
-
 
     const onLoadMore = () => {
         setLoading(true);
@@ -310,38 +412,10 @@ const ClipboardComponent = ({onKeyDown}) => {
     }
 
     function showHotkeys(index) {
-        // 快捷键提示文本
-        if (selectIndex === firstItemIndex + index) {
-            return "⏎"
-        }
-        if (index < 9) {
-            return "⌘" + (index + 1)
-        }
-        return ""
+        const itemIndex = shortcutViewport.firstIndex + index;
+        if (selectIndex === itemIndex) return "⏎";
+        return index < 9 ? "⌘" + (index + 1) : "";
     }
-
-    function showHotkeysColor(index) {
-        // 快捷键提示颜色
-        if (selectIndex === firstItemIndex + index) {
-            return "#fff"
-        }
-        if (index === 0) {
-            return "rgb(74,73,73)"
-        } else if (index > 7) {
-            return "rgb(200,199,199)"
-        } else if (index > 5) {
-            return "rgb(151,150,150)"
-        } else if (index > 0) {
-            return "rgb(120,120,120)"
-
-        }
-    }
-
-    const handleMouseEnter = (e, index) => {
-        if (e.movementX !== 0 || e.movementY !== 0) {
-            setSelectIndex(index);
-        }
-    };
 
     function timestampToTime(timestamp) {
         timestamp = timestamp ? timestamp : null;
@@ -358,7 +432,7 @@ const ClipboardComponent = ({onKeyDown}) => {
     function handleContentPreview(content) {
         if (!content) return <div>Choose to view more</div>
         if (content.data_type === "text") {
-            return <div style={{overflow: "hidden", textOverflow: "ellipsis"}}>{content.content}</div>
+            return <div>{content.content}</div>
         } else if (content.data_type === "image") {
             console.log(content)
             return (<img src={"data:image/jpeg;base64," + JSON.parse(content.content)?.base64}
@@ -377,11 +451,10 @@ const ClipboardComponent = ({onKeyDown}) => {
                 fontSize = "13px"
             }
 
-            return (content_.map(item => (
-                <div key={item[1]} style={{display: "flex"}}>
-                    <img src={item[1] !== "folder" ? getMaterialFileIcon(item[1]) : getMaterialFolderIcon(item[1])}
-                         style={{overflow: "hidden", width: fontSize, marginRight: "10px"}}></img>
-                    <div style={{overflow: "hidden", fontSize}}>{item[0]}</div>
+            return (content_.map((item, index) => (
+                <div className="clipboard-preview-file" key={`${item[0]}-${item[1]}-${index}`}>
+                    <img src={item[1] !== "folder" ? getMaterialFileIcon(item[1]) : getMaterialFolderIcon(item[1])}/>
+                    <span style={{fontSize}}>{item[0]}</span>
                 </div>
             )))
         }
@@ -402,15 +475,17 @@ const ClipboardComponent = ({onKeyDown}) => {
         <>
             <Wrapper/>
             <div style={{display: "flex", justifyContent: "center", flexDirection: "row", overflow: "hidden"}}>
-                <div id="scrollableDiv"
+                <div className="clipboard-list-surface">
+                    <div id="scrollableDiv"
                      style={{
                          height: frameHeight,
-                         width: "50%",
+                         width: "100%",
                          overflow: 'auto',
                          borderTopLeftRadius: "10px",
                          borderBottomLeftRadius: "10px",
                      }}
                      ref={scrollContainerRef}
+                     onScroll={(event) => syncShortcutViewport(event.currentTarget.scrollTop)}
                 >
                     <InfiniteScroll
                         dataLength={list.length}
@@ -426,17 +501,18 @@ const ClipboardComponent = ({onKeyDown}) => {
                             renderItem={
                                 (item, index) => (
                                     <List.Item className={selectIndex === index ? "activate" : ""}
-                                               data-index={index}>
+                                               data-index={index}
+                                               onMouseEnter={() => selectClipboardItem(index)}
+                                               onClick={() => confirmClipboardContent(index)}
+                                               role="option"
+                                               aria-selected={selectIndex === index}>
                                         <List.Item.Meta
                                             avatar={
                                                 <Avatar
                                                     src={`data:image/png;base64,${item.app_icon}`}/>
                                             }
                                         />
-                                        <div className={"clipboard-item-wrapper"}
-                                             onMouseEnter={(event) => handleMouseEnter(event, index)}
-                                             onMouse
-                                             onClick={confirmClipboardContent}>
+                                        <div className={"clipboard-item-wrapper"}>
                                             <div className="clipboard-item"> {handleContentOption(item)}</div>
 
 
@@ -446,62 +522,27 @@ const ClipboardComponent = ({onKeyDown}) => {
                                 )
                             }
                         />
-                        <div style={{
-                            position: "absolute",
-                            right: "52%",
-                            top: "12.5%",
-                            marginLeft: "10px auto",
-                            fontSize: "16px"
-                        }}>
-                            {
-
-                                Array.from({length: 15}).map(
-                                    (item, index) => (
-                                        <div style={{
-                                            flexShrink: 0,
-                                            minWidth: "20px",
-                                            height: "35px",
-                                            color: showHotkeysColor(index)
-                                        }} key={index}>
-                                            {showHotkeys(index)}
-                                        </div>
-                                    )
-                                )
-                            }
-                        </div>
-
-
                     </InfiniteScroll>
+                    </div>
+                    <div className="clipboard-shortcuts" style={{transform: `translateY(-${shortcutViewport.offset}px)`}}>
+                        {Array.from({length: 15}).map((item, index) => (
+                            <div className={`clipboard-shortcut${selectIndex === shortcutViewport.firstIndex + index ? " activate" : ""}`} key={index}>
+                                {showHotkeys(index)}
+                            </div>
+                        ))}
+                    </div>
                 </div>
 
-                <div id={"showCopyContent"} style={data[selectIndex] ? {height: frameHeight} : {
-                    height: frameHeight,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center"
-                }}>
-                    <div style={{
-                        fontSize: "15px",
-                        margin: "5px 5px 5px 5px",
-                        whiteSpace: "pre-wrap", height: '90%', overflow: "hidden"
-                    }}>
-                        {handleContentPreview(data[selectIndex])}
-                    </div>
-                    <div style={{
-                        fontSize: "15px",
-                        display: 'flex',
-                        flexDirection: "column",
-                        alignItems: "center",
-                        overflow: "hidden",
-                        "flex": "1"
-                    }}>
-                        <div style={{overflow: "hidden"}}>
-                            {data[selectIndex] ? "time：" + timestampToTime(data[selectIndex].create_time) : ""}
+                <div id={"showCopyContent"} style={{height: frameHeight}}>
+                    {data[selectIndex] ? <>
+                        <div className="clipboard-preview">
+                            {handleContentPreview(data[selectIndex])}
                         </div>
-                        <div>
-                            {data[selectIndex] ? "row：" + data[selectIndex].content.split("\n").length + " char：" + data[selectIndex].content.length : ""}
+                        <div className="clipboard-metadata">
+                            <span>{timestampToTime(data[selectIndex].create_time)}</span>
+                            <span>{data[selectIndex].content.split("\n").length} 行 · {data[selectIndex].content.length} 字符</span>
                         </div>
-                    </div>
+                    </> : <div className="clipboard-preview-empty">选择一条记录查看内容</div>}
                 </div>
             </div>
         </>

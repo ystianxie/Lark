@@ -110,12 +110,13 @@ pub fn search_files(keyword: &str) -> Vec<HashMap<String, String>> {
 
 pub fn search_file_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
     let db = IndexSQL::new();
-    if let Ok(result) = db.find_by_keyword("file", keyword, offset) {
-        return result;
+    match db.find_by_keyword("file", keyword, offset) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("file search failed: {error:#}");
+            Vec::new()
+        }
     }
-    vec![FileIndex {
-        ..Default::default()
-    }]
 }
 
 /// 将文件系统路径转换为增量索引记录。路径不存在或无法读取元数据时返回 None。

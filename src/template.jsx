@@ -4,6 +4,10 @@ import calcImg from "./assets/calc.svg";
 import settingImg from "./assets/setting.svg";
 import clipboardImg from "./assets/clipboard.svg";
 import componentImg from "./assets/component.svg";
+import todoImg from "./assets/todo.svg";
+import weeklyReportImg from "./assets/weekly-report.svg";
+import alarmImg from "./assets/alarm.svg";
+import memoImg from "./assets/memo.svg";
 import rebuildImg from "./assets/rebuild.svg";
 import {evaluate} from "mathjs";
 import {getCurrentWindow} from "@tauri-apps/api/window";
@@ -256,7 +260,7 @@ function SubpageComponent({component, keyDown, pluginLibraryProps}) {
             }
 
         }
-        if (component?.type === "panel" && component.data) {
+        if (component?.type === "panel" && component.data && !component.emptyPanel) {
             console.log("更新子页面：", component.data)
             loadDynamicComponent()
         } else {
@@ -363,6 +367,38 @@ const clipboardPluginComponent = {
     data: "clipboardComponent"
 };
 
+const todoComponent = {
+    icon: <img src={todoImg} alt="待办" className='activateComponent' data-tauri-drag-region/>,
+    title: '待办',
+    desc: '待办事项',
+    type: "panel",
+    data: "todoComponent",
+};
+const weeklyReportComponent = {
+    icon: <img src={weeklyReportImg} alt="周报" className='activateComponent' data-tauri-drag-region/>,
+    title: '周报',
+    desc: '周报',
+    type: "panel",
+    data: "weeklyReport",
+    emptyPanel: true,
+};
+const alarmComponent = {
+    icon: <img src={alarmImg} alt="闹钟" className='activateComponent' data-tauri-drag-region/>,
+    title: '闹钟',
+    desc: '闹钟',
+    type: "panel",
+    data: "alarm",
+    emptyPanel: true,
+};
+const memoComponent = {
+    icon: <img src={memoImg} alt="备忘录" className='activateComponent' data-tauri-drag-region/>,
+    title: '备忘录',
+    desc: '备忘录',
+    type: "panel",
+    data: "memo",
+    emptyPanel: true,
+};
+
 const AppIndexComponent = {
     icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
     title: '重建应用索引',
@@ -393,6 +429,10 @@ const pluginsComponent = {
     showPluginComponent,
     settingPluginComponent,
     clipboardPluginComponent,
+    todoComponent,
+    weeklyReportComponent,
+    alarmComponent,
+    memoComponent,
     FileIndexComponent,
     AppIndexComponent
 }
