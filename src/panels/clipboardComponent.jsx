@@ -147,7 +147,6 @@ const Wrapper = createGlobalStyle`
         right: 12px;
         width: 34px;
         pointer-events: none;
-        font-family: "Segoe UI Symbol", "Apple Symbols", sans-serif;
         font-size: 13px;
         font-variant-numeric: tabular-nums;
     }

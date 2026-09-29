@@ -34,12 +34,10 @@
 
 
 html,
-body {
+body,
+#root{
     background-color: transparent;
     overflow: hidden;
-    /* font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-      sans-serif; */
     font-family: var(--font-family-ui);
 }
 
@@ -229,7 +227,6 @@ select {
     align-items: center;
     justify-content: center;
     color: #85858b;
-    font-family: "Segoe UI Symbol", "Apple Symbols", sans-serif;
     font-size: 14px;
     font-variant-numeric: tabular-nums;
     line-height: 1;
