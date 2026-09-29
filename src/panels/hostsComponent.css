@@ -1,0 +1,37 @@
+.hostsPanel { height: 100%; box-sizing: border-box; padding: 14px 18px; color: #252525; background: #f7f7f5; display: flex; flex-direction: column; gap: 10px; }
+.hostsHeader, .hostsToolbar, .hostsFooter { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hostsHeader h2 { margin: 0 0 4px; font-size: 22px; } .hostsHeader span, .hostsFooter span { color: #777; font-size: 12px; }
+.hostsToolbar input { flex: 1; }
+.hostsToolbar button, .hostsHeader button, .hostsFooter button, .hostsDelete { border: 0; border-radius: 7px; padding: 8px 12px; cursor: pointer; background: #e9e9e6; color: #252525; }
+.hostsList { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.hostsRow { display: grid; grid-template-columns: 24px 1fr 1.4fr 1.4fr 48px; gap: 8px; align-items: center; }
+.hostsRow input:not([type=checkbox]), .hostsToolbar input { min-width: 0; border: 1px solid #ddd; border-radius: 7px; padding: 9px 10px; background: white; color: #252525; }
+.hostsRow input::placeholder, .hostsToolbar input::placeholder { color: #777; opacity: 1; }
+.hostsEnabled { accent-color: #3478f6; } .hostsDelete { color: #b42318; padding: 8px 4px; } .hostsSave { background: #3478f6 !important; color: white !important; }
+.hostsMessage { padding: 9px 12px; border-radius: 7px; background: #fff3cd; color: #735c00; font-size: 13px; } .hostsEmpty { color: #888; text-align: center; padding: 40px 10px; }
+.hostsFullEdit { display: flex; align-items: center; gap: 7px; color: #252525; font-size: 13px; } .hostsWarning { padding: 9px 12px; border-radius: 7px; background: #fff3cd; color: #735c00; font-size: 13px; } 
+
+.hostsHeader { min-height: 30px; } .hostsTitle { display: flex; align-items: baseline; gap: 10px; } .hostsTitle h2 { margin: 0; } .hostsHeaderActions { display: flex; align-items: center; gap: 10px; } .hostsHeaderActions .hostsWarning { padding: 0; background: transparent; color: #8a6500; white-space: nowrap; } .hostsDelete { font-size: 18px; line-height: 1; } .hostsToolbar { min-height: 38px; }
+
+.hostsHeaderActions .hostsWarning { font-size: 12px; }
+
+.hostsList {
+    scrollbar-color: #b8c0cc #edf0f4;
+    scrollbar-width: thin;
+}
+.hostsList::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+}
+.hostsList::-webkit-scrollbar-track {
+    background: #edf0f4;
+    border-radius: 8px;
+}
+.hostsList::-webkit-scrollbar-thumb {
+    background: #b8c0cc;
+    border-radius: 8px;
+    border: 2px solid #edf0f4;
+}
+.hostsList::-webkit-scrollbar-thumb:hover {
+    background: #9da7b5;
+}

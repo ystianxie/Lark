@@ -410,17 +410,23 @@ impl IndexSQL {
     }
 
     pub fn has_app_indexes(&self) -> Result<bool> {
-        let count: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM app_index", [], |row| row.get(0))?;
-        Ok(count > 0)
+        Ok(self.app_index_count()? > 0)
     }
 
     pub fn has_file_indexes(&self) -> Result<bool> {
-        let count: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM file_index", [], |row| row.get(0))?;
-        Ok(count > 0)
+        Ok(self.file_index_count()? > 0)
+    }
+
+    pub fn app_index_count(&self) -> Result<i64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM app_index", [], |row| row.get(0))
+            .map_err(Into::into)
+    }
+
+    pub fn file_index_count(&self) -> Result<i64> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM file_index", [], |row| row.get(0))
+            .map_err(Into::into)
     }
 
     pub fn init() {

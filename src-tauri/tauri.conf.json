@@ -1,6 +1,6 @@
 {
-  "productName": "lark",
-  "version": "0.1.0",
+  "productName": "Lark",
+  "version": "0.1.2",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
@@ -11,7 +11,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "lark",
+        "title": "Lark",
         "label": "skylark",
         "width": 718,
         "fullscreen": false,
@@ -50,7 +50,6 @@
             "core:window:allow-set-position",
             "core:window:allow-set-focus",
             "core:webview:allow-set-webview-focus",
-            "core:window:allow-set-position",
             "core:window:allow-start-dragging",
             "core:default",
             "core:window:allow-create",

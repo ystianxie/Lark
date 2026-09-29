@@ -54,6 +54,10 @@ async function action_rebuildAppIndex() {
     return await invoke("create_app_index", {})
 }
 
+async function action_openEnvironmentVariables() {
+    return await invoke("open_environment_variables", {});
+}
+
 export default {
     action_openApp: open_app,
     action_openUrl: open_url,
@@ -64,5 +68,6 @@ export default {
     action_readFile,
     action_rebuildFileIndex,
     action_rebuildAppIndex,
+    action_openEnvironmentVariables,
     action_result,
 };

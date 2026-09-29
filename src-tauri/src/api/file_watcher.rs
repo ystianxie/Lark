@@ -110,6 +110,14 @@ impl FileIndexUpdateService {
             .send(IndexMessage::FinishRebuild)
             .map_err(|e| e.to_string())
     }
+    pub fn finish_rebuild_and_wait(&self) -> Result<(), String> {
+        self.finish_rebuild()?;
+        let (tx, rx) = mpsc::channel();
+        self.sender
+            .send(IndexMessage::Flush(tx))
+            .map_err(|e| e.to_string())?;
+        rx.recv().map_err(|e| e.to_string())
+    }
     pub fn status(&self) -> IndexStatus {
         *self.status.lock().unwrap()
     }

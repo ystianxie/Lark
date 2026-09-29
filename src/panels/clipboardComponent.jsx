@@ -100,6 +100,24 @@ const Wrapper = createGlobalStyle`
         width: 100% !important;
         background: #242424;
     }
+    .panelSubPage .clipboard-list-surface #scrollableDiv {
+        scrollbar-color: rgba(0, 0, 0, 0.42) transparent;
+        scrollbar-width: thin;
+    }
+    .panelSubPage .clipboard-list-surface #scrollableDiv::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+    }
+    .panelSubPage .clipboard-list-surface #scrollableDiv::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .panelSubPage .clipboard-list-surface #scrollableDiv::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.32);
+        border-radius: 6px;
+    }
+    .panelSubPage .clipboard-list-surface #scrollableDiv::-webkit-scrollbar-thumb:hover {
+        background: rgba(0, 0, 0, 0.52);
+    }
     .clipboard-list-surface .ant-list,
     .clipboard-list-surface .ant-list-items {
         background: #242424;
@@ -208,6 +226,24 @@ const Wrapper = createGlobalStyle`
         background-color: #242424;
         color: #d5d5d6;
         border-left: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .panelSubPage .clipboard-preview {
+        scrollbar-color: rgba(0, 0, 0, 0.42) transparent;
+        scrollbar-width: thin;
+    }
+    .panelSubPage .clipboard-preview::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
+    .panelSubPage .clipboard-preview::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .panelSubPage .clipboard-preview::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.42);
+        border-radius: 6px;
+    }
+    .panelSubPage .clipboard-preview::-webkit-scrollbar-thumb:hover {
+        background: rgba(0, 0, 0, 0.62);
     }
     .clipboard-preview{
         box-sizing: border-box;

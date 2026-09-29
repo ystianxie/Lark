@@ -145,7 +145,7 @@ export default function WeeklyReport() {
                     </select></td>
                     <td>
                         <button className="weekly-delete" aria-label="删除记录" title="删除记录"
-                                onClick={() => updateRows((data[activeWeek] || []).filter((item) => item.id !== row.id))}>🗑
+                                onClick={() => updateRows((data[activeWeek] || []).filter((item) => item.id !== row.id))}>🗙
                         </button>
                     </td>
                 </tr>)}</tbody>

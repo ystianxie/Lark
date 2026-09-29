@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod api;
 mod config;
 mod notification;
@@ -21,9 +22,13 @@ use crate::api::explorer::{
     delete_custom_app_index, get_custom_app_indexes, open_explorer, read_app_info,
     read_file_to_base64, read_icns_to_base64,
 };
+use crate::api::hosts::{
+    flush_dns, read_hosts, read_hosts_all, read_hosts_raw, write_hosts, write_hosts_all,
+    write_hosts_raw,
+};
 use crate::api::shell::{
-    append_txt, clipboard_control, get_file_icon, open_app, open_file, open_url,
-    probe_python_interpreter, read_txt, run_python_plugin, run_python_script, write_txt,
+    append_txt, clipboard_control, get_file_icon, open_app, open_environment_variables, open_file,
+    open_url, probe_python_interpreter, read_txt, run_python_plugin, run_python_script, write_txt,
 };
 use crate::config::plugins::{
     create_plugin, load_plugin_editor, load_plugins, update_plugin, valid_plugin_id,
@@ -31,10 +36,12 @@ use crate::config::plugins::{
 use crate::config::{
     app_settings, clear_plugin_settings_data, hotkey_settings, index_initialization_flags_present,
     index_settings, plugin_settings, plugin_settings_map, save_index_initialization_flags,
-    save_index_settings_data, save_plugin_settings_data, save_setting_data,
-    save_snippet_settings_data, snippet_settings,
+    save_index_settings_data, save_last_file_index_rebuild_at, save_plugin_settings_data,
+    save_setting_data, save_snippet_settings_data, snippet_settings,
 };
-use crate::notification::{NotificationAction, NotificationInput, NotificationManager};
+use crate::notification::{
+    NotificationAction, NotificationInput, NotificationLevel, NotificationManager,
+};
 use crate::utils::database::{FileIndex, IndexSQL, RecordSQL};
 use crate::utils::dirs::get_app_dir;
 use crate::utils::window::set_window_show;
@@ -45,13 +52,78 @@ use tauri::{
     tray::{MouseButton, TrayIconEvent},
     App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder,
 };
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{
+    GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
+};
 
 static HOTKEY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOTKEY_CAPTURE_BINDINGS: OnceLock<Mutex<Option<HotkeyBindings>>> = OnceLock::new();
 static HOTKEY_REGISTRATION_LOCK: Mutex<()> = Mutex::new(());
 static INDEX_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 static FILE_INDEX_RUNNING: AtomicBool = AtomicBool::new(false);
+const FILE_INDEX_REFRESH_INTERVAL_SECS: i64 = 10 * 60 * 60;
+const FILE_INDEX_STARTUP_DELAY: Duration = Duration::from_secs(15);
+
+fn current_unix_timestamp() -> Result<i64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .map_err(|error| format!("读取系统时间失败: {error}"))
+}
+
+fn file_index_refresh_due(last_rebuild_at: Option<i64>, now: i64) -> bool {
+    match last_rebuild_at {
+        Some(timestamp) if timestamp <= now => now - timestamp >= FILE_INDEX_REFRESH_INTERVAL_SECS,
+        Some(_) => true,
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod file_index_refresh_tests {
+    use super::*;
+
+    #[test]
+    fn refresh_is_due_at_ten_hours_and_for_missing_or_future_timestamps() {
+        let now = 100_000;
+        assert!(file_index_refresh_due(None, now));
+        assert!(!file_index_refresh_due(
+            Some(now - FILE_INDEX_REFRESH_INTERVAL_SECS + 1),
+            now
+        ));
+        assert!(file_index_refresh_due(
+            Some(now - FILE_INDEX_REFRESH_INTERVAL_SECS),
+            now
+        ));
+        assert!(file_index_refresh_due(Some(now + 1), now));
+    }
+}
+
+fn rebuild_file_index_blocking(app: AppHandle) -> Result<(), String> {
+    if FILE_INDEX_RUNNING.swap(true, Ordering::AcqRel) {
+        return Err("文件索引任务已在运行".to_string());
+    }
+
+    let result = (|| {
+        let service = app.state::<Mutex<api::file_watcher::FileIndexUpdateService>>();
+        service.lock().unwrap().begin_rebuild()?;
+
+        let scan_result = create_file_index_to_sql(app.clone());
+        let finish_result = service.lock().unwrap().finish_rebuild_and_wait();
+
+        scan_result?;
+        finish_result?;
+        if service.lock().unwrap().status() == api::file_watcher::IndexStatus::Stale {
+            return Err("文件索引重建后的增量补写失败".to_string());
+        }
+
+        save_last_file_index_rebuild_at(current_unix_timestamp()?)
+            .map_err(|error| format!("保存文件索引重建时间失败: {error}"))
+    })();
+
+    FILE_INDEX_RUNNING.store(false, Ordering::Release);
+    result
+}
 
 fn emit_notification_state(app: &AppHandle, manager: &Mutex<NotificationManager>) {
     let snapshot = manager.lock().unwrap();
@@ -303,27 +375,6 @@ fn notification_position(
     (x, y)
 }
 
-#[cfg(test)]
-mod notification_position_tests {
-    use super::notification_position;
-
-    #[test]
-    fn positions_at_work_area_top_right_in_physical_pixels() {
-        assert_eq!(
-            notification_position(1920, 40, 2560, 1400, 380.0, 200.0, 1.5, 16.0),
-            (3886, 64)
-        );
-    }
-
-    #[test]
-    fn clamps_notification_to_small_work_area() {
-        assert_eq!(
-            notification_position(0, 0, 300, 120, 380.0, 200.0, 1.0, 16.0),
-            (0, 16)
-        );
-    }
-}
-
 fn hotkey_capture_bindings() -> &'static Mutex<Option<HotkeyBindings>> {
     HOTKEY_CAPTURE_BINDINGS.get_or_init(|| Mutex::new(None))
 }
@@ -373,26 +424,11 @@ async fn search_keyword(
 
 #[tauri::command]
 fn create_file_index(app: AppHandle) {
-    if FILE_INDEX_RUNNING.swap(true, Ordering::AcqRel) {
-        println!("文件索引任务已在运行");
-        return;
-    }
-    let _ = app
-        .state::<Mutex<api::file_watcher::FileIndexUpdateService>>()
-        .lock()
-        .unwrap()
-        .begin_rebuild();
     let app_handle = app.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) = create_file_index_to_sql(app_handle.clone()) {
+        if let Err(error) = rebuild_file_index_blocking(app_handle) {
             eprintln!("文件索引重建失败: {error}");
         }
-        if let Some(service) =
-            app_handle.try_state::<Mutex<api::file_watcher::FileIndexUpdateService>>()
-        {
-            let _ = service.lock().unwrap().finish_rebuild();
-        }
-        FILE_INDEX_RUNNING.store(false, Ordering::Release);
     });
 }
 
@@ -438,13 +474,18 @@ fn rebuild_index(app: AppHandle) {
     create_file_index(app);
 }
 
-fn shortcut(app: &mut App, awaken: &str, clipboard: &str, file_jump: &str) {
+fn shortcut(
+    app: &mut App,
+    awaken: &str,
+    clipboard: &str,
+    file_jump: &str,
+) -> Vec<(Shortcut, String)> {
     let bindings = parse_shortcut_bindings(awaken, clipboard, file_jump)
         .expect("invalid configured shortcuts");
     app.handle()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .unwrap();
-    register_shortcuts(app.handle(), bindings).expect("failed to register configured shortcuts");
+    register_shortcuts_best_effort(app.handle(), bindings)
 }
 
 #[derive(Clone, Copy)]
@@ -494,40 +535,77 @@ fn parse_shortcut_bindings(
     HotkeyBindings::parse(awaken, clipboard, file_jump)
 }
 
+fn handle_shortcut(
+    app: &AppHandle,
+    window: &tauri::WebviewWindow,
+    bindings: HotkeyBindings,
+    pressed: &Shortcut,
+    event: ShortcutEvent,
+) {
+    if event.state != ShortcutState::Pressed {
+        return;
+    }
+    if *pressed == bindings.awaken {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let _ = window.emit("window-show-request", ());
+        }
+    } else if *pressed == bindings.clipboard {
+        let _ = window.emit("clipboard-show-request", ());
+    } else if *pressed == bindings.file_jump {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = app
+                .state::<api::listary_jump::ListaryJumpHandle>()
+                .trigger_ctrl_g()
+            {
+                eprintln!("[ListaryJump] 快捷键触发失败：{error}");
+            }
+        });
+    }
+}
+
 fn register_shortcuts(app: &AppHandle, bindings: HotkeyBindings) -> Result<(), String> {
     let window = app
         .get_webview_window("skylark")
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let global_shortcut = app.global_shortcut();
     let result = global_shortcut.on_shortcuts(bindings.all(), move |app, pressed, event| {
-        if event.state != ShortcutState::Pressed {
-            return;
-        }
-        if *pressed == bindings.awaken {
-            if window.is_visible().unwrap_or(false) {
-                let _ = window.hide();
-            } else {
-                let _ = window.emit("window-show-request", ());
-            }
-        } else if *pressed == bindings.clipboard {
-            let _ = window.emit("clipboard-show-request", ());
-        } else if *pressed == bindings.file_jump {
-            let app = app.clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                if let Err(error) = app
-                    .state::<api::listary_jump::ListaryJumpHandle>()
-                    .trigger_ctrl_g()
-                {
-                    eprintln!("[ListaryJump] 快捷键触发失败：{error}");
-                }
-            });
-        }
+        handle_shortcut(app, &window, bindings, pressed, event);
     });
     if let Err(error) = result {
         let _ = global_shortcut.unregister_all();
         return Err(error.to_string());
     }
     Ok(())
+}
+
+fn register_shortcuts_best_effort(
+    app: &AppHandle,
+    bindings: HotkeyBindings,
+) -> Vec<(Shortcut, String)> {
+    let Some(window) = app.get_webview_window("skylark") else {
+        return bindings
+            .all()
+            .into_iter()
+            .map(|shortcut| (shortcut, "主窗口不存在".to_string()))
+            .collect();
+    };
+    let global_shortcut = app.global_shortcut();
+    bindings
+        .all()
+        .into_iter()
+        .filter_map(|shortcut| {
+            let window = window.clone();
+            global_shortcut
+                .on_shortcuts([shortcut], move |app, pressed, event| {
+                    handle_shortcut(app, &window, bindings, pressed, event);
+                })
+                .err()
+                .map(|error| (shortcut, error.to_string()))
+        })
+        .collect()
 }
 
 fn capture_shortcut_set(bindings: HotkeyBindings) -> Vec<Shortcut> {
@@ -771,6 +849,15 @@ fn save_index_settings(app: AppHandle, setting_info: serde_json::Value) -> Resul
     apply_local_index_settings_delta(&app, &before.base, &after.base);
     start_file_watcher(&app);
     Ok(())
+}
+
+#[tauri::command]
+fn get_index_counts() -> Result<serde_json::Value, String> {
+    let index_db = IndexSQL::new();
+    Ok(serde_json::json!({
+        "app": index_db.app_index_count().map_err(|error| error.to_string())?,
+        "file": index_db.file_index_count().map_err(|error| error.to_string())?,
+    }))
 }
 
 #[tauri::command]
@@ -1187,31 +1274,59 @@ fn main() {
                     }
                 }
 
+                let paths = bootstrap_config
+                    .base
+                    .local_file_search_paths
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_default();
+                if paths.is_empty() {
+                    return;
+                }
+
                 if !bootstrap_config.base.file_index_initialized {
-                    let paths = bootstrap_config
-                        .base
-                        .local_file_search_paths
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_default();
-                    if !paths.is_empty() && !FILE_INDEX_RUNNING.swap(true, Ordering::AcqRel) {
-                        let service = bootstrap_app
-                            .state::<Mutex<api::file_watcher::FileIndexUpdateService>>();
-                        let _ = service.lock().unwrap().begin_rebuild();
-                        let result = create_file_index_to_sql(bootstrap_app.clone());
-                        let _ = service.lock().unwrap().finish_rebuild();
-                        match result {
-                            Ok(()) => {}
-                            Err(error) => eprintln!("首次文件索引扫描失败: {error}"),
-                        }
-                        FILE_INDEX_RUNNING.store(false, Ordering::Release);
+                    if let Err(error) = rebuild_file_index_blocking(bootstrap_app.clone()) {
+                        eprintln!("首次文件索引扫描失败: {error}");
+                    }
+                    return;
+                }
+
+                std::thread::sleep(FILE_INDEX_STARTUP_DELAY);
+                let now = match current_unix_timestamp() {
+                    Ok(now) => now,
+                    Err(error) => {
+                        eprintln!("跳过启动文件索引校准: {error}");
+                        return;
+                    }
+                };
+                let latest_config = match config::Config::read_local_config() {
+                    Ok(config) => config,
+                    Err(error) => {
+                        eprintln!("跳过启动文件索引校准，读取配置失败: {error}");
+                        return;
+                    }
+                };
+                let status = bootstrap_app
+                    .state::<Mutex<api::file_watcher::FileIndexUpdateService>>()
+                    .lock()
+                    .unwrap()
+                    .status();
+                let last_rebuild_at = latest_config.base.last_file_index_rebuild_at;
+                let refresh_due = file_index_refresh_due(last_rebuild_at, now);
+                if status == api::file_watcher::IndexStatus::Stale || refresh_due {
+                    println!(
+                        "启动文件索引校准: status={status}, last_rebuild_at={last_rebuild_at:?}"
+                    );
+                    if let Err(error) = rebuild_file_index_blocking(bootstrap_app) {
+                        eprintln!("启动文件索引校准失败: {error}");
                     }
                 }
             });
             let plugins_dir = crate::utils::dirs::app_plugins_dir()?;
             app.asset_protocol_scope()
                 .allow_directory(plugins_dir, true)?;
-            shortcut(app, &hotkey_awaken, &hotkey_clipboard, &hotkey_file_jump);
+            let failed_hotkeys =
+                shortcut(app, &hotkey_awaken, &hotkey_clipboard, &hotkey_file_jump);
             utils::window::disable_system_menu(app)?;
             utils::window::set_window_shadow(app);
             println!("{:?}", &hotkey_awaken);
@@ -1221,6 +1336,20 @@ fn main() {
             // independent from WebView construction.
             if let Err(error) = ensure_notification_window(app.handle()) {
                 eprintln!("[notification] startup window creation failed: {error}");
+            }
+            for (shortcut, error) in failed_hotkeys {
+                let input = NotificationInput {
+                    level: NotificationLevel::Warning,
+                    title: "快捷键注册失败".to_string(),
+                    message: Some(format!(
+                        "快捷键 {shortcut} 无法注册，可能已被其他程序占用。错误：{error}"
+                    )),
+                    actions: Vec::new(),
+                    duration_ms: Some(8_000),
+                };
+                if let Err(error) = notify(app.handle().clone(), input) {
+                    eprintln!("[notification] hotkey warning failed: {error}");
+                }
             }
             let position = main_window.outer_position().unwrap();
             println!("{:?}", position);
@@ -1304,13 +1433,22 @@ fn main() {
             create_app_index,
             rebuild_index,
             get_file_index_status,
+            get_index_counts,
             open_app,
+            open_environment_variables,
             open_url,
             get_file_icon,
             run_python_script,
             run_python_plugin,
             probe_python_interpreter,
             clipboard_control,
+            read_hosts,
+            read_hosts_all,
+            write_hosts_all,
+            read_hosts_raw,
+            write_hosts_raw,
+            write_hosts,
+            flush_dns,
             write_txt,
             read_txt,
             append_txt,

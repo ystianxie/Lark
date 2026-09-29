@@ -8,7 +8,14 @@ import todoImg from "./assets/todo.svg";
 import weeklyReportImg from "./assets/weekly-report.svg";
 import alarmImg from "./assets/alarm.svg";
 import memoImg from "./assets/memo.svg";
+import hostsImg from "./assets/component.svg";
 import rebuildImg from "./assets/rebuild.svg";
+import googleImg from "/src/assets/Google.svg";
+import baiduImg from "/src/assets/baidu.svg";
+import bingImg from "/src/assets/bing.svg";
+import bilibiliImg from "/src/assets/bilibili.svg";
+import taobaoImg from "/src/assets/taobao.svg";
+import jdImg from "/src/assets/jd.svg";
 import {evaluate} from "mathjs";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {LogicalSize} from "@tauri-apps/api/dpi";
@@ -280,6 +287,7 @@ function SubpageComponent({component, keyDown, pluginLibraryProps}) {
     return (
         <>
             <div id="subPageFrame"
+                 className={component?.type === "panel" ? "panelSubPage" : undefined}
                  style={component?.type === "panel" ? {height: "calc(100vh - 75px)", marginTop: "5px"} : {}}>
                 {RenderComponent ?
                     <div style={subpageStyle}><RenderComponent onKeyDown={keyDown} {...pluginLibraryProps}/></div> :
@@ -293,38 +301,38 @@ function webSearchComponent(inputValue) {
     return [
         {
             title: `谷歌："${inputValue}"`,
-            icon: <img src='/Google.svg' style={{width: "100%"}}></img>,
+            icon: <img src={googleImg} style={{width: "100%"}}></img>,
             data: "https://www.google.com/search?q=" + inputValue,
             type: "url",
         },
         {
 
             title: `百度："${inputValue}"`,
-            icon: <img src='/baidu.svg' style={{width: "100%"}}></img>,
+            icon: <img src={baiduImg} style={{width: "100%"}}></img>,
             data: "https://www.baidu.com/s?wd=" + inputValue,
             type: "url",
         },
         {
             title: `必应："${inputValue}"`,
-            icon: <img src="/bing.svg" style={{width: "100%"}}></img>,
+            icon: <img src={bingImg} style={{width: "100%"}}></img>,
             data: "https://cn.bing.com/search?q=" + inputValue,
             type: "url",
         },
         {
             title: `哔哩哔哩："${inputValue}"`,
-            icon: <img src='/bilibili.svg' style={{width: "100%"}}></img>,
+            icon: <img src={bilibiliImg} style={{width: "100%"}}></img>,
             data: "https://search.bilibili.com/all?keyword=" + inputValue,
             type: "url",
         },
         {
             title: `淘宝:"${inputValue}"`,
-            icon: <img src='/taobao.svg' style={{width: "100%"}}></img>,
+            icon: <img src={taobaoImg} style={{width: "100%"}}></img>,
             data: "https://s.taobao.com/search?q=" + inputValue,
             type: "url",
         },
         {
             title: `京东:"${inputValue}"`,
-            icon: <img src='/jd.svg' style={{width: "100%"}}></img>,
+            icon: <img src={jdImg} style={{width: "100%"}}></img>,
             data: "https://search.jd.com/Search?keyword=" + inputValue,
             type: "url",
         }
@@ -344,14 +352,14 @@ function activeStyle(ss) {
 const searchFileComponent = {
     icon: <img src={fileImg} alt="file" className='activateComponent' data-tauri-drag-region/>,
     title: '文件搜索',
-    desc: 'search file',
+    desc: '',
     keywords: ['文件', '搜索', 'file', 'search', 'wjss'],
     type: "input-panel",
 };
 const showPluginComponent = {
     icon: <img src={componentImg} alt="components" className='activateComponent' data-tauri-drag-region/>,
     title: '组件库',
-    desc: 'show component',
+    desc: '',
     keywords: ['组件', '插件', 'component', 'plugin', 'zjk'],
     type: "panel",
     data: "showComponent"
@@ -359,15 +367,15 @@ const showPluginComponent = {
 const settingPluginComponent = {
     icon: <img src={settingImg} alt="setting" className='activateComponent' data-tauri-drag-region/>,
     title: '应用设置',
-    desc: 'app setting',
-    keywords: ['设置', '配置', 'setting', 'settings', 'yysz'],
+    desc: '',
+    keywords: ['设置', '配置', 'setting', 'settings', 'yysz', 'appsetting'],
     type: "panel",
     data: "settingComponent"
 };
 const clipboardPluginComponent = {
     icon: <img src={clipboardImg} alt="clipboard" className='activateComponent' data-tauri-drag-region/>,
     title: '剪贴板',
-    desc: 'clipboard',
+    desc: '',
     keywords: ['剪贴板', 'clipboard', 'jtb'],
     type: "panel",
     data: "clipboardComponent"
@@ -376,15 +384,23 @@ const clipboardPluginComponent = {
 const todoComponent = {
     icon: <img src={todoImg} alt="待办" className='activateComponent' data-tauri-drag-region/>,
     title: '待办事项',
-    desc: 'todoComponent',
+    desc: '',
     keywords: ['待办', '任务', 'todo', 'task', 'dbsx'],
     type: "panel",
     data: "todoComponent",
 };
+const hostsComponent = {
+    icon: <img src={hostsImg} alt="hosts" className='activateComponent' data-tauri-drag-region/>,
+    title: 'Hosts',
+    desc: '',
+    keywords: ['hosts', 'host', '域名解析', 'hosts编辑'],
+    type: "panel",
+    data: "hostsComponent",
+};
 const weeklyReportComponent = {
     icon: <img src={weeklyReportImg} alt="周报" className='activateComponent' data-tauri-drag-region/>,
     title: '周报',
-    desc: 'weeklyReport',
+    desc: '',
     keywords: ['周报', 'weekly', 'report', 'zb'],
     type: "panel",
     data: "weeklyReport",
@@ -392,7 +408,7 @@ const weeklyReportComponent = {
 const alarmComponent = {
     icon: <img src={alarmImg} alt="闹钟" className='activateComponent' data-tauri-drag-region/>,
     title: '闹钟',
-    desc: 'alarm',
+    desc: '',
     keywords: ['闹钟', '提醒', 'alarm', 'reminder', 'nz'],
     type: "panel",
     data: "alarm",
@@ -401,7 +417,7 @@ const alarmComponent = {
 const memoComponent = {
     icon: <img src={memoImg} alt="备忘录" className='activateComponent' data-tauri-drag-region/>,
     title: '备忘录',
-    desc: 'memo',
+    desc: '',
     keywords: ['备忘录', '笔记', 'memo', 'note', 'bwl'],
     type: "panel",
     data: "memo",
@@ -410,7 +426,7 @@ const memoComponent = {
 const AppIndexComponent = {
     icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
     title: '重建应用索引',
-    desc: 'Rebuild Index',
+    desc: '',
     keywords: ['重建应用索引', '应用索引', 'reapp', 'rebuild app index'],
     type: "action",
     action: "rebuildAppIndex",
@@ -419,10 +435,19 @@ const AppIndexComponent = {
 const FileIndexComponent = {
     icon: <img src={rebuildImg} alt="index" className='activateComponent' data-tauri-drag-region/>,
     title: '重建文件索引',
-    desc: 'Rebuild Index',
+    desc: '',
     keywords: ['重建文件索引', '文件索引', 'reindex', 'rebuild file index'],
     type: "action",
     action: "rebuildFileIndex",
+};
+
+const EnvironmentVariablesComponent = {
+    icon: <img src={settingImg} alt="environment variables" className='activateComponent' data-tauri-drag-region/>,
+    title: '环境变量',
+    desc: '',
+    keywords: ['环境变量', '系统变量', '用户变量', 'env', 'environment variables'],
+    type: "action",
+    action: "openEnvironmentVariables",
 };
 
 const calcComponent = (result, input) => {
@@ -435,6 +460,7 @@ const calcComponent = (result, input) => {
     };
 };
 const pluginsComponent = {
+    hostsComponent,
     searchFileComponent,
     showPluginComponent,
     settingPluginComponent,
@@ -444,7 +470,8 @@ const pluginsComponent = {
     alarmComponent,
     memoComponent,
     FileIndexComponent,
-    AppIndexComponent
+    AppIndexComponent,
+    EnvironmentVariablesComponent
 }
 
 function calculateExpression(expression) {

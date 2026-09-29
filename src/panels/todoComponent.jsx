@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from "react";
-import {Empty, Popconfirm, Spin} from "antd";
+import {Empty, Modal, Popconfirm, Spin} from "antd";
 import {
     addTodoItem,
     deleteTodoItem,
@@ -126,6 +126,26 @@ function TaskEditor({initialTitle, initialNote, submitLabel, onSubmit, onCancel,
     );
 }
 
+function EditIcon() {
+    return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 20h4l10.5-10.5a2.83 2.83 0 0 0-4-4L4 16v4Z" />
+            <path d="m13.5 6.5 4 4" />
+        </svg>
+    );
+}
+
+function DeleteIcon() {
+    return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 7h16" />
+            <path d="M9 7V4h6v3" />
+            <path d="m6 7 1 13h10l1-13" />
+            <path d="M10 11v5M14 11v5" />
+        </svg>
+    );
+}
+
 function TodoTaskRow({task, onToggle, onEdit, onDelete, busy}) {
     const [editing, setEditing] = useState(false);
 
@@ -141,6 +161,7 @@ function TodoTaskRow({task, onToggle, onEdit, onDelete, busy}) {
                     onSubmit={async (draft) => {
                         const saved = await onEdit(task, draft);
                         if (saved) setEditing(false);
+                        return saved;
                     }}
                 />
             </li>
@@ -167,8 +188,15 @@ function TodoTaskRow({task, onToggle, onEdit, onDelete, busy}) {
                 <time className="todo-task-created" dateTime={task.createdAt ? new Date(task.createdAt).toISOString() : undefined}>
                     {formatCreatedAt(task.createdAt)}
                 </time>
-                <button type="button" className="todo-icon-button" onClick={() => setEditing(true)} disabled={busy}>
-                    编辑
+                <button
+                    type="button"
+                    className="todo-icon-button"
+                    onClick={() => setEditing(true)}
+                    disabled={busy}
+                    aria-label="编辑待办"
+                    title="编辑"
+                >
+                    <EditIcon />
                 </button>
                 <Popconfirm
                     title="删除这个待办？"
@@ -177,8 +205,14 @@ function TodoTaskRow({task, onToggle, onEdit, onDelete, busy}) {
                     cancelText="取消"
                     onConfirm={() => onDelete(task)}
                 >
-                    <button type="button" className="todo-icon-button todo-delete-button" disabled={busy}>
-                        删除
+                    <button
+                        type="button"
+                        className="todo-icon-button todo-delete-button"
+                        disabled={busy}
+                        aria-label="删除待办"
+                        title="删除"
+                    >
+                        <DeleteIcon />
                     </button>
                 </Popconfirm>
             </div>
@@ -190,6 +224,7 @@ export default function TodoComponent({onClose}) {
     const [tasks, setTasks] = useState([]);
     const [filter, setFilter] = useState("all");
     const [query, setQuery] = useState("");
+    const [creating, setCreating] = useState(false);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
@@ -240,27 +275,15 @@ export default function TodoComponent({onClose}) {
     return (
         <div className="todo-page">
             <div className="todo-header">
-                <div>
-                    <div className="todo-heading-row">
-                        <h1>待办</h1>
-                        <span className="todo-count">{activeCount} 项未完成</span>
-                    </div>
-                    <p>把要做的事情记下来，逐项完成。</p>
+                <div className="todo-heading-row">
+                    <h1>待办</h1>
+                    <span className="todo-count">{activeCount} 未完成 · 共 {tasks.length} 项</span>
                 </div>
-                {onClose && <button type="button" className="todo-close-button" onClick={onClose}>关闭</button>}
+                <div className="todo-header-actions">
+                    <button type="button" className="todo-create-button" onClick={() => setCreating(true)}>+ 新建</button>
+                    {onClose && <button type="button" className="todo-close-button" onClick={onClose}>关闭</button>}
+                </div>
             </div>
-
-            <TaskEditor
-                initialTitle=""
-                initialNote=""
-                submitLabel="添加待办"
-                disabled={busy}
-                clearAfterSubmit
-                onEscape={onClose}
-                onSubmit={(draft) => runMutation(async () => {
-                    await addTodoItem(draft);
-                })}
-            />
 
             <div className="todo-toolbar">
                 <div className="todo-filters" role="tablist" aria-label="待办筛选">
@@ -277,33 +300,29 @@ export default function TodoComponent({onClose}) {
                         </button>
                     ))}
                 </div>
-                <div className="todo-toolbar-right">
-                    <span className="todo-total-count">共 {tasks.length} 项</span>
-                    {completedCount > 0 && (
-                        <Popconfirm
-                            title={`清除 ${completedCount} 项已完成待办？`}
-                            description="删除后无法恢复。"
-                            okText="清除"
-                            cancelText="取消"
-                            onConfirm={() => runMutation(async () => {
-                                await Promise.all(tasks.filter((task) => task.completed).map((task) => deleteTodoItem(task.id)));
-                            })}
-                        >
-                            <button type="button" className="todo-clear-button" disabled={busy}>清除已完成</button>
-                        </Popconfirm>
-                    )}
+                <div className="todo-search-wrap">
+                    <input
+                        className="todo-search-input"
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="搜索待办…"
+                        aria-label="搜索待办"
+                    />
+                    {query && <button type="button" className="todo-search-clear" onClick={() => setQuery("")} aria-label="清除搜索">×</button>}
                 </div>
-            </div>
-
-            <div className="todo-search-wrap">
-                <input
-                    className="todo-search-input"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="搜索标题或备注…"
-                    aria-label="搜索待办"
-                />
-                {query && <button type="button" className="todo-search-clear" onClick={() => setQuery("")} aria-label="清除搜索">×</button>}
+                {completedCount > 0 && (
+                    <Popconfirm
+                        title={`清除 ${completedCount} 项已完成待办？`}
+                        description="删除后无法恢复。"
+                        okText="清除"
+                        cancelText="取消"
+                        onConfirm={() => runMutation(async () => {
+                            await Promise.all(tasks.filter((task) => task.completed).map((task) => deleteTodoItem(task.id)));
+                        })}
+                    >
+                        <button type="button" className="todo-clear-button" disabled={busy}>清除已完成</button>
+                    </Popconfirm>
+                )}
             </div>
 
             {error && (
@@ -337,6 +356,32 @@ export default function TodoComponent({onClose}) {
                     ))}
                 </ul>
             )}
+
+            <Modal
+                className="todo-create-modal"
+                title="新建待办"
+                open={creating}
+                footer={null}
+                width={520}
+                centered
+                onCancel={() => setCreating(false)}
+            >
+                {creating && (
+                    <TaskEditor
+                        initialTitle=""
+                        initialNote=""
+                        submitLabel="添加待办"
+                        disabled={busy}
+                        clearAfterSubmit
+                        onCancel={() => setCreating(false)}
+                        onSubmit={async (draft) => {
+                            const saved = await runMutation(() => addTodoItem(draft));
+                            if (saved) setCreating(false);
+                            return saved;
+                        }}
+                    />
+                )}
+            </Modal>
         </div>
     );
 }

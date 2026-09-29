@@ -15,3 +15,5 @@ pub mod windows_apps;
 
 pub mod rclip;
 pub mod wclip;
+
+pub mod hosts;

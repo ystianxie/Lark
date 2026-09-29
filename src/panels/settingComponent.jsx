@@ -7,28 +7,29 @@ import {open} from "@tauri-apps/plugin-dialog";
 import {listen} from "@tauri-apps/api/event";
 
 const Wrapper = createGlobalStyle`
-    a{
-        font-size:20px;
+    a {
+        font-size: 20px;
     }
-    
-    #settingframe{
+
+    #settingframe {
         box-sizing: border-box;
         height: 100%;
         padding-bottom: 12px;
         overflow-y: auto;
     }
-    
-    .settingInput{
-        font-size:15px;
-        height:35px;
-        width:200px;
- 
+
+    .settingInput {
+        font-size: 15px;
+        height: 35px;
+        width: 200px;
+
     }
-   
+
     .settingInput:focus {
         outline: none;
         box-shadow: none;
     }
+
     .settingSmallFrame {
         box-sizing: border-box;
         min-height: 78px;
@@ -42,6 +43,7 @@ const Wrapper = createGlobalStyle`
         gap: 8px;
         border-radius: 8px;
     }
+
     .hotkeys-input {
         box-sizing: border-box;
         display: flex;
@@ -55,21 +57,24 @@ const Wrapper = createGlobalStyle`
         background: #fff;
         cursor: text;
     }
-    
+
     .hotkeys-input:empty:before {
-      content: attr(placeholder);
-      color: #bfbfbf;
+        content: attr(placeholder);
+        color: #bfbfbf;
     }
+
     .hotkeys-input:focus {
         border-color: #1677ff;
         box-shadow: 0 0 0 2px rgba(5, 145, 255, 0.1);
     }
+
     .hotkeyKeys {
         display: flex;
         align-items: center;
         gap: 6px;
         min-width: 0;
     }
+
     .hotkeyCap {
         display: inline-flex;
         align-items: center;
@@ -89,20 +94,24 @@ const Wrapper = createGlobalStyle`
         box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
         white-space: nowrap;
     }
+
     .hotkeySeparator {
         color: #b8bec8;
         font-size: 12px;
         user-select: none;
     }
+
     .hotkeyPlaceholder {
         color: #bfbfbf;
         font-size: 13px;
     }
+
     .appSettingsPane {
         display: grid;
         gap: 12px;
         margin: 4px 15px 16px;
     }
+
     .appSettingCard {
         padding: 14px;
         border: 1px solid #e8e8e8;
@@ -110,66 +119,103 @@ const Wrapper = createGlobalStyle`
         background: #fff;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
     }
+
     .hotkeysFrame {
         display: grid;
         gap: 10px;
         margin-top: 12px;
     }
+
     .hotkeys-item {
         display: grid;
         grid-template-columns: minmax(110px, 0.32fr) minmax(220px, 1fr);
         align-items: center;
         gap: 14px;
     }
+
     .hotkeyName {
         color: #262626;
         font-size: 13px;
         font-weight: 600;
     }
+
     .hotkeyDescription {
         margin-top: 2px;
         color: #8c8c8c;
         font-size: 11px;
     }
+
     .clipboardRetentionGrid {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 8px;
         margin-top: 12px;
     }
+
     .appSettingFooter {
         display: flex;
         justify-content: flex-end;
         gap: 8px;
     }
+
     .indexSettingsPane {
         display: grid;
         gap: 12px;
         margin: 4px 15px 16px;
     }
+
+    .indexCounts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .indexCountCard {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 12px;
+        border: 1px solid #dce8ff;
+        border-radius: 8px;
+        background: #fff;
+        color: #475569;
+        font-size: 12px;
+    }
+
+    .indexCountValue {
+        color: #2563eb;
+        font-size: 15px;
+        font-weight: 650;
+    }
+
     .indexSettingsIntro {
         padding: 16px 18px;
         border: 1px solid #dce8ff;
         border-radius: 12px;
         background: linear-gradient(135deg, #f7faff 0%, #eef5ff 100%);
     }
+
     .indexSettingsTitle {
         margin: 0;
         color: #1f2937;
         font-size: 16px;
         font-weight: 650;
     }
+
     .indexSettingsDescription {
         margin: 5px 0 0;
         color: #64748b;
         font-size: 12px;
         line-height: 1.6;
     }
+
     .indexSettingsGrid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
     }
+
     .indexSettingCard {
         min-width: 0;
         padding: 14px;
@@ -178,6 +224,7 @@ const Wrapper = createGlobalStyle`
         background: #fff;
         box-shadow: 0 2px 8px rgba(31, 41, 55, 0.04);
     }
+
     .indexSettingHeader {
         display: flex;
         align-items: flex-start;
@@ -185,18 +232,21 @@ const Wrapper = createGlobalStyle`
         gap: 12px;
         margin-bottom: 10px;
     }
+
     .indexSettingHeading {
         margin: 0;
         color: #262f3d;
         font-size: 13px;
         font-weight: 650;
     }
+
     .indexSettingHint {
         margin-top: 3px;
         color: #8a94a3;
         font-size: 11px;
         line-height: 1.45;
     }
+
     .indexSettingCount {
         flex: none;
         padding: 2px 8px;
@@ -206,6 +256,7 @@ const Wrapper = createGlobalStyle`
         font-size: 11px;
         font-weight: 600;
     }
+
     .indexSettingList {
         box-sizing: border-box;
         min-height: 84px;
@@ -216,6 +267,21 @@ const Wrapper = createGlobalStyle`
         border-radius: 9px;
         background: #fafbfc;
     }
+
+    .indexSettingList::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .indexSettingList::-webkit-scrollbar-thumb {
+        border-radius: 999px;
+        background: #d6deea;
+    }
+
+    .indexSettingList::-webkit-scrollbar-track {
+        border-radius: 999px;
+        background: #f1f4f8;
+    }
+
     .indexSettingList .ant-tag {
         max-width: 100%;
         margin: 0 6px 6px 0;
@@ -226,6 +292,7 @@ const Wrapper = createGlobalStyle`
         color: #46566c;
         text-overflow: ellipsis;
     }
+
     .indexSettingEmpty {
         display: flex;
         min-height: 64px;
@@ -235,14 +302,17 @@ const Wrapper = createGlobalStyle`
         font-size: 12px;
         text-align: center;
     }
+
     .indexSettingAdd {
         display: flex;
         gap: 8px;
         margin-top: 9px;
     }
+
     .indexSettingAdd .ant-input {
         min-width: 0;
     }
+
     .indexSettingsFooter {
         display: flex;
         align-items: center;
@@ -250,38 +320,45 @@ const Wrapper = createGlobalStyle`
         gap: 12px;
         padding-top: 2px;
     }
+
     .indexSettingsFooterHint {
         color: #8c8c8c;
         font-size: 11px;
     }
+
     @media (max-width: 680px) {
         .indexSettingsGrid {
             grid-template-columns: 1fr;
         }
     }
+
     .customAppsPane {
         display: grid;
         gap: 12px;
         margin: 4px 15px 16px;
     }
+
     .customAppsIntro {
         padding: 16px 18px;
         border: 1px solid #dce8ff;
         border-radius: 12px;
         background: linear-gradient(135deg, #f7faff 0%, #eef5ff 100%);
     }
+
     .customAppsTitle {
         margin: 0;
         color: #1f2937;
         font-size: 16px;
         font-weight: 650;
     }
+
     .customAppsDescription {
         margin: 5px 0 0;
         color: #64748b;
         font-size: 12px;
         line-height: 1.6;
     }
+
     .customAppCard {
         padding: 14px;
         border: 1px solid #e6eaf0;
@@ -289,6 +366,7 @@ const Wrapper = createGlobalStyle`
         background: #fff;
         box-shadow: 0 2px 8px rgba(31, 41, 55, 0.04);
     }
+
     .customAppFormHeader,
     .customAppListHeader {
         display: flex;
@@ -297,18 +375,21 @@ const Wrapper = createGlobalStyle`
         gap: 12px;
         margin-bottom: 12px;
     }
+
     .customAppHeading {
         margin: 0;
         color: #262f3d;
         font-size: 13px;
         font-weight: 650;
     }
+
     .customAppHint {
         margin-top: 3px;
         color: #8a94a3;
         font-size: 11px;
         line-height: 1.45;
     }
+
     .customAppCount {
         flex: none;
         padding: 2px 8px;
@@ -318,12 +399,14 @@ const Wrapper = createGlobalStyle`
         font-size: 11px;
         font-weight: 600;
     }
+
     .customAppForm {
         display: grid;
         grid-template-columns: minmax(140px, 0.35fr) minmax(220px, 1fr) auto;
         gap: 8px;
         align-items: center;
     }
+
     .customAppError {
         padding: 9px 11px;
         border: 1px solid #ffccc7;
@@ -332,6 +415,7 @@ const Wrapper = createGlobalStyle`
         color: #cf1322;
         font-size: 12px;
     }
+
     .customAppList {
         max-height: 320px;
         overflow-y: auto;
@@ -339,6 +423,7 @@ const Wrapper = createGlobalStyle`
         border-radius: 9px;
         background: #fafbfc;
     }
+
     .customAppItem {
         display: flex;
         align-items: center;
@@ -348,12 +433,15 @@ const Wrapper = createGlobalStyle`
         background: #fff;
         transition: background-color 0.15s ease;
     }
+
     .customAppItem:hover {
         background: #f8fbff;
     }
+
     .customAppItem:last-child {
         border-bottom: 0;
     }
+
     .customAppIcon,
     .customAppIconFallback {
         box-sizing: border-box;
@@ -362,12 +450,14 @@ const Wrapper = createGlobalStyle`
         flex: none;
         border-radius: 9px;
     }
+
     .customAppIcon {
         padding: 3px;
         border: 1px solid #edf0f4;
         object-fit: contain;
         background: #fff;
     }
+
     .customAppIconFallback {
         display: flex;
         align-items: center;
@@ -377,10 +467,12 @@ const Wrapper = createGlobalStyle`
         font-size: 15px;
         font-weight: 700;
     }
+
     .customAppMeta {
         min-width: 0;
         flex: 1;
     }
+
     .customAppName {
         overflow: hidden;
         color: #273142;
@@ -389,6 +481,7 @@ const Wrapper = createGlobalStyle`
         text-overflow: ellipsis;
         white-space: nowrap;
     }
+
     .customAppPath {
         margin-top: 3px;
         overflow: hidden;
@@ -398,6 +491,7 @@ const Wrapper = createGlobalStyle`
         text-overflow: ellipsis;
         white-space: nowrap;
     }
+
     .customAppEmpty {
         display: flex;
         min-height: 112px;
@@ -408,33 +502,40 @@ const Wrapper = createGlobalStyle`
         font-size: 12px;
         text-align: center;
     }
+
     .customAppEmptyTitle {
         margin-bottom: 4px;
         color: #7d8795;
         font-size: 13px;
         font-weight: 600;
     }
+
     @media (max-width: 680px) {
         .customAppForm {
             grid-template-columns: 1fr;
         }
+
         .customAppForm .ant-btn {
             width: 100%;
         }
     }
+
     .settingError {
         margin: 0 15px 8px;
         color: #d4380d;
     }
+
     .settingNotice {
         color: #389e0d;
         font-size: 13px;
     }
+
     .snippetPane {
         display: grid;
         gap: 12px;
         margin: 4px 15px 16px;
     }
+
     .snippetCard {
         padding: 14px;
         border: 1px solid #e8e8e8;
@@ -442,30 +543,35 @@ const Wrapper = createGlobalStyle`
         background: #fff;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
     }
+
     .snippetStatusRow {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 20px;
     }
+
     .snippetHeading {
         margin: 0;
         color: #1f1f1f;
         font-size: 15px;
         font-weight: 600;
     }
+
     .snippetHint {
         margin-top: 4px;
         color: #8c8c8c;
         font-size: 12px;
         line-height: 1.5;
     }
+
     .snippetStatusActions {
         display: flex;
         align-items: center;
         gap: 18px;
         flex: none;
     }
+
     .snippetSwitch {
         display: flex;
         align-items: center;
@@ -474,6 +580,7 @@ const Wrapper = createGlobalStyle`
         font-size: 13px;
         white-space: nowrap;
     }
+
     .snippetTriggerControl {
         display: flex;
         align-items: center;
@@ -482,11 +589,13 @@ const Wrapper = createGlobalStyle`
         font-size: 13px;
         white-space: nowrap;
     }
+
     .snippetTriggerInput {
         width: 46px;
         text-align: center;
         font-weight: 600;
     }
+
     .snippetForm {
         display: grid;
         grid-template-columns: minmax(130px, 0.38fr) minmax(220px, 1fr) auto;
@@ -494,34 +603,41 @@ const Wrapper = createGlobalStyle`
         align-items: end;
         margin-top: 12px;
     }
+
     .snippetField {
         display: grid;
         gap: 6px;
         min-width: 0;
     }
+
     .snippetLabel {
         color: #595959;
         font-size: 12px;
         font-weight: 500;
     }
+
     .snippetAddButton {
         min-width: 72px;
     }
+
     .snippetListHeader {
         display: flex;
         align-items: center;
         justify-content: space-between;
         margin-bottom: 8px;
     }
+
     .snippetCount {
         color: #8c8c8c;
         font-size: 12px;
     }
+
     .snippetList {
         overflow: hidden;
         border: 1px solid #f0f0f0;
         border-radius: 8px;
     }
+
     .snippetRow {
         display: grid;
         grid-template-columns: minmax(110px, 0.32fr) minmax(0, 1fr) auto;
@@ -531,9 +647,11 @@ const Wrapper = createGlobalStyle`
         padding: 9px 10px;
         border-bottom: 1px solid #f0f0f0;
     }
+
     .snippetRow:last-child {
         border-bottom: 0;
     }
+
     .snippetKeyword {
         overflow: hidden;
         padding: 4px 8px;
@@ -546,6 +664,7 @@ const Wrapper = createGlobalStyle`
         text-overflow: ellipsis;
         white-space: nowrap;
     }
+
     .snippetPreview {
         display: -webkit-box;
         overflow: hidden;
@@ -557,11 +676,13 @@ const Wrapper = createGlobalStyle`
         -webkit-box-orient: vertical;
         -webkit-line-clamp: 2;
     }
+
     .snippetEmpty {
         padding: 26px 16px;
         color: #8c8c8c;
         text-align: center;
     }
+
     .snippetError {
         padding: 9px 12px;
         border: 1px solid #ffccc7;
@@ -570,38 +691,47 @@ const Wrapper = createGlobalStyle`
         color: #cf1322;
         font-size: 13px;
     }
+
     .snippetFooter {
         display: flex;
         justify-content: flex-end;
     }
+
     @media (max-width: 640px) {
         .hotkeys-item {
             grid-template-columns: 1fr;
             gap: 6px;
         }
+
         .clipboardRetentionGrid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
         }
+
         .snippetStatusRow,
         .snippetStatusActions {
             align-items: flex-start;
             flex-direction: column;
         }
+
         .snippetStatusActions {
             gap: 10px;
         }
+
         .snippetForm {
             grid-template-columns: 1fr;
         }
+
         .snippetAddButton {
             width: 100%;
         }
+
         .snippetRow {
             grid-template-columns: minmax(90px, 0.4fr) minmax(0, 1fr) auto;
             gap: 8px;
         }
     }
-}
+
+    }
 `
 
 function hotkeyToDownKey(hotkey) {
@@ -687,6 +817,8 @@ const Component = () => {
     const [pythonProbe, setPythonProbe] = useState(null);
     const [pythonProbeError, setPythonProbeError] = useState('');
     const [autoLaunch, setAutoLaunch] = useState(false);
+    const [indexCounts, setIndexCounts] = useState({app: 0, file: 0});
+    const [rebuildingIndex, setRebuildingIndex] = useState('');
     const hotkeyCaptureActive = useRef(false);
     const activeHotkeyField = useRef(null);
     const hotkeyCaptureTransition = useRef(Promise.resolve());
@@ -697,6 +829,25 @@ const Component = () => {
     hotkeyAwakenRef.current = hotkeyAwaken;
     hotkeyClipboardRef.current = hotkeyClipboard;
     hotkeyFileJumpRef.current = hotkeyFileJump;
+
+    const loadIndexCounts = async () => {
+        try {
+            setIndexCounts(await invoke('get_index_counts'));
+        } catch (error) {
+            console.error('读取索引数量失败', error);
+        }
+    };
+
+    const rebuildIndex = async (type) => {
+        setRebuildingIndex(type);
+        try {
+            await invoke(type === 'app' ? 'create_app_index' : 'create_file_index');
+            setTimeout(loadIndexCounts, 1000);
+        } catch (error) {
+            console.error('重建索引失败', error);
+            setRebuildingIndex('');
+        }
+    };
 
     useEffect(() => {
         invoke("get_app_settings").then((settings) => {
@@ -716,6 +867,7 @@ const Component = () => {
             probePythonInterpreter(interpreter);
         }).catch((error) => console.error("读取应用设置失败", error));
         invoke('get_auto_launch_enabled').then(setAutoLaunch).catch((error) => console.error('读取开机启动状态失败', error));
+        loadIndexCounts();
         invoke("get_index_settings").then((settings) => {
             setAppSearchPaths(settings.localAppSearchPaths || []);
             setAppExcludePaths(settings.localAppSearchExcludePaths || []);
@@ -788,7 +940,8 @@ const Component = () => {
         }
     }
 
-    const [larkDisplayText, setLarkDisplayText] = useReducer(hotkeysFrameShow, {downKey:{
+    const [larkDisplayText, setLarkDisplayText] = useReducer(hotkeysFrameShow, {
+        downKey: {
             alt: true,
             meta: false,
             ctrl: false,
@@ -914,7 +1067,8 @@ const Component = () => {
     const handleHotkeyCapture = async (active) => {
         hotkeyCaptureActive.current = active;
         hotkeyCaptureTransition.current = hotkeyCaptureTransition.current
-            .catch(() => {})
+            .catch(() => {
+            })
             .then(() => invoke('set_hotkey_capture_active', {active}));
         try {
             await hotkeyCaptureTransition.current;
@@ -926,13 +1080,15 @@ const Component = () => {
     }
 
     const handleIndexSettingSave = async () => {
-        await invoke("save_index_settings", {settingInfo: {
-            localAppSearchPaths: appSearchPaths,
-            localAppSearchExcludePaths: appExcludePaths,
-            localFileSearchPaths: fileSearchPaths,
-            localFileSearchExcludePaths: excludePaths,
-            localFileSearchExcludeTypes: excludeTypes
-        }})
+        await invoke("save_index_settings", {
+            settingInfo: {
+                localAppSearchPaths: appSearchPaths,
+                localAppSearchExcludePaths: appExcludePaths,
+                localFileSearchPaths: fileSearchPaths,
+                localFileSearchExcludePaths: excludePaths,
+                localFileSearchExcludeTypes: excludeTypes
+            }
+        })
     }
 
     const addSnippet = () => {
@@ -965,11 +1121,13 @@ const Component = () => {
             return;
         }
         try {
-            await invoke('save_snippet_settings', {settingInfo: {
-                enabled: snippetEnabled,
-                trigger: snippetTrigger,
-                snippets,
-            }});
+            await invoke('save_snippet_settings', {
+                settingInfo: {
+                    enabled: snippetEnabled,
+                    trigger: snippetTrigger,
+                    snippets,
+                }
+            });
             setSnippetError('');
         } catch (error) {
             setSnippetError(String(error));
@@ -1172,7 +1330,9 @@ const Component = () => {
 
                     <section className="snippetCard">
                         <h3 className="snippetHeading">添加片段</h3>
-                        <div className="snippetHint">关键词不需要包含触发符，例如填写 email，使用时输入 {snippetTrigger || ';'}email。</div>
+                        <div className="snippetHint">关键词不需要包含触发符，例如填写
+                            email，使用时输入 {snippetTrigger || ';'}email。
+                        </div>
                         <div className="snippetForm">
                             <label className="snippetField">
                                 <span className="snippetLabel">关键词</span>
@@ -1207,7 +1367,7 @@ const Component = () => {
                                 <Popconfirm title="删除这个文本片段？"
                                             onConfirm={() => setSnippets(snippets.filter((snippet) => snippet.keyword !== item.keyword))}
                                             okText="删除" cancelText="取消">
-                                    <Button type="text" danger size="small">删除</Button>
+                                    <Button type="text" danger size="small" icon="🗙"/>
                                 </Popconfirm>
                             </div>)}
                         </div>
@@ -1221,6 +1381,20 @@ const Component = () => {
                     <header className="indexSettingsIntro">
                         <h2 className="indexSettingsTitle">索引扫描</h2>
                         <p className="indexSettingsDescription">设置应用的扫描范围，并过滤不需要进入搜索结果的目录和文件类型。</p>
+                        <div className="indexCounts">
+                            <div className="indexCountCard"><span>应用索引</span><span
+                                className="indexCountValue">{indexCounts.app}</span><Button size="small"
+                                                                                            loading={rebuildingIndex === 'app'}
+                                                                                            disabled={Boolean(rebuildingIndex)}
+                                                                                            onClick={() => rebuildIndex('app')}>重建</Button>
+                            </div>
+                            <div className="indexCountCard"><span>文件索引</span><span
+                                className="indexCountValue">{indexCounts.file}</span><Button size="small"
+                                                                                             loading={rebuildingIndex === 'file'}
+                                                                                             disabled={Boolean(rebuildingIndex)}
+                                                                                             onClick={() => rebuildIndex('file')}>重建</Button>
+                            </div>
+                        </div>
                     </header>
 
                     <div className="indexSettingsGrid">
@@ -1234,10 +1408,13 @@ const Component = () => {
                             </div>
                             <div className="indexSettingList">
                                 {appSearchPaths.length === 0 && <div className="indexSettingEmpty">暂无扫描路径</div>}
-                                {appSearchPaths.map((path) => <Tag title={path} key={path} closable onClose={() => setAppSearchPaths(appSearchPaths.filter((item) => item !== path))}>{path}</Tag>)}
+                                {appSearchPaths.map((path) => <Tag title={path} key={path} closable
+                                                                   onClose={() => setAppSearchPaths(appSearchPaths.filter((item) => item !== path))}>{path}</Tag>)}
                             </div>
                             <div className="indexSettingAdd">
-                                <Input value={newAppSearchPath} placeholder="例如 D:\\Apps" onChange={(event) => setNewAppSearchPath(event.target.value)} onPressEnter={addAppSearchPath}/>
+                                <Input value={newAppSearchPath} placeholder="例如 D:\\Apps"
+                                       onChange={(event) => setNewAppSearchPath(event.target.value)}
+                                       onPressEnter={addAppSearchPath}/>
                                 <Button type="primary" ghost onClick={addAppSearchPath}>添加</Button>
                             </div>
                         </section>
@@ -1252,10 +1429,13 @@ const Component = () => {
                             </div>
                             <div className="indexSettingList">
                                 {appExcludePaths.length === 0 && <div className="indexSettingEmpty">暂无排除目录</div>}
-                                {appExcludePaths.map((path) => <Tag title={path} key={path} closable onClose={() => setAppExcludePaths(appExcludePaths.filter((item) => item !== path))}>{path}</Tag>)}
+                                {appExcludePaths.map((path) => <Tag title={path} key={path} closable
+                                                                    onClose={() => setAppExcludePaths(appExcludePaths.filter((item) => item !== path))}>{path}</Tag>)}
                             </div>
                             <div className="indexSettingAdd">
-                                <Input value={newAppExcludePath} placeholder="例如 D:\\Apps\\不需要扫描的目录" onChange={(event) => setNewAppExcludePath(event.target.value)} onPressEnter={addAppExcludePath}/>
+                                <Input value={newAppExcludePath} placeholder="例如 D:\\Apps\\不需要扫描的目录"
+                                       onChange={(event) => setNewAppExcludePath(event.target.value)}
+                                       onPressEnter={addAppExcludePath}/>
                                 <Button type="primary" ghost onClick={addAppExcludePath}>添加</Button>
                             </div>
                         </section>
@@ -1264,17 +1444,24 @@ const Component = () => {
                             <div className="indexSettingHeader">
                                 <div>
                                     <h3 className="indexSettingHeading">文件包含路径</h3>
-                                    <div className="indexSettingHint">仅扫描和监听这些目录；包含与排除冲突时以排除为准</div>
+                                    <div className="indexSettingHint">仅扫描和监听这些目录；包含与排除冲突时以排除为准
+                                    </div>
                                 </div>
-                                <span className="indexSettingCount">{fileSearchPaths === null ? '未初始化' : `${fileSearchPaths.length} 项`}</span>
+                                <span
+                                    className="indexSettingCount">{fileSearchPaths === null ? '未初始化' : `${fileSearchPaths.length} 项`}</span>
                             </div>
                             <div className="indexSettingList">
-                                {fileSearchPaths === null && <div className="indexSettingEmpty">尚未初始化，应用启动时将生成默认包含路径</div>}
-                                {fileSearchPaths?.length === 0 && <div className="indexSettingEmpty">已明确设置为空，不扫描任何目录</div>}
-                                {(fileSearchPaths || []).map((path) => <Tag title={path} key={path} closable onClose={() => setFileSearchPaths(fileSearchPaths.filter((item) => item !== path))}>{path}</Tag>)}
+                                {fileSearchPaths === null &&
+                                    <div className="indexSettingEmpty">尚未初始化，应用启动时将生成默认包含路径</div>}
+                                {fileSearchPaths?.length === 0 &&
+                                    <div className="indexSettingEmpty">已明确设置为空，不扫描任何目录</div>}
+                                {(fileSearchPaths || []).map((path) => <Tag title={path} key={path} closable
+                                                                            onClose={() => setFileSearchPaths(fileSearchPaths.filter((item) => item !== path))}>{path}</Tag>)}
                             </div>
                             <div className="indexSettingAdd">
-                                <Input value={newFileSearchPath} placeholder="例如 C:\\Users\\admin\\Downloads 或 D:\\" onChange={(event) => setNewFileSearchPath(event.target.value)} onPressEnter={addFileSearchPath}/>
+                                <Input value={newFileSearchPath} placeholder="例如 C:\\Users\\admin\\Downloads 或 D:\\"
+                                       onChange={(event) => setNewFileSearchPath(event.target.value)}
+                                       onPressEnter={addFileSearchPath}/>
                                 <Button type="primary" ghost onClick={addFileSearchPath}>添加</Button>
                             </div>
                         </section>
@@ -1289,10 +1476,13 @@ const Component = () => {
                             </div>
                             <div className="indexSettingList">
                                 {excludePaths.length === 0 && <div className="indexSettingEmpty">暂无排除路径</div>}
-                                {excludePaths.map((path) => <Tag title={path} key={path} closable onClose={() => setExcludePaths(excludePaths.filter((item) => item !== path))}>{path}</Tag>)}
+                                {excludePaths.map((path) => <Tag title={path} key={path} closable
+                                                                 onClose={() => setExcludePaths(excludePaths.filter((item) => item !== path))}>{path}</Tag>)}
                             </div>
                             <div className="indexSettingAdd">
-                                <Input value={newExcludePath} placeholder="例如 */node_modules 或 C:\\Windows" onChange={(event) => setNewExcludePath(event.target.value)} onPressEnter={addExcludePath}/>
+                                <Input value={newExcludePath} placeholder="例如 */node_modules 或 C:\\Windows"
+                                       onChange={(event) => setNewExcludePath(event.target.value)}
+                                       onPressEnter={addExcludePath}/>
                                 <Button type="primary" ghost onClick={addExcludePath}>添加</Button>
                             </div>
                         </section>
@@ -1307,10 +1497,13 @@ const Component = () => {
                             </div>
                             <div className="indexSettingList">
                                 {excludeTypes.length === 0 && <div className="indexSettingEmpty">暂无排除类型</div>}
-                                {excludeTypes.map((type) => <Tag title={type} key={type} closable onClose={() => setExcludeTypes(excludeTypes.filter((item) => item !== type))}>{type}</Tag>)}
+                                {excludeTypes.map((type) => <Tag title={type} key={type} closable
+                                                                 onClose={() => setExcludeTypes(excludeTypes.filter((item) => item !== type))}>{type}</Tag>)}
                             </div>
                             <div className="indexSettingAdd">
-                                <Input value={newExcludeType} placeholder="例如 tmp" onChange={(event) => setNewExcludeType(event.target.value)} onPressEnter={addExcludeType}/>
+                                <Input value={newExcludeType} placeholder="例如 tmp"
+                                       onChange={(event) => setNewExcludeType(event.target.value)}
+                                       onPressEnter={addExcludeType}/>
                                 <Button type="primary" ghost onClick={addExcludeType}>添加</Button>
                             </div>
                         </section>
@@ -1338,7 +1531,8 @@ const Component = () => {
                             <Input value={customAppName} placeholder="应用名称" aria-label="应用名称"
                                    onChange={(event) => setCustomAppName(event.target.value)}/>
                             <Input value={customAppPath} placeholder="例如 D:\\Apps\\MyApp.exe" aria-label="应用路径"
-                                   onChange={(event) => setCustomAppPath(event.target.value)} onPressEnter={addCustomApp}/>
+                                   onChange={(event) => setCustomAppPath(event.target.value)}
+                                   onPressEnter={addCustomApp}/>
                             <Button type="primary" onClick={addCustomApp}>添加应用</Button>
                         </div>
                     </section>
@@ -1361,12 +1555,14 @@ const Component = () => {
                             {customApps.map((app) => <div className="customAppItem" key={app.id}>
                                 {app.icon
                                     ? <img className="customAppIcon" src={`data:image/png;base64,${app.icon}`} alt=""/>
-                                    : <div className="customAppIconFallback" aria-hidden="true">{app.title?.trim().charAt(0).toUpperCase() || 'A'}</div>}
+                                    : <div className="customAppIconFallback"
+                                           aria-hidden="true">{app.title?.trim().charAt(0).toUpperCase() || 'A'}</div>}
                                 <div className="customAppMeta">
                                     <div className="customAppName" title={app.title}>{app.title}</div>
                                     <div className="customAppPath" title={app.path}>{app.path}</div>
                                 </div>
-                                <Popconfirm title="删除这个手动应用？" onConfirm={() => deleteCustomApp(app.id)} okText="删除" cancelText="取消">
+                                <Popconfirm title="删除这个手动应用？" onConfirm={() => deleteCustomApp(app.id)}
+                                            okText="删除" cancelText="取消">
                                     <Button type="text" danger size="small">删除</Button>
                                 </Popconfirm>
                             </div>)}
@@ -1380,18 +1576,20 @@ const Component = () => {
                                 <h3 className="snippetHeading">开机启动</h3>
                                 <div className="snippetHint">登录 Windows 后自动启动百灵鸟。</div>
                             </div>
-                            <Switch checked={autoLaunch} onChange={handleAutoLaunchChange} />
+                            <Switch checked={autoLaunch} onChange={handleAutoLaunchChange}/>
                         </div>
                     </section>
                     <section className="appSettingCard">
                         <h3 className="snippetHeading">快捷键</h3>
                         <div className="snippetHint">点击快捷键框，然后按下新的组合键。</div>
                         <div className="hotkeysFrame"
-                             onFocusCapture={() => handleHotkeyCapture(true).catch(() => {})}
+                             onFocusCapture={() => handleHotkeyCapture(true).catch(() => {
+                             })}
                              onBlurCapture={(event) => {
                                  if (!event.currentTarget.contains(event.relatedTarget)) {
                                      activeHotkeyField.current = null;
-                                     handleHotkeyCapture(false).catch(() => {});
+                                     handleHotkeyCapture(false).catch(() => {
+                                     });
                                  }
                              }}>
                             <div className="hotkeys-item">
@@ -1401,7 +1599,9 @@ const Component = () => {
                                 </div>
                                 <div contentEditable suppressContentEditableWarning className="hotkeys-input"
                                      role="textbox" aria-label="百灵鸟快捷键"
-                                     onFocus={() => { activeHotkeyField.current = 'lark'; }}
+                                     onFocus={() => {
+                                         activeHotkeyField.current = 'lark';
+                                     }}
                                      onKeyDown={(event) => handleHotkeysDown(event, 'lark')}
                                      onKeyUp={(event) => handleHotkeysUp(event, 'lark')}>
                                     <HotkeyKeys downKey={larkDisplayText.downKey}/>
@@ -1414,7 +1614,9 @@ const Component = () => {
                                 </div>
                                 <div contentEditable suppressContentEditableWarning className="hotkeys-input"
                                      role="textbox" aria-label="剪贴板快捷键"
-                                     onFocus={() => { activeHotkeyField.current = 'cbd'; }}
+                                     onFocus={() => {
+                                         activeHotkeyField.current = 'cbd';
+                                     }}
                                      onKeyDown={(event) => handleHotkeysDown(event, 'cbd')}
                                      onKeyUp={(event) => handleHotkeysUp(event, 'cbd')}>
                                     <HotkeyKeys downKey={cbdDisplayText.downKey}/>
@@ -1427,7 +1629,9 @@ const Component = () => {
                                 </div>
                                 <div contentEditable suppressContentEditableWarning className="hotkeys-input"
                                      role="textbox" aria-label="文件跳转快捷键"
-                                     onFocus={() => { activeHotkeyField.current = 'fileJump'; }}
+                                     onFocus={() => {
+                                         activeHotkeyField.current = 'fileJump';
+                                     }}
                                      onKeyDown={(event) => handleHotkeysDown(event, 'fileJump')}
                                      onKeyUp={(event) => handleHotkeysUp(event, 'fileJump')}>
                                     <HotkeyKeys downKey={fileJumpDisplayText.downKey}/>
@@ -1441,25 +1645,29 @@ const Component = () => {
                         <div className="snippetHint">限制保存数量，或按内容类型设置保留天数。</div>
                         <div className="clipboardRetentionGrid">
                             <div className="settingSmallFrame">
-                                <Checkbox checked={clipboardCountSwitch} onChange={(event) => setClipboardCountSwitch(event.target.checked)}>数量（个）</Checkbox>
+                                <Checkbox checked={clipboardCountSwitch}
+                                          onChange={(event) => setClipboardCountSwitch(event.target.checked)}>数量（个）</Checkbox>
                                 <InputNumber size="small" min={10} max={200} value={clipboardCount}
                                              disabled={!clipboardCountSwitch}
                                              onChange={(value) => setClipboardCount(value ?? 100)} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
-                                <Checkbox checked={clipboardTextSwitch} onChange={(event) => setClipboardTextSwitch(event.target.checked)}>文本（天）</Checkbox>
+                                <Checkbox checked={clipboardTextSwitch}
+                                          onChange={(event) => setClipboardTextSwitch(event.target.checked)}>文本（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={30} value={clipboardText}
                                              disabled={!clipboardTextSwitch}
                                              onChange={(value) => setClipboardText(value ?? 10)} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
-                                <Checkbox checked={clipboardImageSwitch} onChange={(event) => setClipboardImageSwitch(event.target.checked)}>图片（天）</Checkbox>
+                                <Checkbox checked={clipboardImageSwitch}
+                                          onChange={(event) => setClipboardImageSwitch(event.target.checked)}>图片（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={15} value={clipboardImage}
                                              disabled={!clipboardImageSwitch}
                                              onChange={(value) => setClipboardImage(value ?? 5)} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
-                                <Checkbox checked={clipboardFileSwitch} onChange={(event) => setClipboardFileSwitch(event.target.checked)}>文件（天）</Checkbox>
+                                <Checkbox checked={clipboardFileSwitch}
+                                          onChange={(event) => setClipboardFileSwitch(event.target.checked)}>文件（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={10} value={clipboardFile}
                                              disabled={!clipboardFileSwitch}
                                              onChange={(value) => setClipboardFile(value ?? 1)} changeOnWheel/>
@@ -1487,7 +1695,8 @@ const Component = () => {
                     </section>
 
                     <div className="appSettingFooter">
-                        {settingNotice.text && <span className={settingNotice.type === 'error' ? 'settingError' : 'settingNotice'}>
+                        {settingNotice.text &&
+                            <span className={settingNotice.type === 'error' ? 'settingError' : 'settingNotice'}>
                             {settingNotice.text}
                         </span>}
                         <Button onClick={handleSettingReset}>重置</Button>

@@ -595,6 +595,23 @@ pub fn open_url(url: &str) {
     }
 }
 
+#[tauri::command]
+pub fn open_environment_variables() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("rundll32.exe")
+            .arg("sysdm.cpl,EditEnvironmentVariables")
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("打开环境变量设置失败：{error}"))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("环境变量设置目前仅支持 Windows".to_string())
+    }
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn open_file(file_path: &str) {
     if let Err(error) = open_file_result(file_path) {

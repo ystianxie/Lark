@@ -47,6 +47,9 @@ pub struct BaseConfig {
     pub app_index_initialized: bool,
     #[serde(default)]
     pub file_index_initialized: bool,
+    /// 最近一次完整文件索引成功提交并补写增量事件的 Unix 时间戳（秒）。
+    #[serde(default)]
+    pub last_file_index_rebuild_at: Option<i64>,
     #[serde(default)]
     pub snippets_enabled: bool,
     #[serde(default = "default_snippet_trigger")]
@@ -115,6 +118,7 @@ impl Default for BaseConfig {
             local_app_search_exclude_paths: Vec::new(),
             app_index_initialized: false,
             file_index_initialized: false,
+            last_file_index_rebuild_at: None,
             snippets_enabled: false,
             snippet_trigger: default_snippet_trigger(),
             text_snippets: Vec::new(),
@@ -194,6 +198,7 @@ impl Default for BaseConfig {
             local_app_search_exclude_paths: Vec::new(),
             app_index_initialized: false,
             file_index_initialized: false,
+            last_file_index_rebuild_at: None,
             snippets_enabled: false,
             snippet_trigger: default_snippet_trigger(),
             text_snippets: Vec::new(),
@@ -627,6 +632,12 @@ pub fn save_index_initialization_flags(
     config.save_local_config()
 }
 
+pub fn save_last_file_index_rebuild_at(timestamp: i64) -> Result<()> {
+    let mut config = Config::new();
+    config.config.base.last_file_index_rebuild_at = Some(timestamp);
+    config.save_local_config()
+}
+
 pub fn save_index_settings_data(setting_info: Value) -> Result<()> {
     let mut config = Config::new();
     if setting_info.get("localFileSearchPaths").is_some() {
@@ -795,9 +806,11 @@ mod plugin_config_tests {
             .expect("base 应为对象");
         base.remove("app_index_initialized");
         base.remove("file_index_initialized");
+        base.remove("last_file_index_rebuild_at");
 
         let restored: ConfigData = serde_json::from_value(value).expect("旧配置应可读取");
         assert!(!restored.base.app_index_initialized);
         assert!(!restored.base.file_index_initialized);
+        assert_eq!(restored.base.last_file_index_rebuild_at, None);
     }
 }

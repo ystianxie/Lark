@@ -1,3 +1,31 @@
+@font-face {
+    font-family: "HarmonyOS Sans";
+    src: url("./assets/fonts/HarmonyOS_SansSC_Regular.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "HarmonyOS Sans";
+    src: url("./assets/fonts/HarmonyOS_SansSC_Medium.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "HarmonyOS Sans";
+    src: url("./assets/fonts/HarmonyOS_SansSC_Bold.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+}
+
+:root {
+    --font-family-ui: "HarmonyOS Sans", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+}
+
 
 * {
     padding: 0;
@@ -12,13 +40,44 @@ body {
     /* font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
       'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
       sans-serif; */
-    font-family: "PingFang", "Arial";
+    font-family: var(--font-family-ui);
+}
+
+button,
+input,
+textarea,
+select {
+    font-family: var(--font-family-ui);
 }
 
 #scrollableDiv::-webkit-scrollbar {
     /*display: none; !* Chrome, Safari, and Opera *!*/
 }
 
+/* Panel 默认滚动条；result/input-panel 继续使用原来的深色样式。 */
+.panelSubPage * {
+    scrollbar-color: #b8c0cc #edf0f4;
+    scrollbar-width: thin;
+}
+
+.panelSubPage *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+}
+
+.panelSubPage *::-webkit-scrollbar-track {
+    background: #edf0f4;
+    border-radius: 8px;
+}
+
+.panelSubPage *::-webkit-scrollbar-thumb {
+    background: #b8c0cc;
+    border-radius: 8px;
+}
+
+.panelSubPage *::-webkit-scrollbar-thumb:hover {
+    background: #9da7b5;
+}
 /* 滚动条样式 */
 #scrollableDiv::-webkit-scrollbar {
     width: 4px; /*  设置纵轴（y轴）轴滚动条 */
@@ -194,7 +253,7 @@ body {
 }
 
 .activateComponent {
-    width: 43px;
+    width: 38px;
     height: 28px;
     display: flex;
     justify-content: center;

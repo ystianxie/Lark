@@ -73,6 +73,7 @@ const App = () => {
     const [pluginsError, setPluginsError] = useState("");
     const [pluginSettingsStatus, setPluginSettingsStatus] = useState({});
     const pluginRefreshId = useRef(0);
+    const debugModeRef = useRef(false);
 
     // 只拉取「必填项是否齐全」的摘要，不把插件的配置值读进前端内存。
     const refreshPluginSettingsStatus = () => {
@@ -163,15 +164,38 @@ const App = () => {
     componentInfoRef.current = componentInfo;
     initStatusRef.current = initStatus;
 
+    const toggleDebugMode = async () => {
+        debugModeRef.current = !debugModeRef.current;
+        const enabled = debugModeRef.current;
+        try {
+            await invoke("notify", {
+                notification: {
+                    level: enabled ? "success" : "info",
+                    title: enabled ? "已开启调试模式" : "已关闭调试模式",
+                    message: enabled ? "F12、右键和开发者工具快捷键已恢复。" : "F12、右键和开发者工具快捷键已禁用。",
+                    durationMs: 3000,
+                },
+            });
+        } catch (error) {
+            console.warn("调试模式通知发送失败", error);
+        }
+    };
     // 窗口拖放由 Rust 侧的 win-file-drop 插件接管：它注入脚本把 File 交给宿主解析成真实路径，
     // 再以 tauri://drag-drop 事件发回来（见下方 unListenFileDrop）。这里不再自己解析 dataTransfer。
     async function handleKeyDown(event) {
+        if (import.meta.env.PROD && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "u") {
+            event.preventDefault();
+            event.stopPropagation();
+            await toggleDebugMode();
+            return;
+        }
+
         // 处理键盘按下
         setKeyDown(event);
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
         if (componentInfoRef.current?.type === "panel") {
             // panel 仍由主输入框接收键盘事件，但不允许按键修改输入内容。
-            if (event.key !== "Tab" || !["showComponent", "todoComponent"].includes(componentInfoRef.current?.data)) event.preventDefault();
+            if (event.key !== "Tab" || !["showComponent", "todoComponent", "hostsComponent"].includes(componentInfoRef.current?.data)) event.preventDefault();
             if (event.key === "Escape" && isComposing.ppos === 0) {
                 // workspace 内部页面（例如插件创建/编辑器）自己处理 Esc，
                 // 不要让宿主的全局处理器直接清空 panel。
@@ -559,6 +583,36 @@ const App = () => {
             setKeywordComponent([]);
         }
     }
+
+    useEffect(() => {
+        // 只在生产构建中禁用浏览器调试入口；开发环境保留 F12 便于调试。
+        if (!import.meta.env.PROD) return;
+
+        const preventContextMenu = (event) => {
+            if (debugModeRef.current) return;
+            event.preventDefault();
+        };
+        const preventDevToolsShortcuts = (event) => {
+            const key = event.key.toLowerCase();
+            const blocked =
+                key === "f12" ||
+                ((event.ctrlKey || event.metaKey) && event.shiftKey && ["i", "j", "c"].includes(key)) ||
+                ((event.ctrlKey || event.metaKey) && key === "u" && !event.shiftKey);
+
+            if (blocked) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        };
+
+        document.addEventListener("contextmenu", preventContextMenu);
+        document.addEventListener("keydown", preventDevToolsShortcuts, true);
+
+        return () => {
+            document.removeEventListener("contextmenu", preventContextMenu);
+            document.removeEventListener("keydown", preventDevToolsShortcuts, true);
+        };
+    }, []);
 
     useEffect(() => {
         // panel 的键盘事件仍由主输入框接收，再通过 keyDown 传给面板组件。
@@ -1134,8 +1188,6 @@ const App = () => {
                         }}
                     />
                 </div>
-                {/*<button onClick={() => inputBox.current.focus()}>aa</button>*/}
-                {/*{keywordComponent ? TemplateComponent(keywordComponent, selectedIndex, setSelectedIndex, confirmComponentSelected, fnDown) : null}*/}
                 {keywordComponent ? (
                     <Suspense fallback={<div>Loading...</div>}>
                         <TemplateComponent
@@ -1170,7 +1222,7 @@ const App = () => {
                                               inputBox.current?.focus();
                                           },
                                           pluginConfigId: componentInfo.pluginConfigId,
-                                      } : ["clipboardComponent", "todoComponent"].includes(componentInfo.data) ? {
+                                      } : ["clipboardComponent", "todoComponent", "hostsComponent"].includes(componentInfo.data) ? {
                                           onClose: () => {
                                               initStatus();
                                               inputBox.current?.focus();
@@ -1184,4 +1236,3 @@ const App = () => {
 };
 
 export default App;
-
