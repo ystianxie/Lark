@@ -1,0 +1,1155 @@
+:root {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: #17202a;
+    background: #eef4f4;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html, body, #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+}
+
+button {
+    font: inherit;
+}
+
+.onboardingGuide-shell {
+    --guide-accent: #347d82;
+    --guide-accent-dark: #28666b;
+    --guide-border: #dce7e7;
+    display: grid;
+    grid-template-rows: 48px minmax(0, 1fr) 72px;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border: 1px solid rgba(52, 125, 130, 0.2);
+    border-radius: 14px;
+    background: #fbfdfd;
+    box-shadow: 0 18px 50px rgba(26, 58, 61, 0.18);
+}
+
+.onboardingGuide-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px 0 18px;
+    border-bottom: 1px solid #edf2f2;
+    background: rgba(251, 253, 253, 0.96);
+    user-select: none;
+}
+
+.onboardingGuide-brand {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    color: #405052;
+    font-size: 13px;
+}
+
+.onboardingGuide-brand > span {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    color: white;
+    background: var(--guide-accent);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.onboardingGuide-brand > small {
+    margin-left: 3px;
+    color: #99a6a7;
+    font-size: 10px;
+    font-weight: 650;
+}
+
+.onboardingGuide-close {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 8px;
+    color: #718082;
+    background: transparent;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.onboardingGuide-close:hover {
+    color: #9b2c2c;
+    background: #fff0f0;
+}
+
+.onboardingGuide-close:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.onboardingGuide-content {
+    min-height: 0;
+    overflow: auto;
+}
+
+.onboardingGuide-page {
+    width: 100%;
+    min-height: 100%;
+    padding: 25px 38px 18px;
+}
+
+.onboardingGuide-eyebrow {
+    display: inline-block;
+    margin-bottom: 7px;
+    color: var(--guide-accent);
+    font-size: 11px;
+    font-weight: 750;
+    letter-spacing: 0.09em;
+}
+
+.onboardingGuide-page h1 {
+    margin: 0;
+    color: #17282a;
+    font-size: 27px;
+    line-height: 1.22;
+    letter-spacing: -0.03em;
+}
+
+.onboardingGuide-page p {
+    color: #657476;
+    font-size: 12px;
+    line-height: 1.65;
+}
+
+.onboardingGuide-sectionHeading.is-left {
+    text-align: left;
+}
+
+.onboardingGuide-sectionHeading.is-left > p {
+    max-width: none;
+    margin: 6px 0 14px;
+}
+
+.onboardingGuide-shortcut {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.onboardingGuide-shortcut kbd {
+    min-width: 25px;
+    padding: 5px 7px;
+    border: 1px solid #d2dada;
+    border-bottom-width: 2px;
+    border-radius: 6px;
+    color: #344446;
+    background: linear-gradient(#fff, #f4f6f6);
+    box-shadow: 0 1px 1px rgba(0, 0, 0, .04);
+    font: 650 11px/1 "Segoe UI", sans-serif;
+    text-align: center;
+}
+
+.onboardingGuide-shortcutPlus {
+    color: #a4aeaf;
+    font-size: 10px;
+}
+
+/* 第 1 页：主入口与基本流程 */
+.onboardingGuide-welcome {
+    display: grid;
+    grid-template-columns: minmax(0, 1.02fr) minmax(275px, .98fr);
+    align-items: center;
+    gap: 28px;
+}
+
+.onboardingGuide-copy > p {
+    max-width: 390px;
+    margin: 11px 0 14px;
+}
+
+.onboardingGuide-openPath {
+    display: flex;
+    align-items: stretch;
+    gap: 7px;
+    width: 100%;
+    max-width: 390px;
+}
+
+.onboardingGuide-openPath > div {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 7px;
+    padding: 10px;
+    border: 1px solid var(--guide-border);
+    border-radius: 10px;
+    background: #f7fbfb;
+}
+
+.onboardingGuide-openPath > div > span {
+    color: #778789;
+    font-size: 10px;
+}
+
+.onboardingGuide-openPath > div > strong {
+    color: #405052;
+    font-size: 10px;
+    line-height: 1.35;
+}
+
+.onboardingGuide-openPath > b {
+    align-self: center;
+    color: #9eb0b1;
+    font-size: 12px;
+}
+
+.onboardingGuide-tryHint {
+    margin-bottom: 0 !important;
+    color: var(--guide-accent-dark) !important;
+    font-size: 11px !important;
+}
+
+.onboardingGuide-demoSearch {
+    padding: 13px;
+    border: 1px solid #d8e4e4;
+    border-radius: 15px;
+    background: white;
+    box-shadow: 0 18px 35px rgba(52, 90, 94, 0.12);
+    transform: rotate(.5deg);
+}
+
+.onboardingGuide-demoLabel, .onboardingGuide-demoCaption {
+    color: #748587;
+    font-size: 10px;
+    font-weight: 650;
+}
+
+.onboardingGuide-demoLabel {
+    margin: 0 0 7px 2px;
+}
+
+.onboardingGuide-demoCaption {
+    margin: 9px 2px 0;
+    text-align: right;
+}
+
+.onboardingGuide-demoQuery {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 42px;
+    padding: 0 11px;
+    border: 1px solid #e1e7e7;
+    border-radius: 10px;
+    color: #59696b;
+    font-size: 12px;
+}
+
+.onboardingGuide-demoMark {
+    display: grid;
+    place-items: center;
+    width: 23px;
+    height: 23px;
+    border-radius: 7px;
+    color: #fff;
+    background: var(--guide-accent);
+    font-weight: 800;
+}
+
+.onboardingGuide-demoResult {
+    display: grid;
+    grid-template-columns: 30px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    margin-top: 7px;
+    padding: 7px 9px;
+    border-radius: 9px;
+    color: #475658;
+}
+
+.onboardingGuide-demoResult.is-active {
+    background: #eaf4f4;
+}
+
+.onboardingGuide-demoResult strong, .onboardingGuide-demoResult small {
+    display: block;
+}
+
+.onboardingGuide-demoResult strong {
+    font-size: 11px;
+}
+
+.onboardingGuide-demoResult small {
+    margin-top: 2px;
+    color: #91a0a1;
+    font-size: 9px;
+}
+
+.onboardingGuide-demoResult em {
+    color: #718183;
+    font-size: 9px;
+    font-style: normal;
+}
+
+.onboardingGuide-demoIcon {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    color: #fff;
+    background: #609aa0;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.onboardingGuide-demoIcon.is-file {
+    background: #8a9caf;
+}
+
+/* 第 2 页：文件模式与结果快捷操作 */
+.onboardingGuide-resultLayout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(250px, .92fr);
+    gap: 14px;
+}
+
+.onboardingGuide-resultMock, .onboardingGuide-actionList {
+    border: 1px solid var(--guide-border);
+    border-radius: 13px;
+    background: #fff;
+}
+
+.onboardingGuide-resultMock {
+    padding: 11px;
+}
+
+.onboardingGuide-fileMode {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 9px;
+    background: #edf6f6;
+}
+
+.onboardingGuide-fileMode > span strong, .onboardingGuide-fileMode > span small {
+    display: block;
+}
+
+.onboardingGuide-fileMode > span strong {
+    color: #355052;
+    font-size: 11px;
+}
+
+.onboardingGuide-fileMode > span small {
+    margin-top: 2px;
+    color: #829193;
+    font-size: 9px;
+}
+
+.onboardingGuide-resultList {
+    margin-top: 8px;
+}
+
+.onboardingGuide-resultRow {
+    display: grid;
+    grid-template-columns: 29px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border-radius: 8px;
+    color: #455456;
+}
+
+.onboardingGuide-resultRow.is-active {
+    background: #eaf4f4;
+}
+
+.onboardingGuide-resultRow > span:nth-child(2) strong, .onboardingGuide-resultRow > span:nth-child(2) small {
+    display: block;
+}
+
+.onboardingGuide-resultRow > span:nth-child(2) strong {
+    font-size: 10px;
+}
+
+.onboardingGuide-resultRow > span:nth-child(2) small {
+    overflow: hidden;
+    margin-top: 1px;
+    color: #93a0a2;
+    font-size: 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.onboardingGuide-resultRow > kbd {
+    min-width: 42px;
+    padding: 4px 6px;
+    border: 1px solid #d6dfdf;
+    border-radius: 5px;
+    color: #566668;
+    background: #fff;
+    font: 650 9px/1 "Segoe UI", sans-serif;
+    text-align: center;
+}
+
+.onboardingGuide-resultIcon {
+    display: grid;
+    place-items: center;
+    width: 27px;
+    height: 27px;
+    border-radius: 7px;
+    color: var(--guide-accent-dark);
+    background: #e3efef;
+    font-size: 10px;
+    font-weight: 750;
+}
+
+.onboardingGuide-actionList {
+    padding: 8px 11px;
+}
+
+.onboardingGuide-actionList article {
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-height: 49px;
+    border-bottom: 1px solid #edf2f2;
+}
+
+.onboardingGuide-actionList article:last-of-type {
+    border-bottom: 0;
+}
+
+.onboardingGuide-actionList article strong, .onboardingGuide-actionList article small {
+    display: block;
+}
+
+.onboardingGuide-actionList article strong {
+    color: #374a4c;
+    font-size: 10px;
+}
+
+.onboardingGuide-actionList article small {
+    margin-top: 2px;
+    color: #879596;
+    font-size: 9px;
+}
+
+.onboardingGuide-actionList > p {
+    margin: 7px 0 0;
+    color: #8b7770;
+    font-size: 9px;
+    line-height: 1.45;
+}
+
+/* 第 3 页：剪贴板与文件对话框跳转 */
+.onboardingGuide-directGrid {
+    display: grid;
+    grid-template-columns: minmax(180px, .7fr) minmax(0, 1.3fr);
+    gap: 13px;
+}
+
+.onboardingGuide-clipboardCard, .onboardingGuide-jumpCard {
+    padding: 14px;
+    border: 1px solid var(--guide-border);
+    border-radius: 13px;
+    background: #fff;
+}
+
+.onboardingGuide-cardTag {
+    display: inline-block;
+    padding: 3px 7px;
+    border-radius: 999px;
+    color: var(--guide-accent-dark);
+    background: #e9f3f3;
+    font-size: 9px;
+    font-weight: 700;
+}
+
+.onboardingGuide-bigIcon {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    margin: 13px 0 10px;
+    border-radius: 11px;
+    color: #fff;
+    /*background: #fdfffd;*/
+    font-size: 13px;
+    font-weight: 750;
+}
+
+.onboardingGuide-clipboardCard h2, .onboardingGuide-jumpCard h2 {
+    color: #304244;
+}
+
+.onboardingGuide-clipboardCard h2 {
+    margin: 12px 0 3px;
+    font-size: 13px;
+}
+
+.onboardingGuide-clipboardCard p {
+    margin: 0;
+    font-size: 10px;
+}
+
+.onboardingGuide-jumpCard h2 {
+    margin: 8px 0 10px;
+    font-size: 14px;
+}
+
+.onboardingGuide-jumpFlow {
+    display: grid;
+    grid-template-columns: 1fr auto 1.05fr auto 1.08fr;
+    align-items: stretch;
+    gap: 5px;
+}
+
+.onboardingGuide-jumpFlow > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    border: 1px solid #e2eaea;
+    border-radius: 9px;
+    background: #f8fbfb;
+}
+
+.onboardingGuide-jumpFlow > div.is-final {
+    border-color: #b9d3d4;
+    background: #edf6f6;
+}
+
+.onboardingGuide-jumpFlow > div > span:first-child {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    color: #fff;
+    background: #789ca0;
+    font-size: 8px;
+    font-weight: 700;
+}
+
+.onboardingGuide-jumpFlow strong {
+    color: #3c4d4f;
+    font-size: 9px;
+}
+
+.onboardingGuide-jumpFlow small {
+    color: #859496;
+    font-size: 8px;
+    line-height: 1.35;
+}
+
+.onboardingGuide-jumpFlow > b {
+    align-self: center;
+    color: #9ba9aa;
+    font-size: 10px;
+}
+
+.onboardingGuide-note {
+    margin: 9px 0 0 !important;
+    color: #768688 !important;
+    font-size: 9px !important;
+    line-height: 1.5 !important;
+}
+
+/* 第 4 页：内置组件与插件组件库 */
+.onboardingGuide-toolsGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 13px;
+}
+
+.onboardingGuide-builtinsPanel, .onboardingGuide-pluginPanel {
+    padding: 13px;
+    border: 1px solid var(--guide-border);
+    border-radius: 13px;
+    background: #fff;
+}
+
+.onboardingGuide-panelTitle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 9px;
+}
+
+.onboardingGuide-panelTitle > span {
+    color: #829092;
+    font-size: 9px;
+}
+
+.onboardingGuide-panelTitle > strong {
+    color: #324648;
+    font-size: 13px;
+}
+
+.onboardingGuide-builtinsGrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+}
+
+.onboardingGuide-builtinsGrid > div {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px;
+    border-radius: 8px;
+    background: #f5f9f9;
+    color: #445456;
+    font-size: 9px;
+}
+
+.onboardingGuide-builtinsGrid > div > span {
+    display: grid;
+    place-items: center;
+    width: 23px;
+    height: 23px;
+    border-radius: 7px;
+    color: var(--guide-accent-dark);
+    background: #e1eeee;
+    font-weight: 750;
+}
+
+.onboardingGuide-routeLine {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 9px;
+    padding-top: 9px;
+    border-top: 1px solid #edf2f2;
+    color: #708082;
+    font-size: 9px;
+}
+
+.onboardingGuide-routeLine > b {
+    color: #a0adae;
+}
+
+.onboardingGuide-pluginPanel ul {
+    margin: 0;
+    padding: 0 0 0 17px;
+    color: #576769;
+    font-size: 10px;
+    line-height: 1.75;
+}
+
+.onboardingGuide-librarySearch {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+    margin-top: 9px;
+    padding: 8px 9px;
+    border-radius: 9px;
+    background: #edf6f6;
+}
+
+.onboardingGuide-librarySearch > span {
+    color: #809092;
+    font-size: 8px;
+}
+
+.onboardingGuide-librarySearch > strong {
+    color: #365153;
+    font-size: 10px;
+}
+
+.onboardingGuide-toolsFootnote {
+    margin: 9px 2px 0 !important;
+    color: var(--guide-accent-dark) !important;
+    font-size: 10px !important;
+}
+
+.onboardingGuide-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 24px;
+    border-top: 1px solid #e8eeee;
+    background: #f8fbfb;
+}
+
+.onboardingGuide-progress {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.onboardingGuide-progress > span {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: #cfdbdc;
+    transition: width .2s ease, background .2s ease;
+}
+
+.onboardingGuide-progress > span.is-active {
+    width: 22px;
+    background: var(--guide-accent);
+}
+
+.onboardingGuide-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+}
+
+.onboardingGuide-error {
+    max-width: 190px;
+    overflow: hidden;
+    color: #b42318;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.onboardingGuide-button {
+    height: 34px;
+    padding: 0 14px;
+    border: 1px solid #d6e0e0;
+    border-radius: 8px;
+    color: #435254;
+    background: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.onboardingGuide-button:hover {
+    border-color: #a9c3c5;
+    background: #f7fbfb;
+}
+
+.onboardingGuide-button.is-quiet {
+    border-color: transparent;
+    color: #798789;
+    background: transparent;
+}
+
+.onboardingGuide-button.is-primary {
+    min-width: 104px;
+    border-color: var(--guide-accent);
+    color: #fff;
+    background: var(--guide-accent);
+}
+
+.onboardingGuide-button.is-primary:hover {
+    border-color: var(--guide-accent-dark);
+    background: var(--guide-accent-dark);
+}
+
+.onboardingGuide-button:disabled {
+    opacity: .55;
+    cursor: default;
+}
+
+/* 标准向导窗口：增大字号和操作目标；窄屏仍使用下方紧凑布局。 */
+@media (min-width: 621px) and (min-height: 441px) {
+    .onboardingGuide-shell {
+        grid-template-rows: 52px minmax(0, 1fr) 76px;
+    }
+
+    .onboardingGuide-titlebar {
+        padding: 0 16px 0 22px;
+    }
+
+    .onboardingGuide-brand {
+        font-size: 15px;
+    }
+
+    .onboardingGuide-brand > span {
+        width: 28px;
+        height: 28px;
+        font-size: 14px;
+    }
+
+    .onboardingGuide-brand > small {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-page {
+        padding: 30px 46px 0px;
+    }
+
+    .onboardingGuide-eyebrow {
+        margin-bottom: 8px;
+        font-size: 12px;
+    }
+
+    .onboardingGuide-page h1 {
+        font-size: 31px;
+    }
+
+    .onboardingGuide-page p {
+        font-size: 14px;
+    }
+
+    .onboardingGuide-sectionHeading.is-left > p {
+        margin: 8px 0 18px;
+    }
+
+    .onboardingGuide-shortcut {
+        gap: 5px;
+    }
+
+    .onboardingGuide-shortcut kbd {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        min-width: 32px;
+        min-height: 31px;
+        padding: 7px 10px;
+        font-size: 13px;
+    }
+
+    .onboardingGuide-shortcutPlus {
+        flex: 0 0 auto;
+        font-size: 12px;
+    }
+
+    .onboardingGuide-welcome {
+        grid-template-columns: minmax(0, 1.06fr) minmax(330px, .94fr);
+        gap: 36px;
+    }
+
+    .onboardingGuide-copy > p, .onboardingGuide-openPath {
+        max-width: 470px;
+    }
+
+    .onboardingGuide-openPath {
+        gap: 9px;
+    }
+
+    .onboardingGuide-openPath > div {
+        padding: 13px;
+        gap: 9px;
+    }
+
+    .onboardingGuide-openPath > div > span,
+    .onboardingGuide-openPath > div > strong {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-openPath > b {
+        font-size: 14px;
+    }
+
+    .onboardingGuide-tryHint {
+        font-size: 13px !important;
+    }
+
+    .onboardingGuide-demoSearch {
+        padding: 16px;
+    }
+
+    .onboardingGuide-demoLabel, .onboardingGuide-demoCaption {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-demoQuery {
+        height: 48px;
+        font-size: 14px;
+    }
+
+    .onboardingGuide-demoResult {
+        grid-template-columns: 34px 1fr auto;
+        padding: 9px 11px;
+    }
+
+    .onboardingGuide-demoResult strong {
+        font-size: 13px;
+    }
+
+    .onboardingGuide-demoResult small, .onboardingGuide-demoResult em {
+        font-size: 11px;
+    }
+
+    .onboardingGuide-demoIcon {
+        width: 32px;
+        height: 32px;
+        font-size: 12px;
+    }
+
+    .onboardingGuide-resultLayout {
+        grid-template-columns: minmax(0, 1.06fr) minmax(320px, .94fr);
+        gap: 18px;
+    }
+
+    .onboardingGuide-resultMock {
+        padding: 14px;
+    }
+
+    .onboardingGuide-fileMode {
+        padding: 11px 12px;
+    }
+
+    .onboardingGuide-fileMode > span strong {
+        font-size: 13px;
+    }
+
+    .onboardingGuide-fileMode > span small {
+        font-size: 11px;
+    }
+
+    .onboardingGuide-resultRow {
+        grid-template-columns: 33px minmax(0, 1fr) auto;
+        padding: 9px 10px;
+    }
+
+    .onboardingGuide-resultRow > span:nth-child(2) strong {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-resultRow > span:nth-child(2) small {
+        font-size: 10px;
+    }
+
+    .onboardingGuide-resultRow > kbd {
+        min-width: 50px;
+        padding: 5px 8px;
+        font-size: 11px;
+    }
+
+    .onboardingGuide-resultIcon {
+        width: 31px;
+        height: 31px;
+        font-size: 12px;
+    }
+
+    .onboardingGuide-actionList {
+        padding: 10px 14px;
+    }
+
+    .onboardingGuide-actionList article {
+        grid-template-columns: 122px minmax(0, 1fr);
+        min-height: 60px;
+    }
+
+    .onboardingGuide-actionList article strong {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-actionList article small, .onboardingGuide-actionList > p {
+        font-size: 11px;
+    }
+
+    .onboardingGuide-directGrid {
+        grid-template-columns: minmax(220px, .72fr) minmax(0, 1.28fr);
+        gap: 17px;
+    }
+
+    .onboardingGuide-clipboardCard, .onboardingGuide-jumpCard {
+        padding: 18px;
+    }
+
+    .onboardingGuide-cardTag {
+        padding: 4px 9px;
+        font-size: 11px;
+    }
+
+    .onboardingGuide-bigIcon {
+        width: 44px;
+        height: 44px;
+        font-size: 15px;
+    }
+
+
+    .onboardingGuide-clipboardCard h2 {
+        font-size: 16px;
+    }
+
+    .onboardingGuide-clipboardCard p {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-jumpCard h2 {
+        font-size: 17px;
+    }
+
+    .onboardingGuide-jumpFlow {
+        gap: 7px;
+    }
+
+    .onboardingGuide-jumpFlow > div {
+        padding: 10px;
+        gap: 6px;
+    }
+
+    .onboardingGuide-jumpFlow > div > span:first-child {
+        width: 21px;
+        height: 21px;
+        font-size: 10px;
+    }
+
+    .onboardingGuide-jumpFlow strong {
+        font-size: 11px;
+    }
+
+    .onboardingGuide-jumpFlow small {
+        font-size: 10px;
+        line-height: 1.4;
+    }
+
+    .onboardingGuide-jumpFlow > b {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-note {
+        font-size: 11px !important;
+    }
+
+    .onboardingGuide-toolsGrid {
+        gap: 17px;
+    }
+
+    .onboardingGuide-builtinsPanel, .onboardingGuide-pluginPanel {
+        padding: 17px;
+    }
+
+    .onboardingGuide-panelTitle {
+        margin-bottom: 12px;
+    }
+
+    .onboardingGuide-panelTitle > span {
+        font-size: 11px;
+    }
+
+    .onboardingGuide-panelTitle > strong {
+        font-size: 16px;
+    }
+
+    .onboardingGuide-builtinsGrid {
+        gap: 9px;
+    }
+
+    .onboardingGuide-builtinsGrid > div {
+        gap: 9px;
+        padding: 9px;
+        font-size: 12px;
+    }
+
+    .onboardingGuide-builtinsGrid > div > span {
+        width: 29px;
+        height: 29px;
+    }
+
+    .onboardingGuide-routeLine {
+        gap: 8px;
+        margin-top: 12px;
+        padding-top: 12px;
+        font-size: 11px;
+    }
+
+    .onboardingGuide-pluginPanel ul {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-librarySearch {
+        margin-top: 12px;
+        padding: 10px 11px;
+    }
+
+    .onboardingGuide-librarySearch > span {
+        font-size: 10px;
+    }
+
+    .onboardingGuide-librarySearch > strong {
+        font-size: 12px;
+    }
+
+    .onboardingGuide-toolsFootnote {
+        margin-top: 12px !important;
+        font-size: 12px !important;
+    }
+
+    .onboardingGuide-footer {
+        padding: 0 30px;
+    }
+
+    .onboardingGuide-progress > span {
+        width: 8px;
+        height: 8px;
+    }
+
+    .onboardingGuide-progress > span.is-active {
+        width: 26px;
+    }
+
+    .onboardingGuide-error {
+        font-size: 11px;
+    }
+
+    .onboardingGuide-button {
+        height: 40px;
+        padding: 0 17px;
+        font-size: 13px;
+    }
+
+    .onboardingGuide-button.is-primary {
+        min-width: 126px;
+    }
+}
+
+@media (max-width: 620px), (max-height: 440px) {
+    .onboardingGuide-shell {
+        grid-template-rows: 44px minmax(0, 1fr) 64px;
+        border-radius: 10px;
+    }
+
+    .onboardingGuide-page {
+        padding: 20px 24px 16px;
+    }
+
+    .onboardingGuide-page h1 {
+        font-size: 23px;
+    }
+
+    .onboardingGuide-welcome, .onboardingGuide-resultLayout, .onboardingGuide-directGrid, .onboardingGuide-toolsGrid {
+        grid-template-columns: 1fr;
+    }
+
+    .onboardingGuide-demoSearch {
+        display: none;
+    }
+
+    .onboardingGuide-footer {
+        padding: 0 14px;
+    }
+
+    .onboardingGuide-button.is-primary {
+        min-width: 80px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .onboardingGuide-progress > span {
+        transition: none;
+    }
+}
+

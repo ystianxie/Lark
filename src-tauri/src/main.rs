@@ -36,8 +36,8 @@ use crate::config::plugins::{
 use crate::config::{
     app_settings, clear_plugin_settings_data, hotkey_settings, index_initialization_flags_present,
     index_settings, plugin_settings, plugin_settings_map, save_index_initialization_flags,
-    save_index_settings_data, save_last_file_index_rebuild_at, save_plugin_settings_data,
-    save_setting_data, save_snippet_settings_data, snippet_settings,
+    save_index_settings_data, save_last_file_index_rebuild_at, save_onboarding_completed,
+    save_plugin_settings_data, save_setting_data, save_snippet_settings_data, snippet_settings,
 };
 use crate::notification::{
     NotificationAction, NotificationInput, NotificationLevel, NotificationManager,
@@ -61,8 +61,12 @@ static HOTKEY_CAPTURE_BINDINGS: OnceLock<Mutex<Option<HotkeyBindings>>> = OnceLo
 static HOTKEY_REGISTRATION_LOCK: Mutex<()> = Mutex::new(());
 static INDEX_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 static FILE_INDEX_RUNNING: AtomicBool = AtomicBool::new(false);
+static FIRST_RUN_ONBOARDING_ACTIVE: AtomicBool = AtomicBool::new(false);
 const FILE_INDEX_REFRESH_INTERVAL_SECS: i64 = 10 * 60 * 60;
 const FILE_INDEX_STARTUP_DELAY: Duration = Duration::from_secs(15);
+const ONBOARDING_WINDOW_LABEL: &str = "onboarding-guide";
+const ONBOARDING_WINDOW_WIDTH: f64 = 860.0;
+const ONBOARDING_WINDOW_HEIGHT: f64 = 620.0;
 
 fn current_unix_timestamp() -> Result<i64, String> {
     SystemTime::now()
@@ -315,6 +319,109 @@ fn ensure_notification_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn onboarding_window_size(app: &AppHandle) -> (f64, f64) {
+    let monitor = app
+        .get_webview_window("skylark")
+        .and_then(|main| main.current_monitor().ok().flatten())
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return (ONBOARDING_WINDOW_WIDTH, ONBOARDING_WINDOW_HEIGHT);
+    };
+
+    let scale = monitor.scale_factor();
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let work = monitor.work_area();
+    let available_width = work.size.width as f64 / scale - 32.0;
+    let available_height = work.size.height as f64 / scale - 32.0;
+    (
+        ONBOARDING_WINDOW_WIDTH.min(available_width.max(360.0)),
+        ONBOARDING_WINDOW_HEIGHT.min(available_height.max(320.0)),
+    )
+}
+
+fn show_main_window(app: &AppHandle, focus: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("skylark")
+        .ok_or_else(|| "主窗口不存在".to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    if focus {
+        window.set_focus().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn ensure_onboarding_window(app: &AppHandle, focus: bool) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(ONBOARDING_WINDOW_LABEL) {
+        window.show().map_err(|error| error.to_string())?;
+        window.center().map_err(|error| error.to_string())?;
+        if focus {
+            window.set_focus().map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+
+    let (width, height) = onboarding_window_size(app);
+    WebviewWindowBuilder::new(
+        app,
+        ONBOARDING_WINDOW_LABEL,
+        WebviewUrl::App("onboarding.html".into()),
+    )
+    .title("Lark 新手向导")
+    .inner_size(width, height)
+    .center()
+    .decorations(false)
+    .transparent(false)
+    .shadow(true)
+    .closable(false)
+    .resizable(false)
+    .always_on_top(false)
+    .skip_taskbar(false)
+    .focused(focus)
+    .visible(true)
+    .build()
+    .map(|_| ())
+    .map_err(|error| format!("创建新手向导窗口失败：{error}"))
+}
+
+#[tauri::command]
+fn open_onboarding(app: AppHandle) -> Result<(), String> {
+    // 同步 IPC 在主线程执行；此时直接调用 run_on_main_thread 仍会立即执行闭包。
+    // 先切到异步运行时，再把 WebView 创建投递回主事件循环，保证当前 invoke 先返回。
+    let scheduler = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let window_app = scheduler.clone();
+        if let Err(error) = scheduler.run_on_main_thread(move || {
+            if let Err(error) = ensure_onboarding_window(&window_app, true) {
+                eprintln!("[onboarding] settings window creation failed: {error}");
+            } else if let Err(error) = window_app.emit("onboarding-main-reset-request", ()) {
+                eprintln!("[onboarding] main window reset dispatch failed: {error}");
+            }
+        }) {
+            eprintln!("[onboarding] settings window dispatch failed: {error}");
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn complete_onboarding(app: AppHandle) -> Result<(), String> {
+    save_onboarding_completed(true).map_err(|error| format!("保存新手向导状态失败：{error}"))?;
+    if let Some(window) = app.get_webview_window(ONBOARDING_WINDOW_LABEL) {
+        window.close().map_err(|error| error.to_string())?;
+    }
+    let was_first_run = FIRST_RUN_ONBOARDING_ACTIVE.swap(false, Ordering::AcqRel);
+    if was_first_run {
+        if let Err(error) = show_main_window(&app, true) {
+            eprintln!("首次向导完成后显示主窗口失败：{error}");
+        }
+    }
+    Ok(())
+}
+
 fn position_notification_window<R: tauri::Runtime>(
     app: &AppHandle<R>,
     window: &tauri::WebviewWindow<R>,
@@ -545,6 +652,7 @@ fn handle_shortcut(
     if event.state != ShortcutState::Pressed {
         return;
     }
+
     if *pressed == bindings.awaken {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
@@ -1231,6 +1339,8 @@ fn main() {
     let hotkey_awaken = config.base.hotkey_awaken.clone();
     let hotkey_clipboard = config.base.hotkey_clipboard.clone();
     let hotkey_file_jump = config.base.hotkey_file_jump.clone();
+    let show_onboarding = !config.base.onboarding_completed;
+    FIRST_RUN_ONBOARDING_ACTIVE.store(show_onboarding, Ordering::Release);
     api::snippets::update_settings(
         config.base.snippets_enabled,
         config.base.snippet_trigger.clone(),
@@ -1331,11 +1441,43 @@ fn main() {
             utils::window::set_window_shadow(app);
             println!("{:?}", &hotkey_awaken);
             let main_window = app.get_window("skylark").unwrap();
+            if show_onboarding {
+                if let Err(error) = main_window.hide() {
+                    eprintln!("首次向导期间隐藏主窗口失败：{error}");
+                }
+            } else if let Err(error) = show_main_window(app.handle(), true) {
+                eprintln!("显示主窗口失败：{error}");
+            }
             // Notification WebView is created during app startup, never on the
             // notification command path. This keeps plugin/business calls
             // independent from WebView construction.
             if let Err(error) = ensure_notification_window(app.handle()) {
                 eprintln!("[notification] startup window creation failed: {error}");
+            }
+            if show_onboarding {
+                let scheduler = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let window_app = scheduler.clone();
+                    if let Err(error) = scheduler.run_on_main_thread(move || {
+                        if let Err(error) = ensure_onboarding_window(&window_app, true) {
+                            eprintln!("[onboarding] startup window creation failed: {error}");
+                            FIRST_RUN_ONBOARDING_ACTIVE.store(false, Ordering::Release);
+                            if let Err(show_error) = show_main_window(&window_app, true) {
+                                eprintln!(
+                                    "[onboarding] startup fallback main window failed: {show_error}"
+                                );
+                            }
+                        }
+                    }) {
+                        eprintln!("[onboarding] startup window dispatch failed: {error}");
+                        FIRST_RUN_ONBOARDING_ACTIVE.store(false, Ordering::Release);
+                        if let Err(show_error) = show_main_window(&scheduler, true) {
+                            eprintln!(
+                                "[onboarding] startup dispatch fallback failed: {show_error}"
+                            );
+                        }
+                    }
+                });
             }
             for (shortcut, error) in failed_hotkeys {
                 let input = NotificationInput {
@@ -1428,6 +1570,8 @@ fn main() {
             set_notifications_enabled,
             set_notifications_paused,
             notification_window_resize,
+            open_onboarding,
+            complete_onboarding,
             search_keyword,
             create_file_index,
             create_app_index,

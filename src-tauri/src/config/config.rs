@@ -59,6 +59,9 @@ pub struct BaseConfig {
     /// 全局 Python 解释器路径（可直接指向虚拟环境里的可执行文件）。None = 使用平台默认命令。
     #[serde(default)]
     pub python_interpreter: Option<String>,
+    /// 是否已经完成或跳过首次使用向导。旧配置缺少此字段时按未完成处理。
+    #[serde(default)]
+    pub onboarding_completed: bool,
 }
 
 fn default_snippet_trigger() -> String {
@@ -123,6 +126,7 @@ impl Default for BaseConfig {
             snippet_trigger: default_snippet_trigger(),
             text_snippets: Vec::new(),
             python_interpreter: None,
+            onboarding_completed: false,
         }
     }
     #[cfg(target_os = "windows")]
@@ -203,6 +207,7 @@ impl Default for BaseConfig {
             snippet_trigger: default_snippet_trigger(),
             text_snippets: Vec::new(),
             python_interpreter: None,
+            onboarding_completed: false,
         }
     }
 }
@@ -227,6 +232,7 @@ enum ConfigUpdate {
     LocalAppSearchPaths(Vec<String>),
     LocalAppSearchExcludePaths(Vec<String>),
     PythonInterpreter(Option<String>),
+    OnboardingCompleted(bool),
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -352,6 +358,9 @@ impl Config {
                 self.config.base.local_app_search_exclude_paths = value
             }
             ConfigUpdate::PythonInterpreter(value) => self.config.base.python_interpreter = value,
+            ConfigUpdate::OnboardingCompleted(value) => {
+                self.config.base.onboarding_completed = value
+            }
         }
     }
     pub fn clipboard_retention(&self) -> ClipboardRetention {
@@ -517,6 +526,12 @@ pub fn app_settings() -> Result<Value> {
         "clipboardFile": base.clipboard_record_file_time,
         "pythonInterpreter": base.python_interpreter,
     }))
+}
+
+pub fn save_onboarding_completed(completed: bool) -> Result<()> {
+    let mut config = Config::new();
+    config.update_local_config(ConfigUpdate::OnboardingCompleted(completed));
+    config.save_local_config()
 }
 
 pub fn snippet_settings() -> Result<Value> {
@@ -795,6 +810,19 @@ mod plugin_config_tests {
             serde_json::from_value(value).expect("缺少 plugins 键不应导致整个配置回退默认值");
         assert!(restored.plugins.is_empty());
         assert_eq!(restored.base.app_name, "lark");
+    }
+
+    #[test]
+    fn config_without_onboarding_flag_defaults_to_incomplete() {
+        let mut value = serde_json::to_value(ConfigData::default()).expect("配置应可序列化");
+        let base = value
+            .get_mut("base")
+            .and_then(Value::as_object_mut)
+            .expect("base 应为对象");
+        base.remove("onboarding_completed");
+
+        let restored: ConfigData = serde_json::from_value(value).expect("旧配置应可读取");
+        assert!(!restored.base.onboarding_completed);
     }
 
     #[test]

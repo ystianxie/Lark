@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import nodeResolve from "@rollup/plugin-node-resolve"; // 导入插件
+import { fileURLToPath } from "node:url";
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
@@ -21,6 +22,10 @@ export default defineConfig(async () => ({
   },
   build: {
     rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        onboarding: fileURLToPath(new URL("./onboarding.html", import.meta.url)),
+      },
       plugins: [
         // ... other plugins
         nodeResolve({

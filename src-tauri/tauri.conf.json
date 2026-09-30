@@ -17,6 +17,7 @@
         "fullscreen": false,
         "resizable": false,
         "focus": true,
+        "visible": false,
         "center": true,
         "transparent": true,
         "hiddenTitle": true,
@@ -76,10 +77,11 @@
     "active": true,
     "targets": "nsis",
     "icon": [
+      "icons/icon.ico",
+      "icons/icon-16x16.png",
       "icons/icon-32x32.png",
       "icons/icon-192x192.png",
-      "icons/icon-512x512.png",
-      "icons/icon.ico"
+      "icons/icon-512x512.png"
     ],
     "externalBin": []
   },

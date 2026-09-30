@@ -120,6 +120,17 @@ const Wrapper = createGlobalStyle`
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
     }
 
+    .appSettingActionRow {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+    }
+
+    .appSettingActionText {
+        min-width: 0;
+    }
+
     .hotkeysFrame {
         display: grid;
         gap: 10px;
@@ -1064,6 +1075,15 @@ const Component = () => {
         }
     };
 
+    const handleOpenOnboarding = async () => {
+        try {
+            await invoke('open_onboarding');
+            setSettingNotice({type: 'success', text: '新手向导已打开'});
+        } catch (error) {
+            setSettingNotice({type: 'error', text: '打开新手向导失败：' + error});
+        }
+    };
+
     const handleHotkeyCapture = async (active) => {
         hotkeyCaptureActive.current = active;
         hotkeyCaptureTransition.current = hotkeyCaptureTransition.current
@@ -1578,6 +1598,13 @@ const Component = () => {
                             </div>
                             <Switch checked={autoLaunch} onChange={handleAutoLaunchChange}/>
                         </div>
+                    </section>
+                    <section className="appSettingCard appSettingActionRow">
+                        <div className="appSettingActionText">
+                            <h3 className="snippetHeading">新手向导</h3>
+                            <div className="snippetHint">重新查看快捷键和主要功能介绍，不会重置其他设置。</div>
+                        </div>
+                        <Button onClick={handleOpenOnboarding}>重新打开</Button>
                     </section>
                     <section className="appSettingCard">
                         <h3 className="snippetHeading">快捷键</h3>

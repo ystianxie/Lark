@@ -51,7 +51,7 @@ function TemplateComponent({
 
     const displayDesc = (component, selected) => {
         if (fnDown && selected && (component.type === "app" || component.type === "file")) {
-            return "Reveal file in Finder";
+            return "打开所在文件夹";
         } else {
             return component.desc?.replace(/\n/g, " ");
         }

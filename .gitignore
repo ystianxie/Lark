@@ -26,3 +26,10 @@ temp.txt
 /.vscode/
 test.*
 /src-tauri/target/
+/.cargo-target-check/
+/.cargo-target-check2/
+/.cargo-target-check3/
+/.cargo-target-check4/
+/.cargo-target-onboarding-reopen/
+/.reasonix/
+/aimisi-v2-run/

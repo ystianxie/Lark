@@ -1047,6 +1047,15 @@ const App = () => {
         };
         const unListenSettingsShowRequest = listen("settings-show-request", () => showTrayPanel("settingPluginComponent"));
         const unListenComponentsShowRequest = listen("components-show-request", () => showTrayPanel("showPluginComponent"));
+        const unListenOnboardingMainResetRequest = listen("onboarding-main-reset-request", async () => {
+            let resizePromise;
+            flushSync(() => {
+                resizePromise = initStatusRef.current?.();
+            });
+            if (inputBox.current) inputBox.current.value = "";
+            await resizePromise;
+            await appWindow.hide();
+        });
         const handleGlobalKeyDown = (event) => {
             if (componentInfoRef.current?.type === "panel") {
                 if (event.key === "Escape" && isComposing.ppos === 0) {
@@ -1105,6 +1114,7 @@ const App = () => {
             unListenClipboardShowRequest.then((f) => f());
             unListenSettingsShowRequest.then((f) => f());
             unListenComponentsShowRequest.then((f) => f());
+            unListenOnboardingMainResetRequest.then((f) => f());
             unListenAutoHide.then((f) => f());
             unListenWindowFocus.then((f) => f());
             unListenFileDrop.then((f) => f());
