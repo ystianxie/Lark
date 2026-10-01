@@ -1,13 +1,11 @@
 use super::string_factory;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use arboard::ImageData;
 use base64::engine::general_purpose;
 use base64::Engine;
-use image::codecs::bmp::BmpDecoder;
-use image::ColorType::Rgba8;
-use image::{ColorType, DynamicImage, ExtendedColorType, ImageEncoder};
+use image::{ExtendedColorType, ImageEncoder};
 use std::borrow::Cow;
-use std::io::{BufReader, BufWriter, Cursor};
+use std::io::{BufWriter, Cursor};
 
 pub fn rgba8_to_base64(img: &ImageData) -> String {
     let mut bytes: Vec<u8> = Vec::new();

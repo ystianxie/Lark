@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tauri::Manager;
 
 #[cfg(target_os = "windows")]
 use dunce;

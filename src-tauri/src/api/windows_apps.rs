@@ -5,14 +5,14 @@ use std::{
 
 use log::debug;
 use windows::{
-    core::{w, Interface},
+    core::w,
     Win32::{
         System::Com::{
             CoInitialize, CoUninitialize, CreateBindCtx,
             StructuredStorage::{PropVariantClear, PropVariantToString},
         },
         UI::Shell::{
-            BHID_EnumItems, BHID_PropertyStore, IEnumShellItems, IShellItem,
+                BHID_EnumItems, BHID_PropertyStore, IEnumShellItems, IShellItem,
             PropertiesSystem::{IPropertyStore, PSGetNameFromPropertyKey, PROPERTYKEY},
             SHCreateItemFromParsingName,
         },
@@ -114,8 +114,13 @@ unsafe fn enumerate_apps_folder() -> windows::core::Result<Vec<RegisteredApp>> {
         if app.name.is_empty() || app.start.trim().is_empty() {
             continue;
         }
+        let auxiliary_target = if app.executable.is_empty() {
+            app.start.as_str()
+        } else {
+            app.executable.as_str()
+        };
         if !is_launchable_registered_target(&app.executable)
-            || is_auxiliary_registered_app(&app.name, &app.executable)
+            || is_auxiliary_registered_app(&app.name, auxiliary_target)
         {
             debug!(
                 "skip non-application AppsFolder item: name={:?}, target={:?}",
@@ -223,11 +228,29 @@ fn is_auxiliary_registered_app(name: &str, target: &str) -> bool {
         "documentation",
         "manual",
         "website",
+        "卸载",
     ];
     let target_name = Path::new(target)
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
+    let name_lower = name.to_ascii_lowercase();
+    let target_lower = target.trim().to_ascii_lowercase();
+    let system_settings =
+        target_lower.starts_with(r"shell:appsfolder\windows.immersivecontrolpanel");
+    let msconfig = Path::new(target)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("msconfig"));
+    if name_lower.contains("网站")
+        || name_lower.contains("主页")
+        || (name_lower.contains("设置") && !system_settings)
+        || (name_lower.contains("配置") && !msconfig)
+        || name_lower.contains("卸载")
+        || name_lower.contains("解除安装")
+    {
+        return true;
+    }
     [name, target_name].iter().any(|value| {
         let lower = value.to_ascii_lowercase();
         if lower.contains("unins") || lower.contains("crashpad_handler") {
@@ -287,5 +310,15 @@ mod tests {
             r"C:\Apps\GitHubDesktop.exe"
         ));
         assert!(!is_auxiliary_registered_app("Calculator", ""));
+        assert!(is_auxiliary_registered_app("WeGame卸载", r"E:\Games\WeGame\uninstall_complete.exe"));
+        assert!(is_auxiliary_registered_app("WeGame主页", r"E:\Games\WeGame\WeGame.exe"));
+        assert!(!is_auxiliary_registered_app(
+            "Windows 设置",
+            r"shell:AppsFolder\windows.immersivecontrolpanel"
+        ));
+        assert!(!is_auxiliary_registered_app(
+            "系统配置",
+            r"C:\Windows\System32\msconfig.exe"
+        ));
     }
 }

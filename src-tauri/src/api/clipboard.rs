@@ -4,6 +4,7 @@ use crate::utils::database::{self, Record};
 use crate::utils::icons;
 use crate::utils::{file_factory, img_factory, json_factory, string_factory};
 use anyhow::Result;
+use base64::{engine::general_purpose, Engine as _};
 use arboard::Clipboard;
 use chrono::Duration;
 #[cfg(target_os = "windows")]
@@ -11,7 +12,6 @@ use clipboard_win::{formats::FileList, Clipboard as WindowsClipboard, Setter};
 use enigo::{Enigo, Key, Keyboard, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration as StdDuration, Instant};
@@ -691,7 +691,7 @@ pub fn get_history_part(limit: i32, offset: i32) -> Vec<Record> {
             #[cfg(target_os = "windows")]
             if resolved_icon.is_empty() && !record.source_path.is_empty() {
                 resolved_icon = icons::get_icon(&record.source_path, 128)
-                    .map(base64::encode)
+                    .map(|value| general_purpose::STANDARD.encode(value))
                     .unwrap_or_default();
             }
             record.app_icon = resolved_icon.clone();
@@ -704,7 +704,7 @@ pub fn get_history_part(limit: i32, offset: i32) -> Vec<Record> {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn get_history_search(keyword: &str, offset: i32) -> Vec<Record> {
+pub fn get_history_search(_keyword: &str, _offset: i32) -> Vec<Record> {
     let db = database::RecordSQL::new();
     db.find_all().unwrap()
 }

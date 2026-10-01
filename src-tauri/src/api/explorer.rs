@@ -2,31 +2,35 @@ use crate::config;
 use crate::utils::database::{FileIndex, IndexSQL};
 use crate::utils::icons;
 use crate::utils::string_factory::text_to_pinyin;
-use base64::encode;
-use base64::engine::{general_purpose, Engine};
-use encoding_rs::{UTF_16BE, UTF_16LE, UTF_8};
-use encoding_rs_io::DecodeReaderBytesBuilder;
+use base64::{engine::general_purpose, Engine as _};
 use icns::{IconFamily, IconType};
-use image::DynamicImage;
-use log::{debug, info};
-use pinyin::{Pinyin, ToPinyin};
+use pinyin::{ToPinyin};
 use plist::Value;
-use rayon::iter::{ParallelBridge, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::any::type_name;
-use std::ascii::escape_default;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Cursor, Read};
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
-use std::{default, panic};
+use std::{ panic};
+
 use tauri::{AppHandle, Emitter, Manager};
 use walkdir::{DirEntry, WalkDir};
+#[cfg(target_os = "windows")]
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        System::Com::{
+            CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED,
+            COINIT_DISABLE_OLE1DDE,
+        },
+        UI::Shell::{ILCreateFromPathW, SHOpenFolderAndSelectItems},
+    },
+};
 
 use std::ffi::{OsStr, OsString};
 use std::ops::Index;
@@ -66,7 +70,7 @@ pub struct AppInfo {
 pub fn search_files(keyword: &str) -> Vec<HashMap<String, String>> {
     let mut result = Vec::new();
     let search_path = "/Users/starsxu/";
-    let mut fd_output = Command::new("fd")
+    let fd_output = Command::new("fd")
         .args(&["-a", "-t", "f", keyword, "-p", search_path])
         .stdout(Stdio::piped())
         .spawn()
@@ -152,6 +156,8 @@ pub fn file_path_to_index(path: &std::path::Path) -> Option<FileIndex> {
 pub fn search_app_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
     let db = IndexSQL::new();
     if let Ok(result) = db.find_app(keyword, offset) {
+        // Do not apply discovery filters here. This query also returns
+        // explicitly added applications, which users are allowed to keep.
         return result;
     }
     vec![FileIndex {
@@ -347,6 +353,67 @@ fn is_auxiliary_app_file(name: &str) -> bool {
     is_portable_auxiliary_app(name, name)
 }
 
+#[cfg(target_os = "windows")]
+fn is_lnk_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".lnk")
+}
+
+/// Filter only applications whose decoded 32x32 RGBA pixels exactly match the
+/// supplied `no_icon.txt` sample. Comparing pixels instead of PNG bytes avoids
+/// differences in PNG compression and metadata. WndSpy.exe has a different
+/// image and is kept.
+#[cfg(target_os = "windows")]
+fn is_filtered_app(path: &str, _title: &str) -> bool {
+    const NO_ICON_BASE64: &str = include_str!("../../../no_icon.txt");
+    let icon_result = std::panic::catch_unwind(|| icons::get_icon(path, 32));
+    let Ok(Ok(bytes)) = icon_result else {
+        return false;
+    };
+    let Ok(candidate) = image::load_from_memory(&bytes) else {
+        return false;
+    };
+    let Ok(reference_bytes) = general_purpose::STANDARD.decode(NO_ICON_BASE64.trim()) else {
+        return false;
+    };
+    let Ok(reference) = image::load_from_memory(&reference_bytes) else {
+        return false;
+    };
+    let candidate = image::imageops::resize(
+        &candidate.to_rgba8(),
+        32,
+        32,
+        image::imageops::FilterType::Nearest,
+    );
+    let reference = image::imageops::resize(
+        &reference.to_rgba8(),
+        32,
+        32,
+        image::imageops::FilterType::Nearest,
+    );
+    let mut different = 0usize;
+    let mut total_error = 0u64;
+    for (left, right) in candidate.pixels().zip(reference.pixels()) {
+        let error = left
+            .0
+            .iter()
+            .zip(right.0.iter())
+            .map(|(a, b)| i16::from(*a).abs_diff(i16::from(*b)) as u64)
+            .sum::<u64>();
+        total_error += error;
+        if error > 48 {
+            different += 1;
+        }
+    }
+    // Small anti-aliasing/alpha differences are expected between shell icon
+    // extraction paths. Require the structure and colors to match closely.
+    different <= 96 && total_error <= 30_000
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_filtered_app(_path: &str, _title: &str) -> bool {
+    false
+}
+
 fn get_apps_with_depth(
     path: &str,
     recursive: bool,
@@ -500,7 +567,10 @@ fn get_apps_with_depth(
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .map(str::to_ascii_lowercase);
-            if include_direct_files && is_auxiliary_app_file(app_name) {
+            if include_direct_files
+                && !is_lnk_name(app_name)
+                && is_auxiliary_app_file(app_name)
+            {
                 continue;
             }
             let is_lnk = extension.as_deref() == Some("lnk");
@@ -517,6 +587,9 @@ fn get_apps_with_depth(
                     app_title = title.clone();
                     app_path = path.clone();
                     println!("获取到应用:{app_title}--->{app_path}");
+                    if is_auxiliary_shortcut(&app_title, &app_path) {
+                        continue;
+                    }
                 } else {
                     continue;
                 }
@@ -529,9 +602,6 @@ fn get_apps_with_depth(
                     .unwrap_or(app_name)
                     .to_string();
             } else if include_direct_files && extension.as_deref() == Some("exe") {
-                if !icons::has_embedded_icon(&app_path) {
-                    continue;
-                }
                 app_title = entry
                     .path()
                     .file_stem()
@@ -565,7 +635,7 @@ pub fn read_file_to_base64(path: &str) -> Result<String, String> {
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)
         .map_err(|error| format!("无法读取文件内容：{error}"))?;
-    Ok(encode(&contents))
+    Ok(general_purpose::STANDARD.encode(&contents))
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -596,7 +666,7 @@ pub fn read_icns_to_base64(path: &str) -> Result<String, String> {
         .find(|e| e.ostype == image_type.ostype())
     {
         if format!("{:?}", image_type).contains("RGBA") {
-            let base64_image = base64::encode(&img_buffer.data);
+        let base64_image = general_purpose::STANDARD.encode(&img_buffer.data);
             return Ok(base64_image);
         }
     }
@@ -612,15 +682,27 @@ pub fn read_icns_to_base64(path: &str) -> Result<String, String> {
         .map_err(|_| "No suitable icon found".to_string())?;
     let mut buffer = Cursor::new(Vec::new());
     icon.write_png(&mut buffer).map_err(|e| e.to_string())?;
-    let base64_image = base64::encode(buffer.get_ref());
+    let base64_image = general_purpose::STANDARD.encode(buffer.get_ref());
     Ok(base64_image)
 }
 
 // 获取文件图标
 #[tauri::command]
 fn read_icon_to_base64(path: String) -> String {
-    if let Ok(buffer) = icons::get_icon(&path, 128) {
-        return base64::encode(buffer);
+    // Use the shell/DIB conversion first. It preserves old 16/256-colour
+    // resources such as WndSpy.exe that the hand-built ICO conversion can
+    // decode incorrectly.
+    #[cfg(target_os = "windows")]
+    if let Ok(Ok(icon)) = std::panic::catch_unwind(|| windows_icons::get_icon_base64_by_path(&path))
+    {
+        if !icon.is_empty() {
+            return icon;
+        }
+    }
+    // Keep the original converter as a fallback for paths where the shell
+    // cannot provide a usable HICON.
+    if let Ok(Ok(buffer)) = std::panic::catch_unwind(|| icons::get_icon(&path, 128)) {
+        return general_purpose::STANDARD.encode(buffer);
     }
     String::from("")
 }
@@ -688,42 +770,100 @@ pub fn open_explorer(path: &str) -> String {
 }
 
 pub fn open_explorer_result(path: &str) -> Result<(), String> {
-    let mut cmd = if cfg!(target_os = "macos") {
-        let mut command = Command::new("open");
-        command.arg(path);
-        command
-    } else if cfg!(target_os = "windows") {
-        let mut command = Command::new("explorer");
-        command.arg(path);
-        command
-    } else if cfg!(target_os = "linux") {
-        let mut command = Command::new("xdg-open");
-        command
-            .arg(path)
-            .spawn()
-            .map_err(|error| format!("无法打开目录：{error}"))?;
-        return Ok(());
-    } else {
-        return Err("当前系统不支持打开资源管理器".into());
-    };
-
-    cmd.spawn()
-        .map_err(|error| format!("无法打开目录：{error}"))?;
-
-    #[cfg(target_os = "windows")]
-    if let Some(folder_name) = Path::new(path)
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-        .map(str::to_owned)
-    {
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(150));
-            activate_explorer_window(&folder_name);
-        });
+    let target = Path::new(path);
+    if !target.exists() {
+        return Err(format!("目标路径不存在：{path}"));
     }
 
-    Ok(())
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(native_error) = open_explorer_with_shell(path) {
+            // The native Shell API is the reliable path-aware implementation. If
+            // COM/Shell is unavailable, fall back to the containing directory,
+            // never to the file itself (which could launch the associated app).
+            let containing_directory = if target.is_dir() {
+                target
+            } else {
+                target.parent().unwrap_or(target)
+            };
+            Command::new("explorer")
+                .arg(containing_directory)
+                .spawn()
+                .map_err(|fallback_error| {
+                    format!(
+                        "资源管理器无法打开目标路径：{native_error}；回退打开目录也失败：{fallback_error}"
+                    )
+                })?;
+        }
+
+        if let Some(folder_name) = target
+            .parent()
+            .unwrap_or(target)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+        {
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(150));
+                activate_explorer_window(&folder_name);
+            });
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let is_directory = target.is_dir();
+        let containing_directory = if is_directory {
+            target
+        } else {
+            target.parent().unwrap_or(target)
+        };
+
+        if cfg!(target_os = "macos") {
+            Command::new("open")
+                .arg(containing_directory)
+                .spawn()
+                .map_err(|error| format!("无法打开目录：{error}"))?;
+        } else if cfg!(target_os = "linux") {
+            Command::new("xdg-open")
+                .arg(containing_directory)
+                .spawn()
+                .map_err(|error| format!("无法打开目录：{error}"))?;
+        } else {
+            return Err("当前系统不支持打开资源管理器".into());
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn open_explorer_with_shell(path: &str) -> Result<(), String> {
+    let mut wide_path: Vec<u16> = path.encode_utf16().collect();
+    wide_path.push(0);
+
+    unsafe {
+        let com_initialized =
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE).is_ok();
+        let pidl = ILCreateFromPathW(PCWSTR::from_raw(wide_path.as_mut_ptr()));
+
+        if pidl.is_null() {
+            if com_initialized {
+                CoUninitialize();
+            }
+            return Err(format!("无法解析目标路径：{path}"));
+        }
+
+        let result = SHOpenFolderAndSelectItems(pidl, None, 0);
+        CoTaskMemFree(Some(pidl as *const std::ffi::c_void));
+        if com_initialized {
+            CoUninitialize();
+        }
+
+        result.map_err(|error| format!("资源管理器无法打开目标路径：{error}"))
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -749,6 +889,11 @@ pub(crate) fn get_drives() -> Vec<(String, String)> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStrExt;
     use winapi::um::fileapi::{GetDriveTypeW, GetLogicalDrives};
+    const DRIVE_REMOVABLE: u32 = 2;
+    const DRIVE_FIXED: u32 = 3;
+    const DRIVE_REMOTE: u32 = 4;
+    const DRIVE_CDROM: u32 = 5;
+    const DRIVE_RAMDISK: u32 = 6;
     let drive_bits = unsafe { GetLogicalDrives() };
 
     for i in 0..26 {
@@ -948,12 +1093,27 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
             if title.is_empty() || start.is_empty() {
                 continue;
             }
+            if is_filtered_app(
+                if app.executable.is_empty() {
+                    start
+                } else {
+                    app.executable.as_str()
+                },
+                title,
+            ) {
+                continue;
+            }
             let identity = if app.executable.is_empty() {
                 start
             } else {
                 app.executable.as_str()
             };
-            if is_user_visible_auxiliary_app(title) {
+            let auxiliary_target = if app.executable.is_empty() {
+                start
+            } else {
+                app.executable.as_str()
+            };
+            if is_auxiliary_app_entry(title, auxiliary_target) {
                 continue;
             }
             let key = normalize_app_launch_key(identity);
@@ -1022,7 +1182,8 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                 let key = normalize_app_launch_key(path);
                 if title.trim().is_empty()
                     || key.is_empty()
-                    || is_user_visible_auxiliary_app(title)
+                    || is_filtered_app(path, title)
+                    || is_auxiliary_app_entry(title, path)
                     || !seen.insert(key)
                 {
                     continue;
@@ -1075,7 +1236,8 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                 let key = normalize_app_launch_key(path);
                 if title.trim().is_empty()
                     || key.is_empty()
-                    || is_user_visible_auxiliary_app(title)
+                    || is_filtered_app(path, title)
+                    || is_auxiliary_app_entry(title, path)
                     || !seen.insert(key)
                 {
                     continue;
@@ -1116,6 +1278,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                     .and_then(|e| e.to_str())
                     .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
                     || is_portable_auxiliary_app(title, path)
+                    || is_filtered_app(path, title)
                     || is_under_registered_app_dir(path, &registered_app_dirs)
                 {
                     continue;
@@ -1354,8 +1517,49 @@ fn is_auxiliary_app_value(value: &str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+fn contains_strong_auxiliary_word(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains("卸载")
+        || lower.contains("解除安装")
+        || lower.contains("uninstall")
+        || lower.contains("uninstaller")
+        || lower.contains("unins")
+}
+
+#[cfg(target_os = "windows")]
 fn is_user_visible_auxiliary_app(title: &str) -> bool {
+    let lower = title.to_ascii_lowercase();
     is_auxiliary_app_value(title)
+        || contains_strong_auxiliary_word(title)
+        || ["网站", "主页", "设置", "配置"]
+            .iter()
+            .any(|word| lower.contains(word))
+}
+
+#[cfg(target_os = "windows")]
+fn is_auxiliary_app_entry(title: &str, target: &str) -> bool {
+    let target_lower = target.trim().to_ascii_lowercase();
+    let is_system_settings = target_lower.starts_with(r"shell:appsfolder\windows.immersivecontrolpanel");
+    let is_msconfig = Path::new(target)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("msconfig"));
+    let title_lower = title.to_ascii_lowercase();
+    if (title_lower.contains("设置") && is_system_settings)
+        || (title_lower.contains("配置") && is_msconfig)
+    {
+        return false;
+    }
+    is_user_visible_auxiliary_app(title)
+        || Path::new(target)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .is_some_and(contains_strong_auxiliary_word)
+}
+
+#[cfg(target_os = "windows")]
+fn is_auxiliary_shortcut(title: &str, target: &str) -> bool {
+    is_auxiliary_app_entry(title, target)
 }
 
 #[cfg(target_os = "windows")]
@@ -1370,7 +1574,8 @@ fn is_portable_auxiliary_app(title: &str, path: &str) -> bool {
 #[cfg(all(test, target_os = "windows"))]
 mod app_scan_tests {
     use super::{
-        is_portable_auxiliary_app, is_under_registered_app_dir, is_user_visible_auxiliary_app,
+        is_auxiliary_app_entry, is_portable_auxiliary_app, is_under_registered_app_dir,
+        is_user_visible_auxiliary_app,
         normalize_app_product_key, portable_family_key, registered_app_directory,
     };
 
@@ -1431,6 +1636,30 @@ mod app_scan_tests {
             r"D:\App\Reasonix\reasonix-launcher.exe"
         ));
         assert!(is_user_visible_auxiliary_app("Reasonix Updater"));
+    }
+
+    #[test]
+    fn shortcut_auxiliary_filter_keeps_real_launchers_and_system_entries() {
+        assert!(is_auxiliary_app_entry(
+            "WeGame卸载",
+            r"E:\Games\WeGame\uninstall_complete.exe"
+        ));
+        assert!(is_auxiliary_app_entry(
+            "WeGame主页",
+            r"E:\Games\WeGame\WeGame.exe"
+        ));
+        assert!(!is_auxiliary_app_entry(
+            "WeGame",
+            r"E:\Games\WeGame\WeGameLauncher.exe"
+        ));
+        assert!(!is_auxiliary_app_entry(
+            "Windows 设置",
+            r"shell:AppsFolder\windows.immersivecontrolpanel"
+        ));
+        assert!(!is_auxiliary_app_entry(
+            "系统配置",
+            r"C:\Windows\System32\msconfig.exe"
+        ));
     }
 
     #[test]
@@ -1627,7 +1856,7 @@ pub fn create_file_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
 }
 
 pub(crate) fn is_process_running(process_name: &str) -> bool {
-    let mut snapshot: HANDLE = unsafe { CreateToolhelp32Snapshot(0x2, 0) }; // TH32CS_SNAPALL
+    let snapshot: HANDLE = unsafe { CreateToolhelp32Snapshot(0x2, 0) }; // TH32CS_SNAPALL
     let mut process_entry: PROCESSENTRY32 = unsafe { std::mem::zeroed() };
     process_entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
 
@@ -1636,7 +1865,7 @@ pub(crate) fn is_process_running(process_name: &str) -> bool {
     }
 
     loop {
-        let name2 = unsafe { std::ffi::CStr::from_ptr(process_entry.szExeFile.as_ptr()) };
+        let _name2 = unsafe { std::ffi::CStr::from_ptr(process_entry.szExeFile.as_ptr()) };
         let name = unsafe { std::ffi::CStr::from_ptr(process_entry.szExeFile.as_ptr()) }
             .to_string_lossy()
             .into_owned();
@@ -1653,7 +1882,7 @@ pub(crate) fn is_process_running(process_name: &str) -> bool {
 fn open_or_activate_app(process_name: &str, app_name: &str) {
     let current_dir = Path::new(process_name).parent().unwrap();
     let program = process_name.split("\\").last().expect("aa.exe");
-    let window_name = process_name.strip_suffix(".exe").unwrap_or(process_name);
+    let _window_name = process_name.strip_suffix(".exe").unwrap_or(process_name);
 
     if is_process_running(program) {
         // 激活窗口

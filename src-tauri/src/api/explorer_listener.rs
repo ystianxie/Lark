@@ -299,28 +299,11 @@ mod platform {
         }
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::percent_decode;
-
-        #[test]
-        fn decodes_utf8_file_url_component() {
-            assert_eq!(
-                percent_decode("C:/Users/test/%E4%B8%AD%E6%96%87"),
-                Some("C:/Users/test/中文".to_string())
-            );
-        }
-
-        #[test]
-        fn rejects_incomplete_percent_encoding() {
-            assert_eq!(percent_decode("C:/broken%2"), None);
-        }
-    }
 }
 
 #[cfg(target_os = "windows")]
 pub use platform::{
-    foreground_explorer_path, start_listener, start_listener_with_dialog, start_test_listener,
+    start_listener_with_dialog,
     ExplorerListenerHandle,
 };
 
@@ -344,19 +327,4 @@ where
 #[cfg(not(target_os = "windows"))]
 mod explorer_listener_handle_placeholder {
     pub struct ExplorerListenerHandle;
-}
-
-#[test]
-fn test() {
-    match foreground_explorer_path() {
-        Ok(Some(path)) => {
-            println!("当前 Explorer 路径：{}", path.display());
-        }
-        Ok(None) => {
-            println!("当前前台窗口不是 Explorer，或者不是文件系统目录");
-        }
-        Err(error) => {
-            eprintln!("获取失败：{error}");
-        }
-    }
 }

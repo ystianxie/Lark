@@ -266,7 +266,7 @@ mod platform {
 
 #[cfg(target_os = "windows")]
 pub use platform::{
-    probe_foreground_dialog, start_test_dialog_probe, DialogConfidence, DialogProbeHandle,
+    probe_foreground_dialog, DialogConfidence,
     DialogProbeResult,
 };
 #[cfg(not(target_os = "windows"))]

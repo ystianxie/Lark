@@ -6,7 +6,7 @@ import {
     getCurrentWebviewWindow
 } from "@tauri-apps/api/webviewWindow";
 import {getCurrentWebview} from "@tauri-apps/api/webview";
-import {useEffect, useRef, useState} from "react";
+import {useCallback, useEffect, useRef, useState} from "react";
 import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import {listen} from "@tauri-apps/api/event";
 import webImg from "./assets/web.svg";
@@ -41,6 +41,12 @@ const TemplateComponent = React.lazy(() =>
     import("./template.jsx").then((mod) => ({default: mod.TemplateComponent}))
 );
 
+function getResultShortcutNumber(event) {
+    const codeMatch = event.code?.match(/^(?:Digit|Numpad)([1-9])$/);
+    const keyMatch = event.key?.match(/^([1-9])$/);
+    return Number(codeMatch?.[1] || keyMatch?.[1] || 0);
+}
+
 const App = () => {
     // 键入值
     const [inputValue, setInputValue] = useState("");
@@ -60,6 +66,8 @@ const App = () => {
     // 输入框组件
     const inputBox = useRef(null);
     const searchRequestId = useRef(0);
+    const firstVisibleResultIndex = useRef(0);
+    const keyboardModifiersRef = useRef({alt: false, meta: false});
     const windowPosition = useRef(null);
     // 功能键状态
     const [fnDown, setFnDown] = useState(false);
@@ -138,6 +146,10 @@ const App = () => {
 
     const appWindow = getCurrentWebviewWindow();
 
+    const handleFirstVisibleResultChange = useCallback((index) => {
+        firstVisibleResultIndex.current = index;
+    }, []);
+
     function initStatus(components) {
         let resizePromise;
         // 立即废弃隐藏前尚未返回的搜索，避免它在窗口重新显示后回填旧结果。
@@ -158,6 +170,7 @@ const App = () => {
         setKeywordComponent(components);
         setIsComposing({status: false, ppos: 0});
         setFnDown(false);
+        firstVisibleResultIndex.current = 0;
         return resizePromise;
     }
 
@@ -193,6 +206,9 @@ const App = () => {
         // 处理键盘按下
         setKeyDown(event);
         if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.altKey || event.metaKey || event.key === "Alt" || event.key === "Meta") {
+            setFnDown(true);
+        }
         if (componentInfoRef.current?.type === "panel") {
             // panel 仍由主输入框接收键盘事件，但不允许按键修改输入内容。
             if (event.key !== "Tab" || !["showComponent", "todoComponent", "hostsComponent"].includes(componentInfoRef.current?.data)) event.preventDefault();
@@ -205,9 +221,15 @@ const App = () => {
             }
             return;
         }
-        if (!event.metaKey && event.key === "Enter") {
+        const altOrMetaPressed = event.altKey || event.metaKey ||
+            keyboardModifiersRef.current.alt || keyboardModifiersRef.current.meta;
+        if (event.key === "Enter") {
             if (keywordComponent) {
-                await confirmComponentSelected();
+                event.preventDefault();
+                if (event.repeat) return;
+                await confirmComponentSelected(undefined, {
+                    openContainingFolder: altOrMetaPressed,
+                });
             }
         } else if (event.key === "Tab" && component) {
             // 当按下TAB键时，将焦点移动到下一个输入框
@@ -299,31 +321,12 @@ const App = () => {
                 setSelectedIndex(selectedIndex + 1);
             }
         } else if (event.metaKey || event.altKey) {
-            console.log(event.metaKey, event.key);
-            if (event.key === "Meta" || event.code === "AltLeft") {
-                setFnDown(true);
-            } else if (event.key === "Enter") {
-                await confirmComponentSelected();
-                setInputValue("");
-            } else {
-                try {
-                    if (parseInt(event.key) <= 9 && parseInt(event.key) > 0) {
-                        let list_items =
-                            document.getElementsByClassName("templateComponent");
-                        let firstItem = 0;
-                        for (let i = 0; i < list_items.length; i++) {
-                            if (list_items[i].getBoundingClientRect().y === 60.5) {
-                                firstItem = i;
-                                break;
-                            }
-                        }
-                        await confirmComponentSelected(
-                            firstItem + parseInt(event.key) - 1,
-                            false
-                        );
-                    }
-                } catch (e) {
-                    console.log(e);
+            const shortcutNumber = getResultShortcutNumber(event);
+            if (shortcutNumber && !event.repeat) {
+                event.preventDefault();
+                const targetIndex = firstVisibleResultIndex.current + shortcutNumber - 1;
+                if (targetIndex >= 0 && targetIndex < keywordComponent.length) {
+                    await confirmComponentSelected(targetIndex);
                 }
             }
         }
@@ -388,11 +391,10 @@ const App = () => {
         });
     };
 
-    async function confirmComponentSelected(index, metaStatus) {
+    async function confirmComponentSelected(index, {openContainingFolder = false} = {}) {
         // 组件确认选择后
         let currentComponent =
             keywordComponent[index !== undefined ? index : selectedIndex];
-        setSelectedIndex(0);
         console.log(currentComponent);
         if (!currentComponent) return;
         const plugin = currentComponent.pluginId && pluginList[currentComponent.pluginId];
@@ -476,7 +478,7 @@ const App = () => {
                 dataType: "text",
             });
         } else if (currentComponent.type === "app") {
-            if (!fnDown || metaStatus === false) {
+            if (!openContainingFolder) {
                 await updateAppHabit(inputValue, currentComponent.title);
                 console.log(currentComponent);
                 await invoke("open_app", {
@@ -487,7 +489,10 @@ const App = () => {
                 initStatus();
             } else {
                 await invoke("open_explorer", {
-                    path: keywordComponent[selectedIndex].data,
+                    // AppsFolder entries launch through a shell URI in `data`.
+                    // `desc` carries the concrete executable path used to reveal
+                    // the installation directory.
+                    path: currentComponent.desc || currentComponent.data,
                 });
                 await appWindow.hide();
             }
@@ -570,11 +575,11 @@ const App = () => {
             };
             handle(currentComponent);
         } else if (currentComponent.type === "file") {
-            if (!fnDown) {
+            if (!openContainingFolder) {
                 await invoke("open_file", {filePath: currentComponent.data});
             } else {
                 await invoke("open_explorer", {
-                    path: keywordComponent[selectedIndex].data,
+                    path: currentComponent.data,
                 });
             }
             await appWindow.hide();
@@ -583,6 +588,48 @@ const App = () => {
             setKeywordComponent([]);
         }
     }
+
+    useEffect(() => {
+        // Windows/WebView2 treats Alt as a request to activate the native menu.
+        // Cancel its default action in capture phase while allowing the event to
+        // bubble to the app's React handler for Alt+Enter and Alt+number actions.
+        const platform = navigator.userAgentData?.platform || navigator.platform || "";
+        const isWindows = /^win/i.test(platform);
+
+        const preventNativeAltMenu = (event) => {
+            const isAltKey = event.key === "Alt" || event.code === "AltLeft" || event.code === "AltRight";
+            const isMetaKey = event.key === "Meta" || event.code === "MetaLeft" || event.code === "MetaRight";
+            if (event.type === "keydown") {
+                if (isAltKey) keyboardModifiersRef.current.alt = true;
+                if (isMetaKey) keyboardModifiersRef.current.meta = true;
+            } else if (event.type === "keyup") {
+                if (isAltKey) keyboardModifiersRef.current.alt = false;
+                if (isMetaKey) keyboardModifiersRef.current.meta = false;
+            }
+            if (!isWindows) return;
+            const isAltModifier = isAltKey;
+            const isAltShortcut = event.altKey && (
+                event.key === "Enter" ||
+                event.key === "ArrowUp" ||
+                event.key === "ArrowDown" ||
+                /^(?:Digit|Numpad)[1-9]$/.test(event.code || "")
+            );
+            if (isAltModifier || isAltShortcut) event.preventDefault();
+        };
+
+        document.addEventListener("keydown", preventNativeAltMenu, true);
+        document.addEventListener("keyup", preventNativeAltMenu, true);
+        const clearModifiers = () => {
+            keyboardModifiersRef.current.alt = false;
+            keyboardModifiersRef.current.meta = false;
+        };
+        window.addEventListener("blur", clearModifiers);
+        return () => {
+            document.removeEventListener("keydown", preventNativeAltMenu, true);
+            document.removeEventListener("keyup", preventNativeAltMenu, true);
+            window.removeEventListener("blur", clearModifiers);
+        };
+    }, []);
 
     useEffect(() => {
         // 只在生产构建中禁用浏览器调试入口；开发环境保留 F12 便于调试。
@@ -1181,8 +1228,8 @@ const App = () => {
                             }
                         }}
                         onKeyDown={handleKeyDown}
-                        onKeyUp={() => {
-                            setFnDown(false);
+                        onKeyUp={(event) => {
+                            setFnDown(event.altKey || event.metaKey);
                         }}
                         onCompositionStart={() => {
                             searchRequestId.current += 1;
@@ -1207,6 +1254,7 @@ const App = () => {
                                 setSelectedKey: setSelectedIndex,
                                 confirmSelected: confirmComponentSelected,
                                 fnDown,
+                                onFirstVisibleChange: handleFirstVisibleResultChange,
                             }}
                         />
                     </Suspense>

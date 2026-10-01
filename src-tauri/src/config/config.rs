@@ -1,13 +1,9 @@
-use crate::utils::database::Record;
 use crate::utils::dirs::config_path;
 use anyhow::Result;
-use applications::prelude::f;
 use serde::{Deserialize, Serialize};
-use serde_json::{to_string, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::io::Write;
-use tauri::Manager;
-use walkdir::DirEntry;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -292,7 +288,7 @@ impl Config {
                         .expect("写入失败!");
                     Ok(config)
                 }
-                Err(e) => {
+                Err(_e) => {
                     eprintln!("创建失败！");
                     Ok(config)
                 }

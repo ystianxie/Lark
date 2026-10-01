@@ -92,6 +92,7 @@ windows = { version = "0.58.0", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 winapi = { version = "0.3.9", features = ["winuser", "shellapi", 'winnt', 'psapi', 'windef', 'combaseapi', 'tlhelp32', 'processenv', 'wingdi'] }
+windows-icons = "0.2.1"
 dunce = "1.0.5"
 libsqlite3-sys = { version = "0.38.2", features = ["bundled"] }
 clipboard-win = "5.4.0"

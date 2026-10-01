@@ -1,9 +1,8 @@
 use crate::utils::dirs::app_data_dir;
 use crate::utils::string_factory;
 use anyhow::Result;
-use pinyin::ToPinyin;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
-use std::fmt::format;
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -688,6 +687,17 @@ impl IndexSQL {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut previous_icons = HashMap::new();
+        {
+            let mut stmt =
+                tx.prepare("SELECT path, icon FROM app_index WHERE is_custom = 0 AND icon <> ''")?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                let path: String = row.get(0)?;
+                let icon: String = row.get(1)?;
+                previous_icons.insert(path.to_ascii_lowercase().replace('/', "\\"), icon);
+            }
+        }
         tx.execute("DELETE FROM app_index WHERE is_custom = 0", [])?;
         let inserted = {
             let mut stmt = tx.prepare(
@@ -701,7 +711,13 @@ impl IndexSQL {
                 "#,
             )?;
             let mut inserted = 0;
-            for app in paths {
+            for mut app in paths {
+                if app.icon.is_empty() {
+                    let key = app.path.to_ascii_lowercase().replace('/', "\\");
+                    if let Some(icon) = previous_icons.get(&key) {
+                        app.icon = icon.clone();
+                    }
+                }
                 let md5 = string_factory::md5(&app.path);
                 inserted += stmt.execute(rusqlite::params![
                     app.title, app.path, app.desc, app.icon, app.pinyin, app.abb, md5,

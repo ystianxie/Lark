@@ -34,7 +34,8 @@ function TemplateComponent({
                                selectedKey,
                                setSelectedKey,
                                confirmSelected,
-                               fnDown
+                               fnDown,
+                               onFirstVisibleChange
                            }) {
     const scrollContainerRef = useRef(null);
     const [selectedIndex, setSelectedIndex] = useState(selectedKey || 1)
@@ -64,15 +65,6 @@ function TemplateComponent({
             return
         }
 
-        let activate_iter = document.getElementsByClassName("activate")
-        if (activate_iter) {
-            let data_y = activate_iter[0]?.getBoundingClientRect().y
-            let index = ((data_y - 60.5) / 50) + 1
-            index = index > 9 ? 9 : index
-            index = index < 1 ? 1 : index
-            setSelectedIndex(Math.round(index))
-        }
-
         //  更改当前选择项时 将其滚动到可视区域
         function visualItem() {
             const scrollContainer = scrollContainerRef?.current;
@@ -90,9 +82,12 @@ function TemplateComponent({
         // 防止因快速切换导致行元素对齐出现偏移
         function standardizedDisplay() {
             let index = get_first_item()
-            let item = document.getElementsByClassName("templateComponent")[index]
-            if (item && item.getBoundingClientRect().y !== 60.5) {
-                scrollContainerRef.current.scrollTop -= 60.5 - item.getBoundingClientRect().y
+            let item = scrollContainerRef.current?.querySelector(`[data-index="${index}"]`)
+            if (item) {
+                const containerTop = scrollContainerRef.current.getBoundingClientRect().top
+                const offset = item.getBoundingClientRect().top - containerTop
+                if (Math.abs(offset) < 0.5) return
+                scrollContainerRef.current.scrollTop += offset
                 visualItem()
             }
         }
@@ -135,17 +130,32 @@ function TemplateComponent({
     }, [components])
 
     function get_first_item() {
-        let list_items = document.getElementsByClassName("templateComponent")
-        let cache = -1;
+        const scrollContainer = scrollContainerRef.current
+        if (!scrollContainer) return 0
+        const list_items = scrollContainer.getElementsByClassName("templateComponent")
+        const containerRect = scrollContainer.getBoundingClientRect()
         for (let i = 0; i < list_items.length; i++) {
-            if (list_items[i].getBoundingClientRect().y === 60.5) {
-                return i
-            } else if (list_items[i].getBoundingClientRect().y > 0 && cache === -1) {
-                cache = i
-            }
+            const itemRect = list_items[i].getBoundingClientRect()
+            if (itemRect.bottom > containerRect.top + 0.5 && itemRect.top < containerRect.bottom) return i
         }
-        return cache !== -1 ? cache : 0
+        return Math.max(0, list_items.length - 1)
     }
+
+    useEffect(() => {
+        const scrollContainer = scrollContainerRef.current
+        if (!scrollContainer) return
+
+        const syncViewport = () => {
+            const firstVisible = get_first_item()
+            onFirstVisibleChange?.(firstVisible)
+            const selectedPosition = selectedKey - firstVisible + 1
+            setSelectedIndex(Math.min(9, Math.max(1, selectedPosition)))
+        }
+
+        syncViewport()
+        scrollContainer.addEventListener("scroll", syncViewport, {passive: true})
+        return () => scrollContainer.removeEventListener("scroll", syncViewport)
+    }, [components, selectedKey, onFirstVisibleChange])
 
     const showHotkeys = (index) => {
         // 快捷键提示文本
@@ -171,9 +181,7 @@ function TemplateComponent({
                                      key={index}
                                      data-index={index}
                                      onMouseEnter={(event) => handleMouseEnter(event, index)}
-                                     onClick={() => {
-                                         confirmSelected();
-                                     }}
+                                     onClick={() => confirmSelected(index)}
                                 >
                                     {
                                         typeof (component.icon) == "string" ?

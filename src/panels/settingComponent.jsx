@@ -164,9 +164,17 @@ const Wrapper = createGlobalStyle`
     }
 
     .appSettingFooter {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
         display: flex;
+        align-items: center;
         justify-content: flex-end;
         gap: 8px;
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, .94);
+        border-top: 1px solid #edf0f5;
+        border-radius: 8px;
     }
 
     .indexSettingsPane {
@@ -329,7 +337,13 @@ const Wrapper = createGlobalStyle`
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        padding-top: 2px;
+        padding: 10px 12px;
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        background: rgba(255, 255, 255, .94);
+        border-top: 1px solid #edf0f5;
+        border-radius: 8px;
     }
 
     .indexSettingsFooterHint {
@@ -534,11 +548,28 @@ const Wrapper = createGlobalStyle`
     .settingError {
         margin: 0 15px 8px;
         color: #d4380d;
+        font-size: 12px;
+        line-height: 1.5;
     }
 
     .settingNotice {
         color: #389e0d;
         font-size: 13px;
+    }
+
+    .settingDirtyMark,
+    .settingDirtyHint {
+        color: #cf1322;
+    }
+
+    .settingDirtyMark {
+        margin-left: 4px;
+        font-weight: 700;
+    }
+
+    .settingDirtyHint {
+        margin-right: auto;
+        font-size: 12px;
     }
 
     .snippetPane {
@@ -692,6 +723,7 @@ const Wrapper = createGlobalStyle`
         padding: 26px 16px;
         color: #8c8c8c;
         text-align: center;
+        font-size: 13px;
     }
 
     .snippetError {
@@ -701,11 +733,6 @@ const Wrapper = createGlobalStyle`
         background: #fff2f0;
         color: #cf1322;
         font-size: 13px;
-    }
-
-    .snippetFooter {
-        display: flex;
-        justify-content: flex-end;
     }
 
     @media (max-width: 640px) {
@@ -824,6 +851,7 @@ const Component = () => {
     const [newSnippetText, setNewSnippetText] = useState('');
     const [snippetError, setSnippetError] = useState('');
     const [settingNotice, setSettingNotice] = useState({type: '', text: ''});
+    const [settingDirty, setSettingDirty] = useState(false);
     const [pythonInterpreter, setPythonInterpreter] = useState(null);
     const [pythonProbe, setPythonProbe] = useState(null);
     const [pythonProbeError, setPythonProbeError] = useState('');
@@ -833,6 +861,7 @@ const Component = () => {
     const hotkeyCaptureActive = useRef(false);
     const activeHotkeyField = useRef(null);
     const hotkeyCaptureTransition = useRef(Promise.resolve());
+    const snippetSettingsLoaded = useRef(false);
     const hotkeyAwakenRef = useRef(hotkeyAwaken);
     const hotkeyClipboardRef = useRef(hotkeyClipboard);
     const hotkeyFileJumpRef = useRef(hotkeyFileJump);
@@ -846,6 +875,7 @@ const Component = () => {
             setIndexCounts(await invoke('get_index_counts'));
         } catch (error) {
             console.error('读取索引数量失败', error);
+            setSettingNotice({type: 'error', text: `读取索引状态失败：${error}`});
         }
     };
 
@@ -877,7 +907,10 @@ const Component = () => {
             setPythonInterpreter(interpreter);
             probePythonInterpreter(interpreter);
         }).catch((error) => console.error("读取应用设置失败", error));
-        invoke('get_auto_launch_enabled').then(setAutoLaunch).catch((error) => console.error('读取开机启动状态失败', error));
+        invoke('get_auto_launch_enabled').then(setAutoLaunch).catch((error) => {
+            console.error('读取开机启动状态失败', error);
+            setSettingNotice({type: 'error', text: `读取开机启动状态失败：${error}`});
+        });
         loadIndexCounts();
         invoke("get_index_settings").then((settings) => {
             setAppSearchPaths(settings.localAppSearchPaths || []);
@@ -890,6 +923,7 @@ const Component = () => {
             setSnippetEnabled(settings.enabled ?? false);
             setSnippetTrigger(settings.trigger || ';');
             setSnippets(settings.snippets || []);
+            snippetSettingsLoaded.current = true;
         }).catch((error) => setSnippetError(String(error)));
         loadCustomApps();
     }, []);
@@ -1057,6 +1091,7 @@ const Component = () => {
             await invoke('set_hotkey_capture_active', {active: false});
             hotkeyCaptureActive.current = false;
             await invoke("save_setting", {settingInfo: all_setting});
+            setSettingDirty(false);
             setSettingNotice({type: 'success', text: '设置已保存'});
         } catch (error) {
             setSettingNotice({type: 'error', text: String(error)});
@@ -1135,17 +1170,20 @@ const Component = () => {
         setSnippetError('');
     };
 
-    const saveSnippets = async () => {
-        if ([...snippetTrigger].length !== 1 || /\s/.test(snippetTrigger)) {
+    const saveSnippets = async (next = {}) => {
+        const enabled = next.enabled ?? snippetEnabled;
+        const trigger = next.trigger ?? snippetTrigger;
+        const nextSnippets = next.snippets ?? snippets;
+        if ([...trigger].length !== 1 || /\s/.test(trigger)) {
             setSnippetError('触发符必须是一个非空白字符');
             return;
         }
         try {
             await invoke('save_snippet_settings', {
                 settingInfo: {
-                    enabled: snippetEnabled,
-                    trigger: snippetTrigger,
-                    snippets,
+                    enabled,
+                    trigger,
+                    snippets: nextSnippets,
                 }
             });
             setSnippetError('');
@@ -1153,6 +1191,14 @@ const Component = () => {
             setSnippetError(String(error));
         }
     };
+
+    useEffect(() => {
+        if (!snippetSettingsLoaded.current) return undefined;
+        const timer = setTimeout(() => {
+            saveSnippets({enabled: snippetEnabled, trigger: snippetTrigger, snippets});
+        }, 250);
+        return () => clearTimeout(timer);
+    }, [snippetEnabled, snippetTrigger, snippets]);
 
     const addAppSearchPath = () => {
         const value = newAppSearchPath.trim();
@@ -1264,6 +1310,7 @@ const Component = () => {
                     hotkeyFileJumpRef.current = candidate;
                     setHotkeyFileJump(candidate);
                 }
+                setSettingDirty(true);
                 setSettingNotice({type: '', text: ''});
             } catch (error) {
                 if (name === "lark") {
@@ -1323,7 +1370,7 @@ const Component = () => {
             <Wrapper/>
             <div id="settingframe">
                 <Tabs activeKey={activeTab} onChange={setActiveTab} centered items={[
-                    {key: 'app', label: '应用设置'},
+                    {key: 'app', label: '常规设置'},
                     {key: 'index', label: '索引扫描'},
                     {key: 'custom', label: '手动应用'},
                     {key: 'snippets', label: '文本片段'}
@@ -1393,9 +1440,6 @@ const Component = () => {
                         </div>
                     </section>
 
-                    <div className="snippetFooter">
-                        <Button type="primary" onClick={saveSnippets}>保存设置</Button>
-                    </div>
                 </div>}
                 {activeTab === 'index' && <div className="indexSettingsPane">
                     <header className="indexSettingsIntro">
@@ -1607,7 +1651,7 @@ const Component = () => {
                         <Button onClick={handleOpenOnboarding}>重新打开</Button>
                     </section>
                     <section className="appSettingCard">
-                        <h3 className="snippetHeading">快捷键</h3>
+                        <h3 className="snippetHeading">快捷键{settingDirty && <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
                         <div className="snippetHint">点击快捷键框，然后按下新的组合键。</div>
                         <div className="hotkeysFrame"
                              onFocusCapture={() => handleHotkeyCapture(true).catch(() => {
@@ -1668,42 +1712,42 @@ const Component = () => {
                     </section>
 
                     <section className="appSettingCard">
-                        <h3 className="snippetHeading">剪贴板历史</h3>
+                        <h3 className="snippetHeading">剪贴板历史{settingDirty && <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
                         <div className="snippetHint">限制保存数量，或按内容类型设置保留天数。</div>
                         <div className="clipboardRetentionGrid">
                             <div className="settingSmallFrame">
                                 <Checkbox checked={clipboardCountSwitch}
-                                          onChange={(event) => setClipboardCountSwitch(event.target.checked)}>数量（个）</Checkbox>
+                                          onChange={(event) => { setClipboardCountSwitch(event.target.checked); setSettingDirty(true); }}>数量（个）</Checkbox>
                                 <InputNumber size="small" min={10} max={200} value={clipboardCount}
                                              disabled={!clipboardCountSwitch}
-                                             onChange={(value) => setClipboardCount(value ?? 100)} changeOnWheel/>
+                                             onChange={(value) => { setClipboardCount(value ?? 100); setSettingDirty(true); }} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
                                 <Checkbox checked={clipboardTextSwitch}
-                                          onChange={(event) => setClipboardTextSwitch(event.target.checked)}>文本（天）</Checkbox>
+                                          onChange={(event) => { setClipboardTextSwitch(event.target.checked); setSettingDirty(true); }}>文本（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={30} value={clipboardText}
                                              disabled={!clipboardTextSwitch}
-                                             onChange={(value) => setClipboardText(value ?? 10)} changeOnWheel/>
+                                             onChange={(value) => { setClipboardText(value ?? 10); setSettingDirty(true); }} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
                                 <Checkbox checked={clipboardImageSwitch}
-                                          onChange={(event) => setClipboardImageSwitch(event.target.checked)}>图片（天）</Checkbox>
+                                          onChange={(event) => { setClipboardImageSwitch(event.target.checked); setSettingDirty(true); }}>图片（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={15} value={clipboardImage}
                                              disabled={!clipboardImageSwitch}
-                                             onChange={(value) => setClipboardImage(value ?? 5)} changeOnWheel/>
+                                             onChange={(value) => { setClipboardImage(value ?? 5); setSettingDirty(true); }} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
                                 <Checkbox checked={clipboardFileSwitch}
-                                          onChange={(event) => setClipboardFileSwitch(event.target.checked)}>文件（天）</Checkbox>
+                                          onChange={(event) => { setClipboardFileSwitch(event.target.checked); setSettingDirty(true); }}>文件（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={10} value={clipboardFile}
                                              disabled={!clipboardFileSwitch}
-                                             onChange={(value) => setClipboardFile(value ?? 1)} changeOnWheel/>
+                                             onChange={(value) => { setClipboardFile(value ?? 1); setSettingDirty(true); }} changeOnWheel/>
                             </div>
                         </div>
                     </section>
 
                     <section className="appSettingCard">
-                        <h3 className="snippetHeading">Python 环境</h3>
+                        <h3 className="snippetHeading">Python 环境{settingDirty && <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
                         <div className="snippetHint">
                             插件 Python 与外部 Python 索引脚本共用这个解释器；留空使用系统默认。指向虚拟环境时请选择
                             它下面的 Scripts\python.exe（不需要「激活」环境）。
@@ -1711,7 +1755,7 @@ const Component = () => {
                         <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
                             <Input size="small" value={pythonInterpreter || ''} allowClear
                                    placeholder="留空使用系统默认解释器"
-                                   onChange={(event) => setPythonInterpreter(event.target.value || null)}
+                                   onChange={(event) => { setPythonInterpreter(event.target.value || null); setSettingDirty(true); }}
                                    onBlur={() => probePythonInterpreter(pythonInterpreter)}/>
                             <Button size="small" onClick={choosePythonInterpreter}>选择…</Button>
                             <Button size="small" onClick={() => probePythonInterpreter(pythonInterpreter)}>检测</Button>
@@ -1723,10 +1767,11 @@ const Component = () => {
 
                     <div className="appSettingFooter">
                         {settingNotice.text &&
-                            <span className={settingNotice.type === 'error' ? 'settingError' : 'settingNotice'}>
+                                <span className={settingNotice.type === 'error' ? 'settingError' : 'settingNotice'}>
                             {settingNotice.text}
                         </span>}
-                        <Button onClick={handleSettingReset}>重置</Button>
+                        {settingDirty && <span className="settingDirtyHint"><span aria-hidden="true">*</span> 有未保存的修改</span>}
+                        <Button onClick={() => { handleSettingReset(); setSettingDirty(true); }}>重置</Button>
                         <Button type="primary" onClick={handleSettingSave}>保存设置</Button>
                     </div>
                 </div>}

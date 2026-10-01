@@ -1,6 +1,6 @@
 {
   "productName": "Lark",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",

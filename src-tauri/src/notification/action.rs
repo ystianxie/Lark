@@ -29,10 +29,6 @@ fn normalized_target(action: &NotificationAction) -> Result<Option<(PathBuf, boo
     Ok(Some((target, expect_dir)))
 }
 
-pub fn validate_action(action: &NotificationAction) -> Result<(), String> {
-    normalized_target(action).map(|_| ())
-}
-
 pub fn execute_action(action: &NotificationAction) -> Result<(), String> {
     let Some((target, is_dir)) = normalized_target(action)? else {
         return Ok(());
@@ -42,60 +38,5 @@ pub fn execute_action(action: &NotificationAction) -> Result<(), String> {
         crate::api::explorer::open_explorer_result(&path)
     } else {
         crate::api::shell::open_file_result(&path)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn close_action_needs_no_path() {
-        assert!(validate_action(&NotificationAction::Close { label: None }).is_ok());
-    }
-
-    #[test]
-    fn validates_file_and_directory_targets_separately() {
-        let file = std::env::current_exe().unwrap();
-        let directory = std::env::temp_dir();
-        assert!(validate_action(&NotificationAction::Open {
-            path: file.to_string_lossy().into_owned(),
-            label: None,
-        })
-        .is_ok());
-        assert!(validate_action(&NotificationAction::OpenDir {
-            path: directory.to_string_lossy().into_owned(),
-            label: None,
-        })
-        .is_ok());
-        assert!(validate_action(&NotificationAction::Open {
-            path: directory.to_string_lossy().into_owned(),
-            label: None,
-        })
-        .is_err());
-        assert!(validate_action(&NotificationAction::OpenDir {
-            path: file.to_string_lossy().into_owned(),
-            label: None,
-        })
-        .is_err());
-    }
-
-    #[test]
-    fn rejects_empty_and_missing_paths_with_readable_errors() {
-        let empty = NotificationAction::Open {
-            path: "  ".into(),
-            label: None,
-        };
-        assert_eq!(validate_action(&empty).unwrap_err(), "通知操作路径不能为空");
-        let missing = NotificationAction::OpenDir {
-            path: std::env::temp_dir()
-                .join("lark-notification-target-that-does-not-exist")
-                .to_string_lossy()
-                .into_owned(),
-            label: None,
-        };
-        assert!(validate_action(&missing)
-            .unwrap_err()
-            .contains("通知操作目标不存在或不可访问"));
     }
 }

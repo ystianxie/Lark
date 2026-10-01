@@ -40,7 +40,7 @@ use crate::config::{
     save_plugin_settings_data, save_setting_data, save_snippet_settings_data, snippet_settings,
 };
 use crate::notification::{
-    NotificationAction, NotificationInput, NotificationLevel, NotificationManager,
+    NotificationInput, NotificationLevel, NotificationManager,
 };
 use crate::utils::database::{FileIndex, IndexSQL, RecordSQL};
 use crate::utils::dirs::get_app_dir;
@@ -297,7 +297,9 @@ fn ensure_notification_window(app: &AppHandle) -> Result<(), String> {
             .min_inner_size(320.0, 60.0)
             .max_inner_size(480.0, 800.0)
             .decorations(false)
-            .transparent(true)
+            // Avoid a softbuffer Win32 assertion when the notification WebView
+            // is resized before its transparent surface has a backing bitmap.
+            .transparent(false)
             .shadow(false)
             .resizable(false)
             .always_on_top(true)
@@ -473,7 +475,7 @@ fn notification_position(
     let available_width = work_width.saturating_sub(margin as u32);
     let available_height = work_height.saturating_sub(margin as u32);
     let width = width.min(available_width);
-    let height = height.min(available_height);
+    let _height = height.min(available_height);
     let right = work_x.saturating_add(work_width.min(i32::MAX as u32) as i32);
     let x = right
         .saturating_sub(width.min(i32::MAX as u32) as i32)
@@ -902,10 +904,14 @@ fn auto_launch_instance() -> Result<auto_launch::AutoLaunch, String> {
 }
 
 #[tauri::command]
-fn get_auto_launch_enabled() -> Result<bool, String> {
-    auto_launch_instance()?
-        .is_enabled()
-        .map_err(|e| e.to_string())
+async fn get_auto_launch_enabled() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        auto_launch_instance()?
+            .is_enabled()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("读取开机启动状态失败：{e}"))?
 }
 
 #[tauri::command]
@@ -960,12 +966,16 @@ fn save_index_settings(app: AppHandle, setting_info: serde_json::Value) -> Resul
 }
 
 #[tauri::command]
-fn get_index_counts() -> Result<serde_json::Value, String> {
-    let index_db = IndexSQL::new();
-    Ok(serde_json::json!({
-        "app": index_db.app_index_count().map_err(|error| error.to_string())?,
-        "file": index_db.file_index_count().map_err(|error| error.to_string())?,
-    }))
+async fn get_index_counts() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let index_db = IndexSQL::new();
+        Ok(serde_json::json!({
+            "app": index_db.app_index_count().map_err(|error| error.to_string())?,
+            "file": index_db.file_index_count().map_err(|error| error.to_string())?,
+        }))
+    })
+    .await
+    .map_err(|e| format!("读取索引数量失败：{e}"))?
 }
 
 #[tauri::command]

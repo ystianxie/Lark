@@ -90,11 +90,3 @@ impl ListaryJumpHandle {
             .map_err(|_| "资源管理器路径状态已损坏".to_string())
     }
 }
-
-/// 手工测试入口：启动监听并返回句柄。
-///
-/// 测试流程：先激活一个资源管理器目录，再打开文件对话框，最后调用
-/// `handle.trigger_ctrl_g()`。
-pub fn start_test_mvp() -> ListaryJumpHandle {
-    ListaryJumpHandle::start()
-}

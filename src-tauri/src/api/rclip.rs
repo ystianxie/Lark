@@ -231,7 +231,7 @@ pub fn read_clipboard() -> Result<ClipboardData, String> {
                 Ok(res) => Ok(res),
                 Err(err) => Err(err.to_string()),
             },
-            Err(err) => Err("读取剪贴板异常！".to_string()),
+            Err(_err) => Err("读取剪贴板异常！".to_string()),
         }
     }
 }

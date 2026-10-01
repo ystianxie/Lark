@@ -5,8 +5,7 @@ extern crate winapi;
 use objc::runtime::{Class, Object};
 #[cfg(target_os = "macos")]
 use objc::{msg_send, sel, sel_impl};
-use tauri::{Emitter, Manager, Runtime, Window};
-use window_shadows::set_shadow;
+use tauri::{Emitter, Manager, Runtime};
 
 #[cfg(target_os = "windows")]
 pub fn disable_system_menu<R: Runtime>(app: &tauri::App<R>) -> Result<(), String> {
@@ -48,7 +47,7 @@ pub fn disable_system_menu<R: Runtime>(_app: &tauri::App<R>) -> Result<(), Strin
     Ok(())
 }
 
-pub fn set_window_shadow<R: Runtime>(app: &tauri::App<R>) {
+pub fn set_window_shadow<R: Runtime>(_app: &tauri::App<R>) {
     #[cfg(target_os = "macos")]
     {
         let window: tauri::Window<R> = app.get_window("skylark").unwrap();
