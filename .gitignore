@@ -33,3 +33,4 @@ test.*
 /.cargo-target-onboarding-reopen/
 /.reasonix/
 /aimisi-v2-run/
+/.pnpm-store/

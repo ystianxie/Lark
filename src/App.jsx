@@ -1280,7 +1280,7 @@ const App = () => {
                                               inputBox.current?.focus();
                                           },
                                           pluginConfigId: componentInfo.pluginConfigId,
-                                      } : ["clipboardComponent", "todoComponent", "hostsComponent"].includes(componentInfo.data) ? {
+                                      } : ["clipboardComponent", "todoComponent", "hostsComponent", "translationComponent"].includes(componentInfo.data) ? {
                                           onClose: () => {
                                               initStatus();
                                               inputBox.current?.focus();

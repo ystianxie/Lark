@@ -7,3 +7,4 @@ pub mod icons;
 pub mod img_factory;
 pub mod json_factory;
 pub mod string_factory;
+pub mod dpapi;

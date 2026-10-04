@@ -16,6 +16,7 @@ import bingImg from "/src/assets/bing.svg";
 import bilibiliImg from "/src/assets/bilibili.svg";
 import taobaoImg from "/src/assets/taobao.svg";
 import jdImg from "/src/assets/jd.svg";
+import fyImg from "/src/assets/翻译.svg";
 import {evaluate} from "mathjs";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {LogicalSize} from "@tauri-apps/api/dpi";
@@ -388,6 +389,10 @@ const clipboardPluginComponent = {
     type: "panel",
     data: "clipboardComponent"
 };
+const translationPluginComponent = {
+    icon: <img src={fyImg} alt="翻译" className='activateComponent' data-tauri-drag-region/>,
+    title: '翻译', desc: '', keywords: ['翻译', 'translate', 'fy'], type: 'panel', data: 'translationComponent'
+};
 
 const todoComponent = {
     icon: <img src={todoImg} alt="待办" className='activateComponent' data-tauri-drag-region/>,
@@ -473,6 +478,7 @@ const pluginsComponent = {
     showPluginComponent,
     settingPluginComponent,
     clipboardPluginComponent,
+    translationPluginComponent,
     todoComponent,
     weeklyReportComponent,
     alarmComponent,

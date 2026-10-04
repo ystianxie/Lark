@@ -1,7 +1,15 @@
 import React, {useState, useRef, useEffect, useReducer} from 'react';
 import styled, {createGlobalStyle} from 'styled-components';
 import {distance} from "mathjs";
-import {Button, Input, InputNumber, Checkbox, Flex, Tabs, Tag, Popconfirm, Switch} from 'antd';
+import {Button, Input, InputNumber, Checkbox, Flex, Tabs, Tag, Popconfirm, Switch, Select} from 'antd';
+import {
+    DEFAULT_TRANSLATION_SETTINGS,
+    TRANSLATION_PROVIDER_CATALOG,
+    OCR_PROVIDER_CATALOG,
+    normalizeTranslationSettings,
+    readTranslationSettings,
+    TRANSLATION_SETTINGS_KEY
+} from '../translationSettings';
 import {invoke} from "@tauri-apps/api/core";
 import {open} from "@tauri-apps/plugin-dialog";
 import {listen} from "@tauri-apps/api/event";
@@ -819,6 +827,11 @@ const modifierKeyMap = {
 
 const Component = () => {
     const [activeTab, setActiveTab] = useState('app');
+    const [translationSettings, setTranslationSettings] = useState(DEFAULT_TRANSLATION_SETTINGS);
+    const [collapsedTranslationServices, setCollapsedTranslationServices] = useState({});
+    const [collapsedOcrServices, setCollapsedOcrServices] = useState({});
+    const [translationNotice, setTranslationNotice] = useState('');
+    const [ocrServices, setOcrServices] = useState([]);
     const [clipboardCount, setClipboardCount] = useState(100);
     const [clipboardText, setClipboardText] = useState(10);
     const [clipboardImage, setClipboardImage] = useState(5);
@@ -891,6 +904,39 @@ const Component = () => {
     };
 
     useEffect(() => {
+        const decryptPasswordFields = async (services, catalog) => Promise.all((services || []).map(async (service) => {
+            const passwordFields = (catalog.find(item => item.id === service.provider)?.fields || [])
+                .filter(field => field.type === 'password').map(field => field.key);
+            const next = {...service};
+            for (const key of passwordFields) {
+                const value = String(next[key] || '');
+                if (value.startsWith('dpapi:')) {
+                    try {
+                        next[key] = await invoke('unprotect_secret', {value: value.slice('dpapi:'.length)});
+                    } catch (error) {
+                        console.warn(`解密配置字段 ${key} 失败`, error);
+                        next[key] = '';
+                    }
+                }
+            }
+            return next;
+        }));
+        const loadTranslation = async () => {
+            const storedTranslation = readTranslationSettings();
+            const services = await decryptPasswordFields(storedTranslation.services, TRANSLATION_PROVIDER_CATALOG);
+            const storedOcr = await decryptPasswordFields(storedTranslation.ocrServices, OCR_PROVIDER_CATALOG);
+            setCollapsedTranslationServices(Object.fromEntries(services.map(service => [service.id, true])));
+            setCollapsedOcrServices(Object.fromEntries(storedOcr.map(service => [service.id, true])));
+            setTranslationSettings({...storedTranslation, services});
+            let foundEnabled = false;
+            setOcrServices(storedOcr.map(service => {
+                if (!service.enabled) return service;
+                if (foundEnabled) return {...service, enabled: false};
+                foundEnabled = true;
+                return service;
+            }));
+        };
+        loadTranslation();
         invoke("get_app_settings").then((settings) => {
             setHotkeyAwaken(settings.hotkeyAwaken);
             setHotkeyClipboard(settings.hotkeyClipboard);
@@ -927,6 +973,97 @@ const Component = () => {
         }).catch((error) => setSnippetError(String(error)));
         loadCustomApps();
     }, []);
+
+    const saveTranslationSettings = async () => {
+        const normalized = normalizeTranslationSettings(translationSettings);
+        if (!normalized.services.length) {
+            setTranslationNotice('请至少添加一个翻译服务');
+            return;
+        }
+        if (normalized.services.some(service => service.provider === 'baidu'
+            ? (!service.appId.trim() || !service.appKey.trim())
+            : service.provider === 'tengxun'
+                ? (!service.secretId.trim() || !service.secretKey.trim())
+                : (!service.apiKey.trim() && service.provider !== 'custom'))) {
+            setTranslationNotice('请填写已添加服务所需的认证信息');
+            return;
+        }
+        try {
+            const protectedFields = (service, catalog) => new Set(
+                (catalog.find(item => item.id === service.provider)?.fields || [])
+                    .filter(field => field.type === 'password')
+                    .map(field => field.key)
+            );
+            const protectService = async (service, catalog) => {
+                const next = {...service};
+                for (const key of protectedFields(service, catalog)) {
+                    const value = String(next[key] || '');
+                    if (value && !value.startsWith('dpapi:')) {
+                        next[key] = `dpapi:${await invoke('protect_secret', {value})}`;
+                    }
+                }
+                return next;
+            };
+            const protectedServices = await Promise.all(normalized.services.map(service => protectService(service, TRANSLATION_PROVIDER_CATALOG)));
+            const protectedOcrServices = await Promise.all((ocrServices || []).map(service => protectService(service, OCR_PROVIDER_CATALOG)));
+            localStorage.setItem(TRANSLATION_SETTINGS_KEY, JSON.stringify({...normalized, services: protectedServices, ocrServices: protectedOcrServices}));
+            setTranslationSettings(normalized);
+            setTranslationNotice('翻译设置已保存');
+        } catch (error) {
+            setTranslationNotice(`翻译设置保存失败：${String(error)}`);
+        }
+    };
+
+    const addTranslationService = () => {
+        const id = `service-${Date.now()}`;
+        setCollapsedTranslationServices(current => ({...current, [id]: false}));
+        setTranslationSettings(current => ({
+        ...current,
+        services: [...current.services, {
+            id,
+            provider: 'niutrans',
+            name: '小牛翻译',
+            enabled: true,
+            apiKey: '',
+            appId: '',
+            appKey: '',
+            baseUrl: '',
+            model: '',
+            dictNo: '',
+            memoryNo: '',
+            dictflag: false,
+            dict: '',
+            needIntervene: false
+        }]
+        }));
+    };
+
+    const updateTranslationService = (id, patch) => setTranslationSettings(current => ({
+        ...current,
+        services: current.services.map(service => service.id === id ? {...service, ...patch} : service)
+    }));
+
+    const removeTranslationService = (id) => setTranslationSettings(current => ({
+        ...current,
+        services: current.services.filter(service => service.id !== id)
+    }));
+    const addOcrService = () => {
+        const id = `ocr-${Date.now()}`;
+        setCollapsedOcrServices(current => ({...current, [id]: false}));
+        setOcrServices(current => [...current, {
+        id,
+        provider: 'paddleocr-local',
+        name: 'PaddleOCR（本地）',
+        enabled: false,
+        config: {endpoint: 'http://127.0.0.1:8866/ocr', language: 'ch'}
+        }]);
+    };
+    const updateOcrService = (id, patch) => setOcrServices(current => current.map(service => {
+        if (service.id === id) return {...service, ...patch};
+        if (patch.enabled === true) return {...service, enabled: false};
+        return service;
+    }));
+    const removeOcrService = (id) => setOcrServices(current => current.filter(service => service.id !== id));
 
     useEffect(() => () => {
         if (hotkeyCaptureActive.current) {
@@ -1371,10 +1508,273 @@ const Component = () => {
             <div id="settingframe">
                 <Tabs activeKey={activeTab} onChange={setActiveTab} centered items={[
                     {key: 'app', label: '常规设置'},
+                    {key: 'translation', label: '翻译服务'},
                     {key: 'index', label: '索引扫描'},
                     {key: 'custom', label: '手动应用'},
                     {key: 'snippets', label: '文本片段'}
                 ]}/>
+                {activeTab === 'translation' && <div style={{padding: '8px 18px 24px'}}>
+                    <section className="snippetCard">
+                        <h3 className="snippetHeading">翻译方向</h3>
+                        <div
+                            className="snippetHint">根据检测结果自动选择目标语言：简体中文翻译成英文，其他语言翻译成简体中文。
+                        </div>
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                            gap: 12,
+                            marginTop: 14
+                        }}>
+                            <label className="snippetField"><span className="snippetLabel">源语言</span><Select
+                                value={translationSettings.sourceLang} options={[{value: 'auto', label: '自动检测'}]}
+                                disabled style={{width: '100%'}}/></label>
+                            <label className="snippetField"><span className="snippetLabel">简体中文目标</span><Select
+                                value="en" options={[{value: 'en', label: '英语'}]} disabled
+                                style={{width: '100%'}}/></label>
+                            <label className="snippetField"><span className="snippetLabel">其他语言目标</span><Select
+                                value="zh-CN" options={[{value: 'zh-CN', label: '简体中文'}]} disabled
+                                style={{width: '100%'}}/></label>
+                        </div>
+                        <div style={{display: 'flex', gap: 18, alignItems: 'center', marginTop: 14}}>
+                            <label className="snippetField"><span
+                                className="snippetLabel">请求超时（毫秒）</span><InputNumber min={3000} max={30000}
+                                                                                           step={500}
+                                                                                           value={translationSettings.requestTimeoutMs}
+                                                                                           onChange={(value) => setTranslationSettings(current => ({
+                                                                                               ...current,
+                                                                                               requestTimeoutMs: value || 8000
+                                                                                           }))}/></label>
+                            <label className="snippetSwitch"><Switch size="small"
+                                                                     checked={translationSettings.autoClipboard}
+                                                                     onChange={(checked) => setTranslationSettings(current => ({
+                                                                         ...current,
+                                                                         autoClipboard: checked
+                                                                     }))}/><span>唤起时自动读取剪贴板</span></label>
+                        </div>
+                    </section>
+                    <section className="snippetCard">
+                        <div className="snippetListHeader">
+                            <div><h3 className="snippetHeading">翻译服务</h3>
+                                <div
+                                    className="snippetHint">启用的服务会并行翻译，并分别展示结果；单个服务失败不影响其他服务。
+                                </div>
+                            </div>
+                            <Button type="primary" onClick={addTranslationService}>添加服务</Button></div>
+                        {translationSettings.services.length === 0 &&
+                            <div className="snippetEmpty">还没有配置翻译服务。</div>}
+                        {translationSettings.services.map(service => <div key={service.id} style={{
+                            padding: 18,
+                            marginTop: 14,
+                            border: '1px solid #e8eaf0',
+                            borderRadius: 12,
+                            background: '#fff',
+                            boxShadow: '0 2px 8px rgba(31,35,41,.04)'
+                        }}>
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                marginBottom: 16
+                            }}>
+                                <div style={{display: 'flex', gap: 10, alignItems: 'center'}}><Select
+                                    value={service.provider} options={TRANSLATION_PROVIDER_CATALOG.map(item => ({
+                                    value: item.id,
+                                    label: item.name
+                                }))} onChange={(value) => updateTranslationService(service.id, {
+                                    provider: value,
+                                    name: TRANSLATION_PROVIDER_CATALOG.find(item => item.id === value)?.name || value,
+                                    ...(value === 'deepseek' ? {model: service.model || 'deepseek-flash', baseUrl: service.baseUrl || 'https://api.deepseek.com'} : {}),
+                                    ...(value === 'zhipu' ? {model: service.model || 'glm-5.3', baseUrl: service.baseUrl && service.baseUrl.includes('bigmodel.cn') ? service.baseUrl : 'https://open.bigmodel.cn/api/paas/v4'} : {}),
+                                    ...(value === 'tengxun' ? {region: service.region || 'ap-guangzhou', projectId: service.projectId || '0'} : {})
+                                })} style={{width: 180}}/><Input value={service.name} placeholder="服务显示名称"
+                                                                 onChange={(event) => updateTranslationService(service.id, {name: event.target.value})}
+                                                                 style={{width: 190}}/></div>
+                                <div style={{display: 'flex', gap: 8, alignItems: 'center'}}><Switch size="small"
+                                                                                                     checked={service.enabled}
+                                                                                                     onChange={(checked) => updateTranslationService(service.id, {enabled: checked})}/><Button
+                                    danger type="text" aria-label="删除服务" title="删除服务"
+                                    onClick={() => removeTranslationService(service.id)}
+                                    style={{fontSize: 20, width: 28, height: 28, padding: 0, lineHeight: 1}}>×</Button>
+                                </div>
+                            </div>
+                            <details
+                                open={collapsedTranslationServices[service.id] !== true}
+                                onToggle={(event) => {
+                                    const isOpen = event.currentTarget?.open === true;
+                                    setCollapsedTranslationServices(current => ({
+                                        ...current,
+                                        [service.id]: !isOpen
+                                    }));
+                                }}
+                            ><summary style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px'}}>配置详情</summary><div style={{padding: 14, borderRadius: 9, background: '#f8f9fb'}}>
+                                {service.provider === 'baidu' &&
+                                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
+                                        <label className="snippetField"><span
+                                            className="snippetLabel">APP ID</span><Input value={service.appId}
+                                                                                         placeholder="从百度开发者信息获取"
+                                                                                         onChange={(event) => updateTranslationService(service.id, {appId: event.target.value})}/></label>
+                                        <label className="snippetField"><span
+                                            className="snippetLabel">密钥</span><Input.Password value={service.appKey}
+                                                                                                placeholder="从百度开发者信息获取"
+                                                                                                onChange={(event) => updateTranslationService(service.id, {appKey: event.target.value})}/></label>
+                                        <label className="snippetSwitch" style={{gridColumn: '1 / -1'}}><Switch
+                                            size="small" checked={service.needIntervene}
+                                            onChange={(checked) => updateTranslationService(service.id, {needIntervene: checked})}/><span>启用我的术语库</span></label>
+                                    </div>}
+                                {service.provider === 'niutrans' &&
+                                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
+                                        <label className="snippetField"><span
+                                            className="snippetLabel">API Key</span><Input.Password
+                                            value={service.apiKey} placeholder="输入小牛 API Key"
+                                            onChange={(event) => updateTranslationService(service.id, {apiKey: event.target.value})}/></label>
+                                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8}}><label
+                                            className="snippetField"><span
+                                            className="snippetLabel">术语词典 ID</span><Input value={service.dictNo}
+                                                                                              onChange={(event) => updateTranslationService(service.id, {dictNo: event.target.value})}/></label><label
+                                            className="snippetField"><span
+                                            className="snippetLabel">翻译记忆 ID</span><Input value={service.memoryNo}
+                                                                                              onChange={(event) => updateTranslationService(service.id, {memoryNo: event.target.value})}/></label>
+                                        </div>
+                                    </div>}
+                                {service.provider === 'tengxun' &&
+                                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12}}>
+                                        <label className="snippetField"><span className="snippetLabel">SecretId</span><Input value={service.secretId || ''} onChange={(event) => updateTranslationService(service.id, {secretId: event.target.value})}/></label>
+                                        <label className="snippetField"><span className="snippetLabel">SecretKey</span><Input.Password value={service.secretKey || ''} onChange={(event) => updateTranslationService(service.id, {secretKey: event.target.value})}/></label>
+                                        <label className="snippetField"><span className="snippetLabel">地域</span><Input value={service.region || ''} placeholder="ap-guangzhou" onChange={(event) => updateTranslationService(service.id, {region: event.target.value})}/></label>
+                                        <label className="snippetField"><span className="snippetLabel">项目 ID</span><Input value={service.projectId || ''} placeholder="0" onChange={(event) => updateTranslationService(service.id, {projectId: event.target.value})}/></label>
+                                    </div>}
+                                {!['baidu', 'niutrans', 'tengxun'].includes(service.provider) &&
+                                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12}}><label
+                                        className="snippetField"><span
+                                        className="snippetLabel">API Key</span><Input.Password value={service.apiKey}
+                                                                                               onChange={(event) => updateTranslationService(service.id, {apiKey: event.target.value})}/></label><label
+                                        className="snippetField"><span className="snippetLabel">模型</span><Input
+                                        value={service.model}
+                                        placeholder={service.provider === 'deepseek' ? 'deepseek-flash' : service.provider === 'zhipu' ? 'glm-5.3' : ''}
+                                        onChange={(event) => updateTranslationService(service.id, {model: event.target.value})}/></label><label
+                                        className="snippetField"><span className="snippetLabel">Base URL</span><Input
+                                        value={service.baseUrl}
+                                        placeholder={service.provider === 'deepseek' ? 'https://api.deepseek.com' : service.provider === 'zhipu' ? 'https://open.bigmodel.cn/api/paas/v4' : ''}
+                                        onChange={(event) => updateTranslationService(service.id, {baseUrl: event.target.value})}/></label>
+                                    </div>}
+                            </div></details>
+                        </div>)}
+                        {translationNotice && <div
+                            className={translationNotice.includes('失败') || translationNotice.includes('请') ? 'snippetError' : 'snippetHint'}
+                            style={{marginTop: 12}}>{translationNotice}</div>}
+                    </section>
+                    <section className="snippetCard" style={{marginTop: 16}}>
+                        <div className="snippetListHeader">
+                            <div><h3 className="snippetHeading">OCR 服务</h3>
+                                <div className="snippetHint">截图识别服务。识别完成后，文本会交给上面的翻译服务处理。</div>
+                            </div>
+                            <Button onClick={addOcrService}>添加 OCR 服务</Button></div>
+                        {ocrServices.length === 0 && <div className="snippetEmpty">还没有配置 OCR 服务。</div>}
+                        {ocrServices.map(service => {
+                            const definition = OCR_PROVIDER_CATALOG.find(item => item.id === service.provider);
+                            const config = service.config || {};
+                            return <div key={service.id} style={{
+                                padding: 18,
+                                marginTop: 14,
+                                border: '1px solid #e8eaf0',
+                                borderRadius: 12,
+                                background: '#fff'
+                            }}>
+                                <details
+                                    open={collapsedOcrServices[service.id] !== true}
+                                    onToggle={(event) => {
+                                        const isOpen = event.currentTarget?.open === true;
+                                        setCollapsedOcrServices(current => ({
+                                            ...current,
+                                            [service.id]: !isOpen
+                                        }));
+                                    }}
+                                ><summary style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px'}}>配置详情</summary><div style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    marginBottom: 16
+                                }}>
+                                    <div style={{display: 'flex', gap: 10}}><Select value={service.provider}
+                                                                                    options={OCR_PROVIDER_CATALOG.map(item => ({
+                                                                                        value: item.id,
+                                                                                        label: item.name
+                                                                                    }))}
+                                                                                    onChange={(value) => updateOcrService(service.id, {
+                                                                                        provider: value,
+                                                                                        name: OCR_PROVIDER_CATALOG.find(item => item.id === value)?.name || value,
+                                                                                        config: {}
+                                                                                    })} style={{width: 210}}/><Input
+                                        value={service.name}
+                                        onChange={(event) => updateOcrService(service.id, {name: event.target.value})}
+                                        style={{width: 190}}/></div>
+                                    <div style={{display: 'flex', gap: 8}}><Switch size="small"
+                                                                                   checked={service.enabled}
+                                                                                   onChange={(checked) => updateOcrService(service.id, {enabled: checked})}/><Button
+                                        danger type="text" aria-label="删除 OCR 服务" title="删除 OCR 服务"
+                                        onClick={() => removeOcrService(service.id)}
+                                        style={{fontSize: 20, width: 28, height: 28, padding: 0}}>×</Button></div>
+                                </div>
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                                    gap: 12,
+                                    padding: 14,
+                                    borderRadius: 9,
+                                    background: '#f8f9fb'
+                                }}>{(definition?.fields || []).map(field => <label className="snippetField"
+                                                                                   key={field.key}><span
+                                    className="snippetLabel">{field.label}{field.required ? ' *' : ''}</span>{field.type === 'boolean' ?
+                                    <Switch size="small" checked={config[field.key] ?? field.default ?? false}
+                                            onChange={(checked) => updateOcrService(service.id, {
+                                                config: {
+                                                    ...config,
+                                                    [field.key]: checked
+                                                }
+                                            })}/> : field.type === 'select' ?
+                                        <Select value={config[field.key] ?? field.default} options={field.options}
+                                                onChange={(value) => updateOcrService(service.id, {
+                                                    config: {
+                                                        ...config,
+                                                        [field.key]: value
+                                                    }
+                                                })} style={{width: '100%'}}/> : field.type === 'password' ?
+                                            <Input.Password value={config[field.key] || ''}
+                                                            onChange={(event) => updateOcrService(service.id, {
+                                                                config: {
+                                                                    ...config,
+                                                                    [field.key]: event.target.value
+                                                                }
+                                                            })}/> :
+                                            <Input value={config[field.key] || field.default || ''}
+                                                   onChange={(event) => updateOcrService(service.id, {
+                                                       config: {
+                                                           ...config,
+                                                           [field.key]: event.target.value
+                                                       }
+                                                   })}/>}</label>)}</div></details>
+                            </div>;
+                        })}
+                    </section>
+                    <div style={{
+                        position: 'sticky',
+                        bottom: 0,
+                        zIndex: 5,
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        alignItems: 'center',
+                        gap: 12,
+                        margin: '16px -18px -24px',
+                        padding: '12px 18px',
+                        background: 'rgba(255,255,255,.94)',
+                        borderTop: '1px solid #edf0f4',
+                        boxShadow: '0 -3px 10px rgba(31,35,41,.04)'
+                    }}>
+                        {translationNotice && <span
+                            className={translationNotice.includes('失败') || translationNotice.includes('请') ? 'snippetError' : 'snippetHint'}>{translationNotice}</span>}
+                        <Button type="primary" onClick={saveTranslationSettings}>保存翻译与 OCR 设置</Button>
+                    </div>
+                </div>}
                 {activeTab === 'snippets' && <div className="snippetPane">
                     <section className="snippetCard snippetStatusRow">
                         <div>
@@ -1651,7 +2051,8 @@ const Component = () => {
                         <Button onClick={handleOpenOnboarding}>重新打开</Button>
                     </section>
                     <section className="appSettingCard">
-                        <h3 className="snippetHeading">快捷键{settingDirty && <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
+                        <h3 className="snippetHeading">快捷键{settingDirty &&
+                            <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
                         <div className="snippetHint">点击快捷键框，然后按下新的组合键。</div>
                         <div className="hotkeysFrame"
                              onFocusCapture={() => handleHotkeyCapture(true).catch(() => {
@@ -1712,42 +2113,68 @@ const Component = () => {
                     </section>
 
                     <section className="appSettingCard">
-                        <h3 className="snippetHeading">剪贴板历史{settingDirty && <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
+                        <h3 className="snippetHeading">剪贴板历史{settingDirty &&
+                            <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
                         <div className="snippetHint">限制保存数量，或按内容类型设置保留天数。</div>
                         <div className="clipboardRetentionGrid">
                             <div className="settingSmallFrame">
                                 <Checkbox checked={clipboardCountSwitch}
-                                          onChange={(event) => { setClipboardCountSwitch(event.target.checked); setSettingDirty(true); }}>数量（个）</Checkbox>
+                                          onChange={(event) => {
+                                              setClipboardCountSwitch(event.target.checked);
+                                              setSettingDirty(true);
+                                          }}>数量（个）</Checkbox>
                                 <InputNumber size="small" min={10} max={200} value={clipboardCount}
                                              disabled={!clipboardCountSwitch}
-                                             onChange={(value) => { setClipboardCount(value ?? 100); setSettingDirty(true); }} changeOnWheel/>
+                                             onChange={(value) => {
+                                                 setClipboardCount(value ?? 100);
+                                                 setSettingDirty(true);
+                                             }} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
                                 <Checkbox checked={clipboardTextSwitch}
-                                          onChange={(event) => { setClipboardTextSwitch(event.target.checked); setSettingDirty(true); }}>文本（天）</Checkbox>
+                                          onChange={(event) => {
+                                              setClipboardTextSwitch(event.target.checked);
+                                              setSettingDirty(true);
+                                          }}>文本（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={30} value={clipboardText}
                                              disabled={!clipboardTextSwitch}
-                                             onChange={(value) => { setClipboardText(value ?? 10); setSettingDirty(true); }} changeOnWheel/>
+                                             onChange={(value) => {
+                                                 setClipboardText(value ?? 10);
+                                                 setSettingDirty(true);
+                                             }} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
                                 <Checkbox checked={clipboardImageSwitch}
-                                          onChange={(event) => { setClipboardImageSwitch(event.target.checked); setSettingDirty(true); }}>图片（天）</Checkbox>
+                                          onChange={(event) => {
+                                              setClipboardImageSwitch(event.target.checked);
+                                              setSettingDirty(true);
+                                          }}>图片（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={15} value={clipboardImage}
                                              disabled={!clipboardImageSwitch}
-                                             onChange={(value) => { setClipboardImage(value ?? 5); setSettingDirty(true); }} changeOnWheel/>
+                                             onChange={(value) => {
+                                                 setClipboardImage(value ?? 5);
+                                                 setSettingDirty(true);
+                                             }} changeOnWheel/>
                             </div>
                             <div className="settingSmallFrame">
                                 <Checkbox checked={clipboardFileSwitch}
-                                          onChange={(event) => { setClipboardFileSwitch(event.target.checked); setSettingDirty(true); }}>文件（天）</Checkbox>
+                                          onChange={(event) => {
+                                              setClipboardFileSwitch(event.target.checked);
+                                              setSettingDirty(true);
+                                          }}>文件（天）</Checkbox>
                                 <InputNumber size="small" min={1} max={10} value={clipboardFile}
                                              disabled={!clipboardFileSwitch}
-                                             onChange={(value) => { setClipboardFile(value ?? 1); setSettingDirty(true); }} changeOnWheel/>
+                                             onChange={(value) => {
+                                                 setClipboardFile(value ?? 1);
+                                                 setSettingDirty(true);
+                                             }} changeOnWheel/>
                             </div>
                         </div>
                     </section>
 
                     <section className="appSettingCard">
-                        <h3 className="snippetHeading">Python 环境{settingDirty && <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
+                        <h3 className="snippetHeading">Python 环境{settingDirty &&
+                            <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
                         <div className="snippetHint">
                             插件 Python 与外部 Python 索引脚本共用这个解释器；留空使用系统默认。指向虚拟环境时请选择
                             它下面的 Scripts\python.exe（不需要「激活」环境）。
@@ -1755,7 +2182,10 @@ const Component = () => {
                         <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
                             <Input size="small" value={pythonInterpreter || ''} allowClear
                                    placeholder="留空使用系统默认解释器"
-                                   onChange={(event) => { setPythonInterpreter(event.target.value || null); setSettingDirty(true); }}
+                                   onChange={(event) => {
+                                       setPythonInterpreter(event.target.value || null);
+                                       setSettingDirty(true);
+                                   }}
                                    onBlur={() => probePythonInterpreter(pythonInterpreter)}/>
                             <Button size="small" onClick={choosePythonInterpreter}>选择…</Button>
                             <Button size="small" onClick={() => probePythonInterpreter(pythonInterpreter)}>检测</Button>
@@ -1767,11 +2197,15 @@ const Component = () => {
 
                     <div className="appSettingFooter">
                         {settingNotice.text &&
-                                <span className={settingNotice.type === 'error' ? 'settingError' : 'settingNotice'}>
+                            <span className={settingNotice.type === 'error' ? 'settingError' : 'settingNotice'}>
                             {settingNotice.text}
                         </span>}
-                        {settingDirty && <span className="settingDirtyHint"><span aria-hidden="true">*</span> 有未保存的修改</span>}
-                        <Button onClick={() => { handleSettingReset(); setSettingDirty(true); }}>重置</Button>
+                        {settingDirty &&
+                            <span className="settingDirtyHint"><span aria-hidden="true">*</span> 有未保存的修改</span>}
+                        <Button onClick={() => {
+                            handleSettingReset();
+                            setSettingDirty(true);
+                        }}>重置</Button>
                         <Button type="primary" onClick={handleSettingSave}>保存设置</Button>
                     </div>
                 </div>}
