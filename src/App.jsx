@@ -350,6 +350,26 @@ const App = () => {
         await getCurrentWebview().setFocus();
     };
 
+    // 截图结果页由多个异步状态更新组成。等 React 提交结果页后再恢复
+    // WebView 和输入框焦点，避免 finishScreenshotSelection 中过早 focus 被覆盖。
+    useEffect(() => {
+        if (!screenshotResult) return;
+        let cancelled = false;
+        const restoreInputFocus = async () => {
+            await appWindow.setFocus().catch(() => {});
+            await getCurrentWebview().setFocus().catch(() => {});
+            if (cancelled) return;
+            requestAnimationFrame(() => {
+                if (!cancelled) inputBox.current?.focus({preventScroll: true});
+            });
+        };
+        const timer = setTimeout(restoreInputFocus, 50);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [screenshotResult]);
+
     const handleFirstVisibleResultChange = useCallback((index) => {
         firstVisibleResultIndex.current = index;
     }, []);
