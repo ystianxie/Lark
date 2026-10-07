@@ -8,7 +8,7 @@ import hostsImg from "../assets/component.svg";
 
 const DEFAULT_SHORTCUTS = {
   hotkeyAwaken: 'Alt+Space',
-  hotkeyClipboard: 'Shift+Alt+V',
+  hotkeyClipboard: 'Ctrl+Alt+V',
   hotkeyFileJump: 'Ctrl+G',
 };
 

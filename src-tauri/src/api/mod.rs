@@ -13,5 +13,7 @@ pub mod windows_app_watcher;
 #[cfg(target_os = "windows")]
 pub mod windows_apps;
 
-pub mod rclip;
 pub mod hosts;
+pub mod rclip;
+pub mod screenshot;
+pub mod selection;

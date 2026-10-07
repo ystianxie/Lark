@@ -18,8 +18,12 @@ pub struct BaseConfig {
     version: String,
     pub hotkey_awaken: String,
     pub hotkey_clipboard: String,
+    #[serde(default = "default_hotkey_selection")]
+    pub hotkey_selection: String,
     #[serde(default = "default_hotkey_file_jump")]
     pub hotkey_file_jump: String,
+    #[serde(default = "default_hotkey_screenshot")]
+    pub hotkey_screenshot: String,
     #[serde(default)]
     clipboard_settings_initialized: bool,
     clipboard_record_count_switch: bool,
@@ -67,6 +71,22 @@ fn default_snippet_trigger() -> String {
 fn default_hotkey_file_jump() -> String {
     "Ctrl+G".to_string()
 }
+
+fn default_hotkey_screenshot() -> String {
+    if cfg!(target_os = "macos") {
+        "Option+S".to_string()
+    } else {
+        "Ctrl+Alt+S".to_string()
+    }
+}
+
+fn default_hotkey_selection() -> String {
+    if cfg!(target_os = "macos") {
+        "Option+D".to_string()
+    } else {
+        "Ctrl+Alt+D".to_string()
+    }
+}
 impl Default for BaseConfig {
     #[cfg(target_os = "macos")]
     fn default() -> Self {
@@ -75,7 +95,9 @@ impl Default for BaseConfig {
             version: "1.0.0".to_string(),
             hotkey_awaken: "Option+Space".to_string(),
             hotkey_clipboard: "Shift+Meta+V".to_string(),
+            hotkey_selection: default_hotkey_selection(),
             hotkey_file_jump: default_hotkey_file_jump(),
+            hotkey_screenshot: default_hotkey_screenshot(),
             clipboard_settings_initialized: true,
             clipboard_record_count_switch: true,
             clipboard_record_count: Some(100),
@@ -131,8 +153,10 @@ impl Default for BaseConfig {
             app_name: "lark".to_string(),
             version: "1.0.0".to_string(),
             hotkey_awaken: "Alt+Space".to_string(),
-            hotkey_clipboard: "Shift+Alt+V".to_string(),
+            hotkey_clipboard: "Ctrl+Alt+V".to_string(),
+            hotkey_selection: default_hotkey_selection(),
             hotkey_file_jump: default_hotkey_file_jump(),
+            hotkey_screenshot: default_hotkey_screenshot(),
             clipboard_settings_initialized: true,
             clipboard_record_count_switch: true,
             clipboard_record_count: Some(100),
@@ -213,7 +237,9 @@ enum ConfigUpdate {
     Version(String),
     HotkeyAwaken(String),
     HotkeyClipboard(String),
+    HotkeySelection(String),
     HotkeyFileJump(String),
+    HotkeyScreenshot(String),
     ClipboardRecordCountSwitch(bool),
     ClipboardRecordCount(Option<i32>),
     ClipboardRecordTextSwitch(bool),
@@ -313,7 +339,9 @@ impl Config {
             ConfigUpdate::Version(value) => self.config.base.version = value,
             ConfigUpdate::HotkeyAwaken(value) => self.config.base.hotkey_awaken = value,
             ConfigUpdate::HotkeyClipboard(value) => self.config.base.hotkey_clipboard = value,
+            ConfigUpdate::HotkeySelection(value) => self.config.base.hotkey_selection = value,
             ConfigUpdate::HotkeyFileJump(value) => self.config.base.hotkey_file_jump = value,
+            ConfigUpdate::HotkeyScreenshot(value) => self.config.base.hotkey_screenshot = value,
             ConfigUpdate::ClipboardRecordCountSwitch(value) => {
                 self.config.base.clipboard_record_count_switch = value
             }
@@ -439,8 +467,14 @@ pub fn save_setting_data(setting_info: Value) -> Result<(String, String)> {
     if let Some(value) = setting_info.get("hotkeyClipboard").and_then(Value::as_str) {
         config.update_local_config(ConfigUpdate::HotkeyClipboard(value.to_string()));
     }
+    if let Some(value) = setting_info.get("hotkeySelection").and_then(Value::as_str) {
+        config.update_local_config(ConfigUpdate::HotkeySelection(value.to_string()));
+    }
     if let Some(value) = setting_info.get("hotkeyFileJump").and_then(Value::as_str) {
         config.update_local_config(ConfigUpdate::HotkeyFileJump(value.to_string()));
+    }
+    if let Some(value) = setting_info.get("hotkeyScreenshot").and_then(Value::as_str) {
+        config.update_local_config(ConfigUpdate::HotkeyScreenshot(value.to_string()));
     }
     // 与其它字段不同：这里按「key 是否存在」判断，而不是 as_str()。
     // 前端未加载成功时不传该 key，就不能覆盖已有配置；需要清空时必须显式传 null
@@ -511,7 +545,9 @@ pub fn app_settings() -> Result<Value> {
     Ok(serde_json::json!({
         "hotkeyAwaken": base.hotkey_awaken,
         "hotkeyClipboard": base.hotkey_clipboard,
+        "hotkeySelection": base.hotkey_selection,
         "hotkeyFileJump": base.hotkey_file_jump,
+        "hotkeyScreenshot": base.hotkey_screenshot,
         "clipboardCountSwitch": base.clipboard_record_count_switch,
         "clipboardCount": base.clipboard_record_count,
         "clipboardTextSwitch": base.clipboard_record_text_switch,
@@ -726,12 +762,14 @@ pub fn index_settings() -> Result<Value> {
     }))
 }
 
-pub fn hotkey_settings() -> Result<(String, String, String)> {
+pub fn hotkey_settings() -> Result<(String, String, String, String, String)> {
     let config = Config::read_local_config()?;
     Ok((
         config.base.hotkey_awaken,
         config.base.hotkey_clipboard,
+        config.base.hotkey_selection,
         config.base.hotkey_file_jump,
+        config.base.hotkey_screenshot,
     ))
 }
 

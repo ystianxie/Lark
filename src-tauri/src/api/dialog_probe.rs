@@ -265,10 +265,7 @@ mod platform {
 }
 
 #[cfg(target_os = "windows")]
-pub use platform::{
-    probe_foreground_dialog, DialogConfidence,
-    DialogProbeResult,
-};
+pub use platform::{probe_foreground_dialog, DialogConfidence, DialogProbeResult};
 #[cfg(not(target_os = "windows"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogConfidence {

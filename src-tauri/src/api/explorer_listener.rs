@@ -298,14 +298,10 @@ mod platform {
             _ => None,
         }
     }
-
 }
 
 #[cfg(target_os = "windows")]
-pub use platform::{
-    start_listener_with_dialog,
-    ExplorerListenerHandle,
-};
+pub use platform::{start_listener_with_dialog, ExplorerListenerHandle};
 
 #[cfg(not(target_os = "windows"))]
 pub fn foreground_explorer_path() -> Result<Option<std::path::PathBuf>, String> {

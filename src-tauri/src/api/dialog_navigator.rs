@@ -135,7 +135,9 @@ mod platform {
     fn find_file_name_edit(dialog: HWND) -> Result<HWND, String> {
         let mut state = EditSearchState::default();
         let parameter = LPARAM((&mut state as *mut EditSearchState) as isize);
-        unsafe {let _ =  EnumChildWindows(dialog, Some(enum_edit_proc), parameter); };
+        unsafe {
+            let _ = EnumChildWindows(dialog, Some(enum_edit_proc), parameter);
+        };
 
         if let Some(edit) = state.file_name_edit {
             return Ok(edit);
@@ -324,10 +326,7 @@ mod platform {
 }
 
 #[cfg(target_os = "windows")]
-pub use platform::{
-    navigate_foreground_dialog,
-    DialogNavigationMethod,
-};
+pub use platform::{navigate_foreground_dialog, DialogNavigationMethod};
 
 #[cfg(not(target_os = "windows"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

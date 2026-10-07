@@ -12,7 +12,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod api;
 mod config;
 mod notification;
+mod translation;
 mod utils;
+
+use crate::translation::translate_text;
 
 use crate::api::clipboard::{
     get_history_all, get_history_id, get_history_part, get_history_search, ClipboardWatcher,
@@ -25,6 +28,9 @@ use crate::api::explorer::{
 use crate::api::hosts::{
     flush_dns, read_hosts, read_hosts_all, read_hosts_raw, write_hosts, write_hosts_all,
     write_hosts_raw,
+};
+use crate::api::screenshot::{
+    capture_screen, capture_screen_binary, delete_screenshot, save_screenshot,
 };
 use crate::api::shell::{
     append_txt, clipboard_control, get_file_icon, open_app, open_environment_variables, open_file,
@@ -39,18 +45,12 @@ use crate::config::{
     save_index_settings_data, save_last_file_index_rebuild_at, save_onboarding_completed,
     save_plugin_settings_data, save_setting_data, save_snippet_settings_data, snippet_settings,
 };
-use crate::notification::{
-    NotificationInput, NotificationLevel, NotificationManager,
-};
+use crate::notification::{NotificationInput, NotificationLevel, NotificationManager};
+use utils::ocr::ocr_image;
 use crate::utils::database::{FileIndex, IndexSQL, RecordSQL};
 use crate::utils::dirs::get_app_dir;
 use crate::utils::window::set_window_show;
 use auto_launch::AutoLaunchBuilder;
-use chrono::{TimeZone, Utc};
-use crypto::hmac::Hmac;
-use crypto::digest::Digest;
-use crypto::mac::Mac;
-use crypto::sha2::Sha256;
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -60,329 +60,6 @@ use tauri::{
 use tauri_plugin_global_shortcut::{
     GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
 };
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TranslationRequest {
-    provider: String,
-    text: String,
-    source_lang: String,
-    target_lang: String,
-    service: serde_json::Value,
-    timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TranslationResponse {
-    text: String,
-    source_lang: Option<String>,
-    target_lang: Option<String>,
-}
-
-fn translation_config_string(config: &serde_json::Value, key: &str) -> String {
-    let value = config
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    if let Some(ciphertext) = value.strip_prefix("dpapi:") {
-        crate::utils::dpapi::unprotect(ciphertext).unwrap_or_default()
-    } else { value }
-}
-
-fn translation_config_bool(config: &serde_json::Value, key: &str) -> bool {
-    config.get(key).and_then(serde_json::Value::as_bool).unwrap_or(false)
-}
-
-fn translation_form_encode(params: &HashMap<String, String>) -> String {
-    fn encode(value: &str) -> String {
-        value.bytes().fold(String::new(), |mut output, byte| {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-                output.push(byte as char);
-            } else {
-                output.push_str(&format!("%{byte:02X}"));
-            }
-            output
-        })
-    }
-    params.iter().map(|(key, value)| format!("{}={}", encode(key), encode(value))).collect::<Vec<_>>().join("&")
-}
-
-fn translation_sha256_hex(value: &[u8]) -> String {
-    let mut digest = Sha256::new();
-    digest.input(value);
-    digest.result_str()
-}
-
-fn translation_hmac_sha256(key: &[u8], value: &str) -> Vec<u8> {
-    let mut hmac = Hmac::new(Sha256::new(), key);
-    hmac.input(value.as_bytes());
-    hmac.result().code().to_vec()
-}
-
-fn translation_hmac_sha256_hex(key: &[u8], value: &str) -> String {
-    translation_hmac_sha256(key, value)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-fn translate_text_blocking(request: TranslationRequest) -> Result<TranslationResponse, String> {
-    if request.text.trim().is_empty() {
-        return Err("翻译文本为空".to_string());
-    }
-    let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(8_000).clamp(3_000, 30_000));
-    let client = reqwest::blocking::Client::builder()
-        .timeout(timeout)
-        .build()
-        .map_err(|error| format!("创建翻译请求失败：{error}"))?;
-    let source_lang = if request.source_lang.is_empty() {
-        "auto"
-    } else if request.source_lang == "zh-CN" {
-        "zh"
-    } else {
-        &request.source_lang
-    };
-    let target_lang = if request.target_lang == "zh-CN" { "zh" } else { &request.target_lang };
-    let config = &request.service;
-    let provider = request.provider.as_str();
-
-    let (response, source, target) = match provider {
-        "niutrans" => {
-            let mut params = HashMap::from([
-                ("from".to_string(), source_lang.to_string()),
-                ("to".to_string(), target_lang.to_string()),
-                ("apikey".to_string(), translation_config_string(config, "apiKey")),
-                ("src_text".to_string(), request.text.clone()),
-            ]);
-            for key in ["dictNo", "memoryNo", "dict"] {
-                let value = translation_config_string(config, key);
-                if !value.is_empty() {
-                    params.insert(key.to_string(), value);
-                }
-            }
-            if translation_config_bool(config, "dictflag") {
-                params.insert("dictflag".to_string(), "1".to_string());
-            }
-            let endpoint = "https://api.niutrans.com/NiuTransServer/translation";
-            let encoded = translation_form_encode(&params);
-            let builder = if request.text.chars().count() > 1500 {
-                client.post(endpoint).header("Content-Type", "application/x-www-form-urlencoded").body(encoded)
-            } else {
-                client.get(format!("{endpoint}?{encoded}"))
-            };
-            (builder.send().map_err(|error| format!("小牛翻译请求失败：{error}"))?, source_lang.to_string(), target_lang.to_string())
-        }
-        "baidu" => {
-            let app_id = translation_config_string(config, "appId");
-            let app_key = translation_config_string(config, "appKey");
-            if app_id.is_empty() || app_key.is_empty() {
-                return Err("百度翻译需要填写 APP ID 和密钥".to_string());
-            }
-            let salt = format!("{}{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(), std::process::id());
-            let sign = crate::utils::string_factory::md5(&format!("{app_id}{}{salt}{app_key}", request.text));
-            let mut params = HashMap::from([
-                ("q".to_string(), request.text.clone()),
-                ("from".to_string(), source_lang.to_string()),
-                ("to".to_string(), target_lang.to_string()),
-                ("appid".to_string(), app_id),
-                ("salt".to_string(), salt),
-                ("sign".to_string(), sign),
-            ]);
-            if translation_config_bool(config, "needIntervene") {
-                params.insert("needIntervene".to_string(), "1".to_string());
-            }
-            let encoded = translation_form_encode(&params);
-            (client.post("https://fanyi-api.baidu.com/api/trans/vip/translate").header("Content-Type", "application/x-www-form-urlencoded").body(encoded).send().map_err(|error| format!("百度翻译请求失败：{error}"))?, source_lang.to_string(), target_lang.to_string())
-        }
-        "tengxun" => {
-            let secret_id = translation_config_string(config, "secretId").trim().to_string();
-            let secret_key = translation_config_string(config, "secretKey").trim().to_string();
-            if secret_id.is_empty() || secret_key.is_empty() {
-                return Err("腾讯翻译君需要填写 SecretId 和 SecretKey".to_string());
-            }
-            let host = "tmt.tencentcloudapi.com";
-            let service_name = "tmt";
-            let version = "2018-03-21";
-            let action = "TextTranslate";
-            let region = {
-                let value = translation_config_string(config, "region");
-                if value.is_empty() { "ap-guangzhou".to_string() } else { value.trim().to_string() }
-            };
-            let project_id = translation_config_string(config, "projectId")
-                .parse::<i64>()
-                .unwrap_or(0);
-            let source = if source_lang == "auto" { "auto" } else { source_lang };
-            let body = serde_json::json!({
-                "SourceText": request.text,
-                "Source": source,
-                "Target": target_lang,
-                "ProjectId": project_id
-            });
-            let body = serde_json::to_string(&body)
-                .map_err(|error| format!("生成腾讯翻译君请求失败：{error}"))?;
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-            let date = Utc
-                .timestamp_opt(timestamp, 0)
-                .single()
-                .ok_or_else(|| "生成腾讯翻译君签名日期失败".to_string())?
-                .format("%Y-%m-%d")
-                .to_string();
-            let canonical_headers = format!("content-type:application/json; charset=utf-8\nhost:{host}\n");
-            let signed_headers = "content-type;host";
-            let canonical_request = format!(
-                "POST\n/\n\n{canonical_headers}\n{signed_headers}\n{}",
-                translation_sha256_hex(body.as_bytes())
-            );
-            let credential_scope = format!("{date}/{service_name}/tc3_request");
-            let string_to_sign = format!(
-                "TC3-HMAC-SHA256\n{timestamp}\n{credential_scope}\n{}",
-                translation_sha256_hex(canonical_request.as_bytes())
-            );
-            let secret_date = translation_hmac_sha256(format!("TC3{secret_key}").as_bytes(), &date);
-            let secret_service = translation_hmac_sha256(&secret_date, service_name);
-            let secret_signing = translation_hmac_sha256(&secret_service, "tc3_request");
-            let signature = translation_hmac_sha256_hex(&secret_signing, &string_to_sign);
-            let authorization = format!(
-                "TC3-HMAC-SHA256 Credential={secret_id}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
-            );
-            (
-                client
-                    .post(format!("https://{host}"))
-                    .header("Content-Type", "application/json; charset=utf-8")
-                    .header("Host", host)
-                    .header("X-TC-Action", action)
-                    .header("X-TC-Version", version)
-                    .header("X-TC-Region", region)
-                    .header("X-TC-Timestamp", timestamp.to_string())
-                    .header("Authorization", authorization)
-                    .body(body)
-                    .send()
-                    .map_err(|error| format!("腾讯翻译君请求失败：{error}"))?,
-                source_lang.to_string(),
-                target_lang.to_string(),
-            )
-        }
-        "deepseek" | "zhipu" => {
-            let api_key = translation_config_string(config, "apiKey");
-            if api_key.is_empty() {
-                return Err(if provider == "zhipu" {
-                    "智谱未配置 API Key".to_string()
-                } else {
-                    "DeepSeek 未配置 API Key".to_string()
-                });
-            }
-            let base_url = {
-                let value = translation_config_string(config, "baseUrl");
-                if value.is_empty() {
-                    if provider == "zhipu" {
-                        "https://open.bigmodel.cn/api/paas/v4".to_string()
-                    } else {
-                        "https://api.deepseek.com".to_string()
-                    }
-                } else {
-                    value
-                }
-            };
-            let endpoint = if base_url.ends_with("/chat/completions") {
-                base_url
-            } else {
-                format!("{}/chat/completions", base_url.trim_end_matches('/'))
-            };
-            let model = {
-                let value = translation_config_string(config, "model");
-                if value.is_empty() {
-                    if provider == "zhipu" { "glm-5.3".to_string() } else { "deepseek-flash".to_string() }
-                } else {
-                    value
-                }
-            };
-            let provider_name = if provider == "zhipu" { "智谱" } else { "DeepSeek" };
-            let target_name = if target_lang == "en" { "English" } else { "Simplified Chinese" };
-            let body = serde_json::json!({
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": "You are a translation engine. Return only the translated text, without explanations, notes, or quotation marks."},
-                    {"role": "user", "content": format!("Translate the following text into {target_name}. Preserve the original meaning and formatting:\n\n{}", request.text)}
-                ],
-                "stream": false
-            });
-            let body = serde_json::to_string(&body)
-                .map_err(|error| format!("生成 {provider_name} 请求失败：{error}"))?;
-            (
-                client
-                    .post(endpoint)
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {api_key}"))
-                    .body(body)
-                    .send()
-                    .map_err(|error| format!("{provider_name} 翻译请求失败：{error}"))?,
-                source_lang.to_string(),
-                target_lang.to_string(),
-            )
-        }
-        _ => return Err(format!("暂不支持的翻译服务：{provider}")),
-    };
-
-    let status = response.status();
-    let response_body = response.text().map_err(|error| format!("读取翻译响应失败：{error}"))?;
-    let payload: serde_json::Value = serde_json::from_str(&response_body).map_err(|error| format!("翻译响应解析失败：{error}"))?;
-    if !status.is_success() {
-        let message = payload
-            .get("error")
-            .and_then(|error| error.get("message"))
-            .and_then(serde_json::Value::as_str)
-            .or_else(|| payload.get("error_msg").and_then(serde_json::Value::as_str))
-            .unwrap_or("服务返回错误");
-        return Err(format!("翻译请求失败（HTTP {status}）：{message}"));
-    }
-    if let Some(error) = payload.get("Response").and_then(|response| response.get("Error")) {
-        let code = error.get("Code").and_then(serde_json::Value::as_str).unwrap_or("TencentCloudError");
-        let message = error.get("Message").and_then(serde_json::Value::as_str).unwrap_or(code);
-        return Err(format!("腾讯翻译君错误（{code}）：{message}"));
-    }
-    if let Some(error) = payload.get("error_code") {
-        let code = error.as_str().map(str::to_string).unwrap_or_else(|| error.to_string());
-        if code != "0" && code != "\"0\"" {
-            return Err(payload.get("error_msg").and_then(serde_json::Value::as_str).unwrap_or(&code).to_string());
-        }
-    }
-    let text = if provider == "niutrans" {
-        payload.get("tgt_text").and_then(serde_json::Value::as_str).unwrap_or_default().to_string()
-    } else if provider == "baidu" {
-        payload.get("trans_result").and_then(serde_json::Value::as_array).map(|items| items.iter().filter_map(|item| item.get("dst").and_then(serde_json::Value::as_str)).collect::<Vec<_>>().join("\n")).unwrap_or_default()
-    } else if provider == "tengxun" {
-        payload.get("Response")
-            .and_then(|response| response.get("TargetText"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string()
-    } else {
-        payload.get("choices").and_then(serde_json::Value::as_array)
-            .and_then(|items| items.first())
-            .and_then(|item| item.get("message"))
-            .and_then(|message| message.get("content"))
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_string()
-    };
-    if text.is_empty() {
-        return Err("翻译服务返回了空结果".to_string());
-    }
-    Ok(TranslationResponse {text, source_lang: Some(source), target_lang: Some(target)})
-}
-
-#[tauri::command(rename_all = "camelCase")]
-async fn translate_text(request: TranslationRequest) -> Result<TranslationResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || translate_text_blocking(request))
-        .await
-        .map_err(|error| format!("翻译任务执行失败：{error}"))?
-}
 
 static HOTKEY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOTKEY_CAPTURE_BINDINGS: OnceLock<Mutex<Option<HotkeyBindings>>> = OnceLock::new();
@@ -915,9 +592,11 @@ fn shortcut(
     app: &mut App,
     awaken: &str,
     clipboard: &str,
+    selection: &str,
     file_jump: &str,
+    screenshot: &str,
 ) -> Vec<(Shortcut, String)> {
-    let bindings = parse_shortcut_bindings(awaken, clipboard, file_jump)
+    let bindings = parse_shortcut_bindings(awaken, clipboard, selection, file_jump, screenshot)
         .expect("invalid configured shortcuts");
     app.handle()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -929,47 +608,80 @@ fn shortcut(
 struct HotkeyBindings {
     awaken: Shortcut,
     clipboard: Shortcut,
+    selection: Shortcut,
     file_jump: Shortcut,
+    screenshot: Shortcut,
 }
 
 impl HotkeyBindings {
-    fn parse(awaken: &str, clipboard: &str, file_jump: &str) -> Result<Self, String> {
+    fn parse(
+        awaken: &str,
+        clipboard: &str,
+        selection: &str,
+        file_jump: &str,
+        screenshot: &str,
+    ) -> Result<Self, String> {
         let awaken = awaken
             .parse::<Shortcut>()
             .map_err(|error| format!("唤醒快捷键无效：{error}"))?;
         let clipboard = clipboard
             .parse::<Shortcut>()
             .map_err(|error| format!("剪贴板快捷键无效：{error}"))?;
+        let selection = selection
+            .parse::<Shortcut>()
+            .map_err(|error| format!("划词翻译快捷键无效：{error}"))?;
         let file_jump = file_jump
             .parse::<Shortcut>()
             .map_err(|error| format!("文件跳转快捷键无效：{error}"))?;
-        if [awaken, clipboard, file_jump]
+        let screenshot = screenshot
+            .parse::<Shortcut>()
+            .map_err(|error| format!("截图翻译快捷键无效：{error}"))?;
+        if [awaken, clipboard, selection, file_jump, screenshot]
             .iter()
             .any(|shortcut| shortcut.mods == Modifiers::empty())
         {
             return Err("快捷键必须至少包含一个修饰键（Ctrl、Alt、Shift 或 Win）".to_string());
         }
-        if awaken == clipboard || awaken == file_jump || clipboard == file_jump {
-            return Err("唤醒、剪贴板和文件跳转快捷键不能相同".to_string());
+        if [awaken, clipboard, selection, file_jump, screenshot]
+            .iter()
+            .enumerate()
+            .any(|(index, shortcut)| {
+                [awaken, clipboard, selection, file_jump, screenshot]
+                    .iter()
+                    .enumerate()
+                    .any(|(other_index, other)| index != other_index && shortcut == other)
+            })
+        {
+            return Err("各快捷键不能相同".to_string());
         }
         Ok(Self {
             awaken,
             clipboard,
+            selection,
             file_jump,
+            screenshot,
         })
     }
 
-    fn all(self) -> [Shortcut; 3] {
-        [self.awaken, self.clipboard, self.file_jump]
+    fn all(self) -> [Shortcut; 5] {
+        [
+            self.awaken,
+            self.clipboard,
+            self.selection,
+            self.file_jump,
+            self.screenshot,
+        ]
     }
 }
 
 fn parse_shortcut_bindings(
     awaken: &str,
     clipboard: &str,
+    selection: &str,
     file_jump: &str,
+    screenshot: &str,
 ) -> Result<HotkeyBindings, String> {
-    HotkeyBindings::parse(awaken, clipboard, file_jump)
+    HotkeyBindings::parse(awaken, clipboard, selection, file_jump, screenshot)
 }
 
 fn handle_shortcut(
@@ -991,6 +703,23 @@ fn handle_shortcut(
         }
     } else if *pressed == bindings.clipboard {
         let _ = window.emit("clipboard-show-request", ());
+    } else if *pressed == bindings.selection {
+        let window = window.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            match api::selection::read_selected_text() {
+                Ok(Some(text)) => {
+                    let _ = window.emit("translation-selection-request", text);
+                }
+                Ok(None) => {
+                    // 空选区仍然是有效入口：打开空白翻译面板。
+                    let _ = window.emit("translation-selection-request", "");
+                }
+                Err(error) => {
+                    eprintln!("[Translation] 读取文本选区失败: {error}");
+                    let _ = window.emit("translation-selection-request", "");
+                }
+            }
+        });
     } else if *pressed == bindings.file_jump {
         let app = app.clone();
         tauri::async_runtime::spawn_blocking(move || {
@@ -1001,6 +730,8 @@ fn handle_shortcut(
                 eprintln!("[ListaryJump] 快捷键触发失败：{error}");
             }
         });
+    } else if *pressed == bindings.screenshot {
+        let _ = window.emit("translation-screenshot-request", ());
     }
 }
 
@@ -1050,7 +781,9 @@ fn capture_shortcut_set(bindings: HotkeyBindings) -> Vec<Shortcut> {
     let mut shortcuts = vec![
         bindings.awaken,
         bindings.clipboard,
+        bindings.selection,
         bindings.file_jump,
+        bindings.screenshot,
         "Alt+Space".parse().unwrap(),
     ];
     shortcuts.sort_by_key(|shortcut| shortcut.id());
@@ -1106,7 +839,7 @@ fn clear_hotkey_capture_state() {
 #[tauri::command(rename_all = "camelCase")]
 fn save_setting(app: AppHandle, setting_info: serde_json::Value) -> Result<(), String> {
     let _registration_guard = HOTKEY_REGISTRATION_LOCK.lock().unwrap();
-    let (old_awaken, old_clipboard, old_file_jump) =
+    let (old_awaken, old_clipboard, old_selection, old_file_jump, old_screenshot) =
         hotkey_settings().map_err(|error| error.to_string())?;
     let awaken = setting_info
         .get("hotkeyAwaken")
@@ -1116,15 +849,31 @@ fn save_setting(app: AppHandle, setting_info: serde_json::Value) -> Result<(), S
         .get("hotkeyClipboard")
         .and_then(serde_json::Value::as_str)
         .unwrap_or(&old_clipboard);
+    let selection = setting_info
+        .get("hotkeySelection")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(&old_selection);
     let file_jump = setting_info
         .get("hotkeyFileJump")
         .and_then(serde_json::Value::as_str)
         .unwrap_or(&old_file_jump);
-    let bindings = parse_shortcut_bindings(awaken, clipboard, file_jump)?;
-    let old_bindings = parse_shortcut_bindings(&old_awaken, &old_clipboard, &old_file_jump)?;
+    let screenshot = setting_info
+        .get("hotkeyScreenshot")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(&old_screenshot);
+    let bindings = parse_shortcut_bindings(awaken, clipboard, selection, file_jump, screenshot)?;
+    let old_bindings = parse_shortcut_bindings(
+        &old_awaken,
+        &old_clipboard,
+        &old_selection,
+        &old_file_jump,
+        &old_screenshot,
+    )?;
     if bindings.awaken == old_bindings.awaken
         && bindings.clipboard == old_bindings.clipboard
+        && bindings.selection == old_bindings.selection
         && bindings.file_jump == old_bindings.file_jump
+        && bindings.screenshot == old_bindings.screenshot
         && !HOTKEY_CAPTURE_ACTIVE.load(Ordering::Acquire)
     {
         save_setting_data(setting_info).map_err(|error| error.to_string())?;
@@ -1154,8 +903,10 @@ fn set_hotkey_capture_active(app: AppHandle, active: bool) -> Result<(), String>
     if active == HOTKEY_CAPTURE_ACTIVE.load(Ordering::Acquire) {
         return Ok(());
     }
-    let (awaken, clipboard, file_jump) = hotkey_settings().map_err(|error| error.to_string())?;
-    let bindings = parse_shortcut_bindings(&awaken, &clipboard, &file_jump)?;
+    let (awaken, clipboard, selection, file_jump, screenshot) =
+        hotkey_settings().map_err(|error| error.to_string())?;
+    let bindings =
+        parse_shortcut_bindings(&awaken, &clipboard, &selection, &file_jump, &screenshot)?;
     let previous = *hotkey_capture_bindings().lock().unwrap();
     let registration = if active {
         replace_shortcuts(&app, || register_capture_shortcuts(&app, bindings))
@@ -1185,13 +936,16 @@ fn reserve_hotkey_capture(
     app: AppHandle,
     awaken: String,
     clipboard: String,
+    selection: String,
     file_jump: String,
+    screenshot: String,
 ) -> Result<(), String> {
     let _registration_guard = HOTKEY_REGISTRATION_LOCK.lock().unwrap();
     if !HOTKEY_CAPTURE_ACTIVE.load(Ordering::Acquire) {
         return Err("快捷键录入模式未开启".to_string());
     }
-    let bindings = parse_shortcut_bindings(&awaken, &clipboard, &file_jump)?;
+    let bindings =
+        parse_shortcut_bindings(&awaken, &clipboard, &selection, &file_jump, &screenshot)?;
     let previous = hotkey_capture_bindings()
         .lock()
         .unwrap()
@@ -1209,11 +963,14 @@ fn reserve_hotkey_capture(
 
 #[tauri::command]
 fn get_hotkey_settings() -> Result<serde_json::Value, String> {
-    let (awaken, clipboard, file_jump) = hotkey_settings().map_err(|error| error.to_string())?;
+    let (awaken, clipboard, selection, file_jump, screenshot) =
+        hotkey_settings().map_err(|error| error.to_string())?;
     Ok(serde_json::json!({
         "hotkeyAwaken": awaken,
         "hotkeyClipboard": clipboard,
+        "hotkeySelection": selection,
         "hotkeyFileJump": file_jump,
+        "hotkeyScreenshot": screenshot,
     }))
 }
 
@@ -1686,7 +1443,9 @@ fn main() {
     }
     let hotkey_awaken = config.base.hotkey_awaken.clone();
     let hotkey_clipboard = config.base.hotkey_clipboard.clone();
+    let hotkey_selection = config.base.hotkey_selection.clone();
     let hotkey_file_jump = config.base.hotkey_file_jump.clone();
+    let hotkey_screenshot = config.base.hotkey_screenshot.clone();
     let show_onboarding = !config.base.onboarding_completed;
     FIRST_RUN_ONBOARDING_ACTIVE.store(show_onboarding, Ordering::Release);
     api::snippets::update_settings(
@@ -1783,8 +1542,14 @@ fn main() {
             let plugins_dir = crate::utils::dirs::app_plugins_dir()?;
             app.asset_protocol_scope()
                 .allow_directory(plugins_dir, true)?;
-            let failed_hotkeys =
-                shortcut(app, &hotkey_awaken, &hotkey_clipboard, &hotkey_file_jump);
+            let failed_hotkeys = shortcut(
+                app,
+                &hotkey_awaken,
+                &hotkey_clipboard,
+                &hotkey_selection,
+                &hotkey_file_jump,
+                &hotkey_screenshot,
+            );
             utils::window::disable_system_menu(app)?;
             utils::window::set_window_shadow(app);
             println!("{:?}", &hotkey_awaken);
@@ -1919,6 +1684,11 @@ fn main() {
             set_notifications_paused,
             notification_window_resize,
             translate_text,
+            ocr_image,
+            capture_screen,
+            capture_screen_binary,
+            save_screenshot,
+            delete_screenshot,
             protect_secret,
             unprotect_secret,
             open_onboarding,

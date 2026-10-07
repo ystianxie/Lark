@@ -2,6 +2,7 @@ import "./app.css";
 import React, {Suspense} from "react";
 import {flushSync} from "react-dom";
 import {LogicalPosition} from "@tauri-apps/api/window";
+import {PhysicalPosition, PhysicalSize} from "@tauri-apps/api/dpi";
 import {
     getCurrentWebviewWindow
 } from "@tauri-apps/api/webviewWindow";
@@ -9,6 +10,7 @@ import {getCurrentWebview} from "@tauri-apps/api/webview";
 import {useCallback, useEffect, useRef, useState} from "react";
 import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import {listen} from "@tauri-apps/api/event";
+import ScreenshotOverlay from "./panels/ScreenshotOverlay";
 import webImg from "./assets/web.svg";
 import baseComponent from "./baseComponent";
 import {habitRank, normalizeHabitState, updateHabitState} from "./appHabit";
@@ -79,6 +81,11 @@ const App = () => {
     const [pluginList, setPluginList] = useState({});
     const [pluginsLoading, setPluginsLoading] = useState(true);
     const [pluginsError, setPluginsError] = useState("");
+    const [screenshotCapture, setScreenshotCapture] = useState(null);
+    const screenshotCaptureRef = useRef(null);
+    const screenshotCancelRef = useRef(null);
+    const [screenshotResult, setScreenshotResult] = useState(null);
+    const screenshotWindowState = useRef(null);
     const [pluginSettingsStatus, setPluginSettingsStatus] = useState({});
     const pluginRefreshId = useRef(0);
     const debugModeRef = useRef(false);
@@ -108,6 +115,199 @@ const App = () => {
             if (requestId === pluginRefreshId.current) setPluginsLoading(false);
         }
     };
+
+    const restoreScreenshotWindow = async (hide = true) => {
+        const previous = screenshotWindowState.current;
+        screenshotWindowState.current = null;
+        setScreenshotCapture(null);
+        screenshotCaptureRef.current = null;
+        if (!previous) return;
+        try {
+            await appWindow.setSize(previous.size);
+            await appWindow.setPosition(previous.position);
+            await appWindow.setAlwaysOnTop(previous.alwaysOnTop);
+            if (hide) {
+                if (previous.visible) {
+                    await appWindow.show();
+                    await appWindow.setFocus();
+                } else {
+                    await appWindow.hide();
+                }
+            }
+        } catch (error) {
+            console.warn('恢复截图窗口失败', error);
+        }
+    };
+
+    const waitForScreenshotWindowHidden = async () => {
+        // hide() resolves before the Windows compositor has necessarily
+        // removed the window from the desktop. Confirm native visibility,
+        // then allow one compositor interval to settle.
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+            if (!(await appWindow.isVisible().catch(() => false))) break;
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        await new Promise(resolve => setTimeout(resolve, 150));
+    };
+
+    const startScreenshotCapture = async () => {
+        console.log("[Screenshot] startScreenshotCapture 被调用");
+        console.time("[Screenshot] 总耗时");
+        if (screenshotCaptureRef.current) {
+            console.log("[Screenshot] 截图已在进行中，跳过");
+            return;
+        }
+        // Mark the capture as active before hiding the window so the global
+        // blur handler does not treat the transition as a normal auto-hide.
+        screenshotCaptureRef.current = {pending: true};
+        try {
+            console.time("[Screenshot] 1-获取窗口状态");
+            // 并行获取窗口状态，避免串行等待
+            const [size, position, alwaysOnTop, visible] = await Promise.all([
+                appWindow.outerSize(),
+                appWindow.outerPosition(),
+                appWindow.isAlwaysOnTop(),
+                appWindow.isVisible()
+            ]);
+            screenshotWindowState.current = {size, position, alwaysOnTop, visible};
+            console.timeEnd("[Screenshot] 1-获取窗口状态");
+
+            console.time("[Screenshot] 2-隐藏窗口+延迟");
+            await appWindow.hide();
+            await waitForScreenshotWindowHidden();
+            console.timeEnd("[Screenshot] 2-隐藏窗口+延迟");
+
+            console.time("[Screenshot] 3-调用capture_screen");
+            const binaryResponse = await invoke('capture_screen_binary');
+            const binary = binaryResponse instanceof ArrayBuffer
+                ? new Uint8Array(binaryResponse)
+                : new Uint8Array(binaryResponse.buffer, binaryResponse.byteOffset, binaryResponse.byteLength);
+            if (binary.byteLength < 20) throw new Error('截图二进制数据无效');
+            const header = new DataView(binary.buffer, binary.byteOffset, 20);
+            const capture = {
+                width: header.getUint32(0, true),
+                height: header.getUint32(4, true),
+                left: header.getInt32(8, true),
+                top: header.getInt32(12, true),
+                pixels: binary.subarray(20, 20 + header.getUint32(16, true)),
+            };
+            console.timeEnd("[Screenshot] 3-调用capture_screen");
+            console.log("[Screenshot] 截图完成", {width: capture.width, height: capture.height, pixelsLength: capture.pixels.length});
+
+            console.time("[Screenshot] 4-Canvas渲染");
+            // 将原始像素数据渲染到 Canvas，生成 dataURL
+            const canvas = document.createElement('canvas');
+            canvas.width = capture.width;
+            canvas.height = capture.height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(capture.width, capture.height);
+            const pixels = imageData.data;
+            pixels.set(capture.pixels);
+            ctx.putImageData(imageData, 0, 0);
+            const dataUrl = canvas.toDataURL('image/png', 0.8);  // 质量 0.8，压缩一下
+            console.timeEnd("[Screenshot] 4-Canvas渲染");
+
+            console.time("[Screenshot] 5-设置窗口");
+            // 并行执行窗口设置操作
+            await Promise.all([
+                appWindow.setSize(new PhysicalSize(capture.width, capture.height)),
+                appWindow.setPosition(new PhysicalPosition(capture.left, capture.top)),
+                appWindow.setAlwaysOnTop(true)
+            ]);
+            console.timeEnd("[Screenshot] 5-设置窗口");
+
+            console.time("[Screenshot] 6-React状态更新");
+            setScreenshotResult(null);
+            const captureWithDataUrl = {dataUrl, width: capture.width, height: capture.height};
+            screenshotCaptureRef.current = captureWithDataUrl;
+            console.timeEnd("[Screenshot] 6-React状态更新");
+
+            console.time("[Screenshot] 6-显示窗口");
+            await appWindow.show();
+            await focusScreenshotWindow();
+            // 挂载遮罩要放在原生窗口获得焦点之后，否则遮罩的 focus()
+            // 可能在窗口隐藏时执行失败，后续 Escape 也就收不到了。
+            setScreenshotCapture(captureWithDataUrl);
+            console.timeEnd("[Screenshot] 6-显示窗口");
+
+            console.timeEnd("[Screenshot] 总耗时");
+            console.log("[Screenshot] 截图界面已显示");
+        } catch (error) {
+            console.error('[Screenshot] 启动截图失败', error);
+            await restoreScreenshotWindow();
+        }
+    };
+
+    const finishScreenshotSelection = async dataUrl => {
+        if (!dataUrl) return;
+        try {
+            const path = await invoke('save_screenshot', {request: {dataUrl}});
+            setScreenshotResult({dataUrl, path});
+        } catch (error) {
+            setScreenshotResult({dataUrl, error: String(error).replace(/^Error:\s*/, '')});
+        }
+        // 选区完成后立即恢复主窗口的原始尺寸；结果视图只作为普通 panel 内容显示。
+        await restoreScreenshotWindow(true);
+        searchRequestId.current += 1;
+        setKeywordComponent([]);
+        setInputValue("");
+        const translationPanel = componentInfoRef.current?.data === "translationComponent"
+            ? componentInfoRef.current
+            : insidePluginList.translationPluginComponent;
+        if (translationPanel) {
+            setComponent(createActiveIcon(translationPanel.icon));
+            setComponentInfo({...translationPanel, screenshotResult: true});
+        }
+        // 结果需要内容高度，切换到现有的 expanded panel 预设，避免被 compact 窗口裁掉。
+        await modifyWindowSize("expanded");
+        await appWindow.show();
+        await appWindow.setFocus();
+        inputBox.current?.focus();
+    };
+
+    const closeScreenshot = async () => {
+        if (screenshotResult?.path) {
+            await invoke('delete_screenshot', {request: {path: screenshotResult.path}}).catch(() => {});
+        }
+        setScreenshotResult(null);
+        await restoreScreenshotWindow(true);
+        await initStatus();
+        inputBox.current?.focus();
+    };
+
+    const retryScreenshot = async () => {
+        const previousPath = screenshotResult?.path;
+        // 保留结果页直到 startScreenshotCapture 隐藏窗口；否则卸载后
+        // 会短暂显示翻译主页面，并被屏幕捕获进去。
+        await startScreenshotCapture();
+        if (previousPath) {
+            await invoke('delete_screenshot', {request: {path: previousPath}}).catch(() => {});
+        }
+    };
+
+    const openTranslationPage = async (text = "") => {
+        if (screenshotResult?.path) {
+            await invoke('delete_screenshot', {request: {path: screenshotResult.path}}).catch(() => {});
+        }
+        setScreenshotResult(null);
+        const translationPanel = componentInfoRef.current?.data === "translationComponent"
+            ? componentInfoRef.current
+            : insidePluginList.translationPluginComponent;
+        if (translationPanel) {
+            setComponent(createActiveIcon(translationPanel.icon));
+            setComponentInfo({...translationPanel,
+                initialText: text,
+                autoTranslate: Boolean(text.trim()),
+                translationRequestId: Date.now(),
+                screenshotResult: false,
+            });
+        }
+        await modifyWindowSize("expanded");
+        await appWindow.show();
+        await appWindow.setFocus();
+        inputBox.current?.focus();
+    };
+    screenshotCancelRef.current = closeScreenshot;
 
     const togglePlugin = (pluginId, enable) => {
         const nextStatus = {...pluginStatus, [pluginId]: {...pluginStatus?.[pluginId], enable}};
@@ -145,12 +345,20 @@ const App = () => {
     const panelDropHandlerRef = useRef(null);
 
     const appWindow = getCurrentWebviewWindow();
+    const focusScreenshotWindow = async () => {
+        await appWindow.setFocus();
+        await getCurrentWebview().setFocus();
+    };
 
     const handleFirstVisibleResultChange = useCallback((index) => {
         firstVisibleResultIndex.current = index;
     }, []);
 
     function initStatus(components) {
+        if (screenshotResult?.path) {
+            invoke('delete_screenshot', {request: {path: screenshotResult.path}}).catch(() => {});
+        }
+        setScreenshotResult(null);
         let resizePromise;
         // 立即废弃隐藏前尚未返回的搜索，避免它在窗口重新显示后回填旧结果。
         searchRequestId.current += 1;
@@ -1003,7 +1211,7 @@ const App = () => {
         let updateCacheTime;
         const unListenAutoHide = appWindow.onFocusChanged((event) => {
             console.log("当前组件的信息", componentInfoRef.current);
-            if (event.payload === false && componentInfoRef.current?.type !== "panel") {
+            if (event.payload === false && !screenshotCaptureRef.current && componentInfoRef.current?.type !== "panel") {
                 const hideWindow = async () => {
                     await appWindow.hide();
                     await modifyWindowSize("compact");
@@ -1042,7 +1250,12 @@ const App = () => {
         };
         const unListenWindowFocus = appWindow.onFocusChanged(({payload: focused}) => {
             if (!focused) return;
-            setTimeout(() => inputBox.current?.focus({preventScroll: true}), 50);
+            // 截图期间焦点应交给遮罩，不能被这个通用的输入框聚焦逻辑抢回去。
+            if (screenshotCaptureRef.current) return;
+            setTimeout(() => {
+                if (screenshotCaptureRef.current) return;
+                inputBox.current?.focus({preventScroll: true});
+            }, 50);
         });
         // window.onVisibleChanged(({ payload }) => {
         //   if (payload === true) {
@@ -1080,6 +1293,39 @@ const App = () => {
             await appWindow.setFocus();
             await focusPanelInputAfterWake();
         });
+        const unListenTranslationSelectionRequest = listen("translation-selection-request", async ({payload}) => {
+            const text = typeof payload === "string" ? payload : "";
+            const translation = insidePluginList.translationPluginComponent;
+            if (!translation) return;
+            flushSync(() => initStatusRef.current?.());
+            setComponent(createActiveIcon(translation.icon));
+            setComponentInfo({
+                ...translation,
+                initialText: text.trim() ? text : "",
+                autoTranslate: Boolean(text.trim()),
+                translationRequestId: Date.now(),
+            });
+            await modifyWindowSize("expanded");
+            await appWindow.show();
+            await appWindow.setFocus();
+            await focusPanelInputAfterWake();
+        });
+        const unListenTranslationScreenshotRequest = listen("translation-screenshot-request", () => {
+            console.log("[Screenshot] 收到截图请求事件");
+            const translation = insidePluginList.translationPluginComponent;
+            if (translation) {
+                flushSync(() => {
+                    searchRequestId.current += 1;
+                    setKeywordComponent([]);
+                    setSelectedIndex(-1);
+                    setInputValue("");
+                    setActivePluginWorkflow(null);
+                    setComponent(createActiveIcon(translation.icon));
+                    setComponentInfo(translation);
+                });
+            }
+            startScreenshotCapture();
+        });
 
         const showTrayPanel = async (panelKey) => {
             flushSync(() => initStatusRef.current?.());
@@ -1104,6 +1350,16 @@ const App = () => {
             await appWindow.hide();
         });
         const handleGlobalKeyDown = (event) => {
+            // ScreenshotOverlay normally handles Escape in capture phase. Keep
+            // a host-level fallback for the short period before it owns focus.
+            if (screenshotCaptureRef.current) {
+                event.preventDefault();
+                if (event.key === "Escape") {
+                    event.stopPropagation();
+                    screenshotCancelRef.current?.();
+                }
+                return;
+            }
             if (componentInfoRef.current?.type === "panel") {
                 if (event.key === "Escape" && isComposing.ppos === 0) {
                     event.preventDefault();
@@ -1159,6 +1415,8 @@ const App = () => {
         return () => {
             unListenShowRequest.then((f) => f());
             unListenClipboardShowRequest.then((f) => f());
+            unListenTranslationSelectionRequest.then((f) => f());
+            unListenTranslationScreenshotRequest.then((f) => f());
             unListenSettingsShowRequest.then((f) => f());
             unListenComponentsShowRequest.then((f) => f());
             unListenOnboardingMainResetRequest.then((f) => f());
@@ -1177,7 +1435,7 @@ const App = () => {
     useEffect(() => {
         console.log("新值：", keywordComponent);
     }, [keywordComponent]);
-    return (
+    return <>
         <div id="mainDiv" data-tauri-drag-region>
             <div style={{width: "100%", height: "51.5px", margin_bottom: "5px"}}>
                 <div
@@ -1281,6 +1539,13 @@ const App = () => {
                                           },
                                           pluginConfigId: componentInfo.pluginConfigId,
                                       } : ["clipboardComponent", "todoComponent", "hostsComponent", "translationComponent"].includes(componentInfo.data) ? {
+                                          initialText: componentInfo.data === "translationComponent" ? componentInfo.initialText : undefined,
+                                          autoTranslate: componentInfo.data === "translationComponent" ? componentInfo.autoTranslate : false,
+                                          translationRequestId: componentInfo.data === "translationComponent" ? componentInfo.translationRequestId : undefined,
+                                          screenshotResult: componentInfo.data === "translationComponent" ? screenshotResult : undefined,
+                                          onScreenshotClose: componentInfo.data === "translationComponent" ? closeScreenshot : undefined,
+                                          onScreenshotRetry: componentInfo.data === "translationComponent" ? retryScreenshot : undefined,
+                                          onOpenTranslation: componentInfo.data === "translationComponent" ? openTranslationPage : undefined,
                                           onClose: () => {
                                               initStatus();
                                               inputBox.current?.focus();
@@ -1290,7 +1555,10 @@ const App = () => {
                 ) : null}
             </div>
         </div>
-    );
+        {screenshotCapture && !screenshotResult && <ScreenshotOverlay capture={screenshotCapture} result={null}
+                                                   onCancel={closeScreenshot} onSelected={finishScreenshotSelection}
+                                                   onRetry={retryScreenshot} onReady={focusScreenshotWindow}/>}
+    </>;
 };
 
 export default App;

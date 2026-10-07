@@ -12,7 +12,7 @@ use windows::{
             StructuredStorage::{PropVariantClear, PropVariantToString},
         },
         UI::Shell::{
-                BHID_EnumItems, BHID_PropertyStore, IEnumShellItems, IShellItem,
+            BHID_EnumItems, BHID_PropertyStore, IEnumShellItems, IShellItem,
             PropertiesSystem::{IPropertyStore, PSGetNameFromPropertyKey, PROPERTYKEY},
             SHCreateItemFromParsingName,
         },
@@ -310,8 +310,14 @@ mod tests {
             r"C:\Apps\GitHubDesktop.exe"
         ));
         assert!(!is_auxiliary_registered_app("Calculator", ""));
-        assert!(is_auxiliary_registered_app("WeGame卸载", r"E:\Games\WeGame\uninstall_complete.exe"));
-        assert!(is_auxiliary_registered_app("WeGame主页", r"E:\Games\WeGame\WeGame.exe"));
+        assert!(is_auxiliary_registered_app(
+            "WeGame卸载",
+            r"E:\Games\WeGame\uninstall_complete.exe"
+        ));
+        assert!(is_auxiliary_registered_app(
+            "WeGame主页",
+            r"E:\Games\WeGame\WeGame.exe"
+        ));
         assert!(!is_auxiliary_registered_app(
             "Windows 设置",
             r"shell:AppsFolder\windows.immersivecontrolpanel"

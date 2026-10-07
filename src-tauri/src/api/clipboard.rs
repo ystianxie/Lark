@@ -4,8 +4,8 @@ use crate::utils::database::{self, Record};
 use crate::utils::icons;
 use crate::utils::{file_factory, img_factory, json_factory, string_factory};
 use anyhow::Result;
-use base64::{engine::general_purpose, Engine as _};
 use arboard::Clipboard;
+use base64::{engine::general_purpose, Engine as _};
 use chrono::Duration;
 #[cfg(target_os = "windows")]
 use clipboard_win::{formats::FileList, Clipboard as WindowsClipboard, Setter};
@@ -433,7 +433,7 @@ fn get_active_application() -> Option<ActiveApplication> {
 }
 
 #[cfg(target_os = "windows")]
-fn get_clipboard_sequence_number() -> u32 {
+pub(crate) fn get_clipboard_sequence_number() -> u32 {
     use winapi::um::winuser::GetClipboardSequenceNumber;
 
     unsafe { GetClipboardSequenceNumber() }

@@ -1,6 +1,5 @@
 pub mod model;
-pub mod runtime;
 pub mod providers;
+pub mod runtime;
 
-pub use model::{TranslationRequest, TranslationResponse};
 pub use runtime::translate_text;

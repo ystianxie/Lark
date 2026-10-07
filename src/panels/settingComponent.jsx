@@ -841,8 +841,10 @@ const Component = () => {
     const [clipboardImageSwitch, setClipboardImageSwitch] = useState(false);
     const [clipboardFileSwitch, setClipboardFileSwitch] = useState(false);
     const [hotkeyAwaken, setHotkeyAwaken] = useState("Alt+Space");
-    const [hotkeyClipboard, setHotkeyClipboard] = useState("Shift+Alt+V");
+    const [hotkeyClipboard, setHotkeyClipboard] = useState("Ctrl+Alt+V");
+    const [hotkeySelection, setHotkeySelection] = useState("Ctrl+Alt+D");
     const [hotkeyFileJump, setHotkeyFileJump] = useState("Ctrl+G");
+    const [hotkeyScreenshot, setHotkeyScreenshot] = useState((navigator.userAgent || '').includes('Mac') ? "Option+S" : "Ctrl+Alt+S");
     const [appSearchPaths, setAppSearchPaths] = useState([]);
     const [appExcludePaths, setAppExcludePaths] = useState([]);
     const [fileSearchPaths, setFileSearchPaths] = useState(null);
@@ -877,11 +879,15 @@ const Component = () => {
     const snippetSettingsLoaded = useRef(false);
     const hotkeyAwakenRef = useRef(hotkeyAwaken);
     const hotkeyClipboardRef = useRef(hotkeyClipboard);
+    const hotkeySelectionRef = useRef(hotkeySelection);
     const hotkeyFileJumpRef = useRef(hotkeyFileJump);
+    const hotkeyScreenshotRef = useRef(hotkeyScreenshot);
 
     hotkeyAwakenRef.current = hotkeyAwaken;
     hotkeyClipboardRef.current = hotkeyClipboard;
+    hotkeySelectionRef.current = hotkeySelection;
     hotkeyFileJumpRef.current = hotkeyFileJump;
+    hotkeyScreenshotRef.current = hotkeyScreenshot;
 
     const loadIndexCounts = async () => {
         try {
@@ -907,15 +913,17 @@ const Component = () => {
         const decryptPasswordFields = async (services, catalog) => Promise.all((services || []).map(async (service) => {
             const passwordFields = (catalog.find(item => item.id === service.provider)?.fields || [])
                 .filter(field => field.type === 'password').map(field => field.key);
-            const next = {...service};
+            const next = {...service, config: {...(service.config || {})}};
             for (const key of passwordFields) {
-                const value = String(next[key] || '');
-                if (value.startsWith('dpapi:')) {
-                    try {
-                        next[key] = await invoke('unprotect_secret', {value: value.slice('dpapi:'.length)});
-                    } catch (error) {
-                        console.warn(`解密配置字段 ${key} 失败`, error);
-                        next[key] = '';
+                for (const target of [next, next.config]) {
+                    const value = String(target[key] || '');
+                    if (value.startsWith('dpapi:')) {
+                        try {
+                            target[key] = await invoke('unprotect_secret', {value: value.slice('dpapi:'.length)});
+                        } catch (error) {
+                            console.warn(`解密配置字段 ${key} 失败`, error);
+                            target[key] = '';
+                        }
                     }
                 }
             }
@@ -940,7 +948,9 @@ const Component = () => {
         invoke("get_app_settings").then((settings) => {
             setHotkeyAwaken(settings.hotkeyAwaken);
             setHotkeyClipboard(settings.hotkeyClipboard);
+            setHotkeySelection(settings.hotkeySelection || ((navigator.userAgent || '').includes('Mac') ? "Option+D" : "Ctrl+Alt+D"));
             setHotkeyFileJump(settings.hotkeyFileJump || "Ctrl+G");
+            setHotkeyScreenshot(settings.hotkeyScreenshot || ((navigator.userAgent || '').includes('Mac') ? "Option+S" : "Ctrl+Alt+S"));
             setClipboardCountSwitch(settings.clipboardCountSwitch ?? true);
             setClipboardCount(settings.clipboardCount ?? 100);
             setClipboardTextSwitch(settings.clipboardTextSwitch ?? false);
@@ -988,6 +998,21 @@ const Component = () => {
             setTranslationNotice('请填写已添加服务所需的认证信息');
             return;
         }
+        const enabledOcr = (ocrServices || []).filter(service => service.enabled);
+        if (enabledOcr.length > 1) {
+            setTranslationNotice('OCR 服务最多只能启用一个');
+            return;
+        }
+        const baiduOcrMissingCredentials = enabledOcr.some(service => {
+            if (service.provider !== 'baidu-ocr') return false;
+            const config = service.config || {};
+            return !String(config.apiKey || service.apiKey || '').trim()
+                || !String(config.secretKey || service.secretKey || '').trim();
+        });
+        if (baiduOcrMissingCredentials) {
+            setTranslationNotice('请填写百度 OCR 的 API Key 和 Secret Key');
+            return;
+        }
         try {
             const protectedFields = (service, catalog) => new Set(
                 (catalog.find(item => item.id === service.provider)?.fields || [])
@@ -995,11 +1020,13 @@ const Component = () => {
                     .map(field => field.key)
             );
             const protectService = async (service, catalog) => {
-                const next = {...service};
+                const next = {...service, config: {...(service.config || {})}};
                 for (const key of protectedFields(service, catalog)) {
-                    const value = String(next[key] || '');
-                    if (value && !value.startsWith('dpapi:')) {
-                        next[key] = `dpapi:${await invoke('protect_secret', {value})}`;
+                    for (const target of [next, next.config]) {
+                        const value = String(target[key] || '');
+                        if (value && !value.startsWith('dpapi:')) {
+                            target[key] = `dpapi:${await invoke('protect_secret', {value})}`;
+                        }
                     }
                 }
                 return next;
@@ -1079,12 +1106,16 @@ const Component = () => {
             if (!name || typeof payload !== 'string') return;
             const nextAwaken = name === 'lark' ? payload : hotkeyAwakenRef.current;
             const nextClipboard = name === 'cbd' ? payload : hotkeyClipboardRef.current;
+            const nextSelection = name === 'selection' ? payload : hotkeySelectionRef.current;
             const nextFileJump = name === 'fileJump' ? payload : hotkeyFileJumpRef.current;
+            const nextScreenshot = name === 'screenshot' ? payload : hotkeyScreenshotRef.current;
             try {
                 await invoke('reserve_hotkey_capture', {
                     awaken: nextAwaken,
                     clipboard: nextClipboard,
+                    selection: nextSelection,
                     fileJump: nextFileJump,
+                    screenshot: nextScreenshot,
                 });
                 if (name === 'lark') {
                     hotkeyAwakenRef.current = payload;
@@ -1094,10 +1125,18 @@ const Component = () => {
                     hotkeyClipboardRef.current = payload;
                     setHotkeyClipboard(payload);
                     setCBDDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
-                } else {
+                } else if (name === 'selection') {
+                    hotkeySelectionRef.current = payload;
+                    setHotkeySelection(payload);
+                    setSelectionDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
+                } else if (name === 'fileJump') {
                     hotkeyFileJumpRef.current = payload;
                     setHotkeyFileJump(payload);
                     setFileJumpDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
+                } else {
+                    hotkeyScreenshotRef.current = payload;
+                    setHotkeyScreenshot(payload);
+                    setScreenshotDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
                 }
                 setSettingNotice({type: '', text: ''});
             } catch (error) {
@@ -1132,13 +1171,17 @@ const Component = () => {
         }
     });
     const [cbdDisplayText, setCBDDisplayText] = useReducer(hotkeysFrameShow, {downKey: {}});
+    const [selectionDisplayText, setSelectionDisplayText] = useReducer(hotkeysFrameShow, {downKey: {}});
     const [fileJumpDisplayText, setFileJumpDisplayText] = useReducer(hotkeysFrameShow, {downKey: {}});
+    const [screenshotDisplayText, setScreenshotDisplayText] = useReducer(hotkeysFrameShow, {downKey: {}});
 
     useEffect(() => {
         setLarkDisplayText({behavior: "set", data: hotkeyToDownKey(hotkeyAwaken)});
         setCBDDisplayText({behavior: "set", data: hotkeyToDownKey(hotkeyClipboard)});
+        setSelectionDisplayText({behavior: "set", data: hotkeyToDownKey(hotkeySelection)});
         setFileJumpDisplayText({behavior: "set", data: hotkeyToDownKey(hotkeyFileJump)});
-    }, [hotkeyAwaken, hotkeyClipboard, hotkeyFileJump]);
+        setScreenshotDisplayText({behavior: "set", data: hotkeyToDownKey(hotkeyScreenshot)});
+    }, [hotkeyAwaken, hotkeyClipboard, hotkeySelection, hotkeyFileJump, hotkeyScreenshot]);
 
 
     // 解释器探测：只在打开设置页、选择文件或输入框失焦时触发，结果仅用于提示，不阻断保存。
@@ -1211,7 +1254,9 @@ const Component = () => {
         let all_setting = {
             hotkeyAwaken,
             hotkeyClipboard,
+            hotkeySelection,
             hotkeyFileJump,
+            hotkeyScreenshot,
             clipboardCountSwitch,
             clipboardCount,
             clipboardTextSwitch,
@@ -1416,8 +1461,12 @@ const Component = () => {
             setLarkDisplayText({behavior: "down", data: downKey})
         } else if (name === "cbd") {
             setCBDDisplayText({behavior: "down", data: downKey})
+        } else if (name === "selection") {
+            setSelectionDisplayText({behavior: "down", data: downKey})
         } else if (name === "fileJump") {
             setFileJumpDisplayText({behavior: "down", data: downKey})
+        } else if (name === "screenshot") {
+            setScreenshotDisplayText({behavior: "down", data: downKey})
         }
         const modifierOnly = ['Control', 'Alt', 'Shift', 'Meta'].includes(event.key);
         if (!modifierOnly) {
@@ -1430,12 +1479,16 @@ const Component = () => {
             const candidate = parts.join("+");
             const nextAwaken = name === 'lark' ? candidate : hotkeyAwaken;
             const nextClipboard = name === 'cbd' ? candidate : hotkeyClipboard;
+            const nextSelection = name === 'selection' ? candidate : hotkeySelection;
             const nextFileJump = name === 'fileJump' ? candidate : hotkeyFileJump;
+            const nextScreenshot = name === 'screenshot' ? candidate : hotkeyScreenshot;
             try {
                 await invoke('reserve_hotkey_capture', {
                     awaken: nextAwaken,
                     clipboard: nextClipboard,
+                    selection: nextSelection,
                     fileJump: nextFileJump,
+                    screenshot: nextScreenshot,
                 });
                 if (name === "lark") {
                     hotkeyAwakenRef.current = candidate;
@@ -1443,9 +1496,15 @@ const Component = () => {
                 } else if (name === "cbd") {
                     hotkeyClipboardRef.current = candidate;
                     setHotkeyClipboard(candidate);
-                } else {
+                } else if (name === "selection") {
+                    hotkeySelectionRef.current = candidate;
+                    setHotkeySelection(candidate);
+                } else if (name === "fileJump") {
                     hotkeyFileJumpRef.current = candidate;
                     setHotkeyFileJump(candidate);
+                } else {
+                    hotkeyScreenshotRef.current = candidate;
+                    setHotkeyScreenshot(candidate);
                 }
                 setSettingDirty(true);
                 setSettingNotice({type: '', text: ''});
@@ -1454,8 +1513,12 @@ const Component = () => {
                     setLarkDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyAwaken)});
                 } else if (name === "cbd") {
                     setCBDDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyClipboard)});
-                } else {
+                } else if (name === "selection") {
+                    setSelectionDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeySelection)});
+                } else if (name === "fileJump") {
                     setFileJumpDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyFileJump)});
+                } else {
+                    setScreenshotDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyScreenshot)});
                 }
                 setSettingNotice({type: 'error', text: `快捷键暂时无法占用：${error}`});
             }
@@ -1473,8 +1536,12 @@ const Component = () => {
             setLarkDisplayText({behavior: "up", data: upKey})
         } else if (name === "cbd") {
             setCBDDisplayText({behavior: "up", data: upKey})
+        } else if (name === "selection") {
+            setSelectionDisplayText({behavior: "up", data: upKey})
         } else if (name === "fileJump") {
             setFileJumpDisplayText({behavior: "up", data: upKey})
+        } else if (name === "screenshot") {
+            setScreenshotDisplayText({behavior: "up", data: upKey})
         }
     }
 
@@ -2081,7 +2148,7 @@ const Component = () => {
                             </div>
                             <div className="hotkeys-item">
                                 <div>
-                                    <div className="hotkeyName">打开剪贴板</div>
+                                <div className="hotkeyName">打开剪贴板</div>
                                     <div className="hotkeyDescription">快速打开剪贴板历史</div>
                                 </div>
                                 <div contentEditable suppressContentEditableWarning className="hotkeys-input"
@@ -2107,6 +2174,36 @@ const Component = () => {
                                      onKeyDown={(event) => handleHotkeysDown(event, 'fileJump')}
                                      onKeyUp={(event) => handleHotkeysUp(event, 'fileJump')}>
                                     <HotkeyKeys downKey={fileJumpDisplayText.downKey}/>
+                                </div>
+                            </div>
+                            <div className="hotkeys-item">
+                                <div>
+                                    <div className="hotkeyName">划词翻译</div>
+                                    <div className="hotkeyDescription">获取当前选区并打开翻译面板</div>
+                                </div>
+                                <div contentEditable suppressContentEditableWarning className="hotkeys-input"
+                                     role="textbox" aria-label="划词翻译快捷键"
+                                     onFocus={() => {
+                                         activeHotkeyField.current = 'selection';
+                                     }}
+                                     onKeyDown={(event) => handleHotkeysDown(event, 'selection')}
+                                     onKeyUp={(event) => handleHotkeysUp(event, 'selection')}>
+                                    <HotkeyKeys downKey={selectionDisplayText.downKey}/>
+                                </div>
+                            </div>
+                            <div className="hotkeys-item">
+                                <div>
+                                    <div className="hotkeyName">截图翻译</div>
+                                    <div className="hotkeyDescription">使用截图区域识别文字并翻译（功能开发中）</div>
+                                </div>
+                                <div contentEditable suppressContentEditableWarning className="hotkeys-input"
+                                     role="textbox" aria-label="截图翻译快捷键"
+                                     onFocus={() => {
+                                         activeHotkeyField.current = 'screenshot';
+                                     }}
+                                     onKeyDown={(event) => handleHotkeysDown(event, 'screenshot')}
+                                     onKeyUp={(event) => handleHotkeysUp(event, 'screenshot')}>
+                                    <HotkeyKeys downKey={screenshotDisplayText.downKey}/>
                                 </div>
                             </div>
                         </div>

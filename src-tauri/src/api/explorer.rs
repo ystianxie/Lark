@@ -4,19 +4,19 @@ use crate::utils::icons;
 use crate::utils::string_factory::text_to_pinyin;
 use base64::{engine::general_purpose, Engine as _};
 use icns::{IconFamily, IconType};
-use pinyin::{ToPinyin};
+use pinyin::ToPinyin;
 use plist::Value;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Cursor, Read};
+use std::panic;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
-use std::{ panic};
 
 use tauri::{AppHandle, Emitter, Manager};
 use walkdir::{DirEntry, WalkDir};
@@ -567,10 +567,7 @@ fn get_apps_with_depth(
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .map(str::to_ascii_lowercase);
-            if include_direct_files
-                && !is_lnk_name(app_name)
-                && is_auxiliary_app_file(app_name)
-            {
+            if include_direct_files && !is_lnk_name(app_name) && is_auxiliary_app_file(app_name) {
                 continue;
             }
             let is_lnk = extension.as_deref() == Some("lnk");
@@ -666,7 +663,7 @@ pub fn read_icns_to_base64(path: &str) -> Result<String, String> {
         .find(|e| e.ostype == image_type.ostype())
     {
         if format!("{:?}", image_type).contains("RGBA") {
-        let base64_image = general_purpose::STANDARD.encode(&img_buffer.data);
+            let base64_image = general_purpose::STANDARD.encode(&img_buffer.data);
             return Ok(base64_image);
         }
     }
@@ -1539,7 +1536,8 @@ fn is_user_visible_auxiliary_app(title: &str) -> bool {
 #[cfg(target_os = "windows")]
 fn is_auxiliary_app_entry(title: &str, target: &str) -> bool {
     let target_lower = target.trim().to_ascii_lowercase();
-    let is_system_settings = target_lower.starts_with(r"shell:appsfolder\windows.immersivecontrolpanel");
+    let is_system_settings =
+        target_lower.starts_with(r"shell:appsfolder\windows.immersivecontrolpanel");
     let is_msconfig = Path::new(target)
         .file_stem()
         .and_then(|value| value.to_str())
@@ -1575,8 +1573,8 @@ fn is_portable_auxiliary_app(title: &str, path: &str) -> bool {
 mod app_scan_tests {
     use super::{
         is_auxiliary_app_entry, is_portable_auxiliary_app, is_under_registered_app_dir,
-        is_user_visible_auxiliary_app,
-        normalize_app_product_key, portable_family_key, registered_app_directory,
+        is_user_visible_auxiliary_app, normalize_app_product_key, portable_family_key,
+        registered_app_directory,
     };
 
     #[test]

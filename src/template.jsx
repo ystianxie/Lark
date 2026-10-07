@@ -254,35 +254,38 @@ function SubpageComponent({component, keyDown, pluginLibraryProps}) {
         })
     }, [])
     useEffect(() => {
+        let cancelled = false;
+        setRenderComponent(false);
         const loadDynamicComponent = async () => {
-            if (component.data.endsWith("js")) {
-                if (component.data?.startsWith("./") || component.data?.[1] !== ":") {
-                    component.data = `${appDirectory['plugins']}/${component.parent}/${component.data}`;
-                }
-                if (component.style?.startsWith("./") || component.style?.[1] !== ":") {
-                    component.style = `${appDirectory['plugins']}/${component.parent}/${component.style}`;
-                }
+            try {
+                if (component.data.endsWith("js")) {
+                    if (component.data?.startsWith("./") || component.data?.[1] !== ":") {
+                        component.data = `${appDirectory['plugins']}/${component.parent}/${component.data}`;
+                    }
+                    if (component.style?.startsWith("./") || component.style?.[1] !== ":") {
+                        component.style = `${appDirectory['plugins']}/${component.parent}/${component.style}`;
+                    }
 
-                document.body.querySelectorAll("script").forEach(node => node.remove());
-                const script = document.createElement("script");
-                document.body.appendChild(script);
-                script.src = convertFileSrc(component.data);
-                if (component.style) {
-                    hotReplacement();
+                    document.body.querySelectorAll("script").forEach(node => node.remove());
+                    const script = document.createElement("script");
+                    document.body.appendChild(script);
+                    script.src = convertFileSrc(component.data);
+                    if (component.style) {
+                        hotReplacement();
+                    }
+                } else {
+                    const module = await import(`./panels/${component.data}.jsx`);
+                    if (!cancelled) setRenderComponent(() => module.default);
                 }
-            } else {
-                const module = await import(`./panels/${component.data}.jsx`);
-                setRenderComponent(() => module.default);
+            } catch (error) {
+                console.error("加载 panel 失败", component.data, error);
             }
-
         }
         if (component?.type === "panel" && component.data && !component.emptyPanel) {
             console.log("更新子页面：", component.data)
             loadDynamicComponent()
-        } else {
-            setRenderComponent(false)
         }
-
+        return () => { cancelled = true; };
     }, [component])
 
     let subpageStyle = {

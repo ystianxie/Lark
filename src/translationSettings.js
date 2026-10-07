@@ -82,14 +82,15 @@ export const OCR_PROVIDER_CATALOG = [
         name: 'ddddocr-rust（远程）',
         category: 'ocr',
         protocol: 'ddddocr-rust',
-        hint: '部署在其他服务器，只需填写服务地址',
+        hint: 'POST /ocr，JSON 传入 image Base64；默认地址为本机 8000 端口',
         fields: [
             {
                 key: 'endpoint',
                 label: '服务地址',
                 type: 'text',
                 required: true,
-                placeholder: '例如 http://192.168.1.10:8866/ocr'
+                default: 'http://127.0.0.1:8000/ocr',
+                placeholder: '例如 http://192.168.1.10:8000/ocr'
             },
         ]
     },
@@ -118,10 +119,10 @@ export const OCR_PROVIDER_CATALOG = [
         name: '百度 OCR',
         category: 'ocr',
         protocol: 'baidu-ocr',
-        hint: '需要 APP ID、API Key 和 Secret Key',
+        hint: '需要 API Key 和 Secret Key；截图会上传到百度 OCR',
         fields: [
-            {key: 'appId', label: 'APP ID', type: 'text', required: true},
-            {key: 'apiKey', label: 'API Key', type: 'text', required: true},
+            {key: 'appId', label: 'APP ID（可选）', type: 'text'},
+            {key: 'apiKey', label: 'API Key', type: 'password', required: true},
             {key: 'secretKey', label: 'Secret Key', type: 'password', required: true},
             {key: 'useAccurate', label: '使用高精度识别', type: 'boolean', default: false}
         ]
