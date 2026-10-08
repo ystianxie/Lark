@@ -46,7 +46,6 @@ use crate::config::{
     save_plugin_settings_data, save_setting_data, save_snippet_settings_data, snippet_settings,
 };
 use crate::notification::{NotificationInput, NotificationLevel, NotificationManager};
-use utils::ocr::ocr_image;
 use crate::utils::database::{FileIndex, IndexSQL, RecordSQL};
 use crate::utils::dirs::get_app_dir;
 use crate::utils::window::set_window_show;
@@ -60,6 +59,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{
     GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
 };
+use utils::ocr::ocr_image;
 
 static HOTKEY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOTKEY_CAPTURE_BINDINGS: OnceLock<Mutex<Option<HotkeyBindings>>> = OnceLock::new();
@@ -604,13 +604,13 @@ fn shortcut(
     register_shortcuts_best_effort(app.handle(), bindings)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct HotkeyBindings {
-    awaken: Shortcut,
-    clipboard: Shortcut,
-    selection: Shortcut,
-    file_jump: Shortcut,
-    screenshot: Shortcut,
+    awaken: Option<Shortcut>,
+    clipboard: Option<Shortcut>,
+    selection: Option<Shortcut>,
+    file_jump: Option<Shortcut>,
+    screenshot: Option<Shortcut>,
 }
 
 impl HotkeyBindings {
@@ -621,49 +621,41 @@ impl HotkeyBindings {
         file_jump: &str,
         screenshot: &str,
     ) -> Result<Self, String> {
-        let awaken = awaken
-            .parse::<Shortcut>()
-            .map_err(|error| format!("唤醒快捷键无效：{error}"))?;
-        let clipboard = clipboard
-            .parse::<Shortcut>()
-            .map_err(|error| format!("剪贴板快捷键无效：{error}"))?;
-        let selection = selection
-            .parse::<Shortcut>()
-            .map_err(|error| format!("划词翻译快捷键无效：{error}"))?;
-        let file_jump = file_jump
-            .parse::<Shortcut>()
-            .map_err(|error| format!("文件跳转快捷键无效：{error}"))?;
-        let screenshot = screenshot
-            .parse::<Shortcut>()
-            .map_err(|error| format!("截图翻译快捷键无效：{error}"))?;
-        if [awaken, clipboard, selection, file_jump, screenshot]
+        let parse = |value: &str, label: &str| -> Result<Option<Shortcut>, String> {
+            if value.trim().is_empty() {
+                return Ok(None);
+            }
+            value
+                .trim()
+                .parse::<Shortcut>()
+                .map(Some)
+                .map_err(|error| format!("{label}快捷键无效：{error}"))
+        };
+        let bindings = Self {
+            awaken: parse(awaken, "唤醒")?,
+            clipboard: parse(clipboard, "剪贴板")?,
+            selection: parse(selection, "划词翻译")?,
+            file_jump: parse(file_jump, "文件跳转")?,
+            screenshot: parse(screenshot, "截图翻译")?,
+        };
+        let shortcuts = bindings.all();
+        if shortcuts
             .iter()
             .any(|shortcut| shortcut.mods == Modifiers::empty())
         {
             return Err("快捷键必须至少包含一个修饰键（Ctrl、Alt、Shift 或 Win）".to_string());
         }
-        if [awaken, clipboard, selection, file_jump, screenshot]
+        if shortcuts
             .iter()
             .enumerate()
-            .any(|(index, shortcut)| {
-                [awaken, clipboard, selection, file_jump, screenshot]
-                    .iter()
-                    .enumerate()
-                    .any(|(other_index, other)| index != other_index && shortcut == other)
-            })
+            .any(|(index, shortcut)| shortcuts[..index].contains(shortcut))
         {
             return Err("各快捷键不能相同".to_string());
         }
-        Ok(Self {
-            awaken,
-            clipboard,
-            selection,
-            file_jump,
-            screenshot,
-        })
+        Ok(bindings)
     }
 
-    fn all(self) -> [Shortcut; 5] {
+    fn all(self) -> Vec<Shortcut> {
         [
             self.awaken,
             self.clipboard,
@@ -671,6 +663,23 @@ impl HotkeyBindings {
             self.file_jump,
             self.screenshot,
         ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    // 只容忍同一功能未改动的已有冲突；新绑定或跨功能移动仍须真正注册成功。
+    fn unchanged_shortcuts(self, previous: Self) -> Vec<Shortcut> {
+        [
+            (self.awaken, previous.awaken),
+            (self.clipboard, previous.clipboard),
+            (self.selection, previous.selection),
+            (self.file_jump, previous.file_jump),
+            (self.screenshot, previous.screenshot),
+        ]
+        .into_iter()
+        .filter_map(|(next, old)| if next == old { next } else { None })
+        .collect()
     }
 }
 
@@ -695,15 +704,15 @@ fn handle_shortcut(
         return;
     }
 
-    if *pressed == bindings.awaken {
+    if Some(*pressed) == bindings.awaken {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
             let _ = window.emit("window-show-request", ());
         }
-    } else if *pressed == bindings.clipboard {
+    } else if Some(*pressed) == bindings.clipboard {
         let _ = window.emit("clipboard-show-request", ());
-    } else if *pressed == bindings.selection {
+    } else if Some(*pressed) == bindings.selection {
         let window = window.clone();
         tauri::async_runtime::spawn_blocking(move || {
             match api::selection::read_selected_text() {
@@ -720,7 +729,7 @@ fn handle_shortcut(
                 }
             }
         });
-    } else if *pressed == bindings.file_jump {
+    } else if Some(*pressed) == bindings.file_jump {
         let app = app.clone();
         tauri::async_runtime::spawn_blocking(move || {
             if let Err(error) = app
@@ -730,22 +739,40 @@ fn handle_shortcut(
                 eprintln!("[ListaryJump] 快捷键触发失败：{error}");
             }
         });
-    } else if *pressed == bindings.screenshot {
+    } else if Some(*pressed) == bindings.screenshot {
         let _ = window.emit("translation-screenshot-request", ());
     }
 }
 
-fn register_shortcuts(app: &AppHandle, bindings: HotkeyBindings) -> Result<(), String> {
+fn shortcut_registration_error_is_tolerated(
+    shortcut: Shortcut,
+    error: &str,
+    tolerated: &[Shortcut],
+) -> bool {
+    tolerated.contains(&shortcut) && error.contains("HotKey already registered")
+}
+
+fn register_shortcuts_with_tolerance(
+    app: &AppHandle,
+    bindings: HotkeyBindings,
+    tolerated: &[Shortcut],
+) -> Result<(), String> {
     let window = app
         .get_webview_window("skylark")
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let global_shortcut = app.global_shortcut();
-    let result = global_shortcut.on_shortcuts(bindings.all(), move |app, pressed, event| {
-        handle_shortcut(app, &window, bindings, pressed, event);
-    });
-    if let Err(error) = result {
-        let _ = global_shortcut.unregister_all();
-        return Err(error.to_string());
+    for shortcut in bindings.all() {
+        let window = window.clone();
+        if let Err(error) = global_shortcut.on_shortcuts([shortcut], move |app, pressed, event| {
+            handle_shortcut(app, &window, bindings, pressed, event);
+        }) {
+            if shortcut_registration_error_is_tolerated(shortcut, &error.to_string(), tolerated) {
+                eprintln!("[hotkey] 暂时无法恢复已有快捷键 {shortcut}：{error}");
+                continue;
+            }
+            let _ = global_shortcut.unregister_all();
+            return Err(error.to_string());
+        }
     }
     Ok(())
 }
@@ -778,36 +805,46 @@ fn register_shortcuts_best_effort(
 }
 
 fn capture_shortcut_set(bindings: HotkeyBindings) -> Vec<Shortcut> {
-    let mut shortcuts = vec![
-        bindings.awaken,
-        bindings.clipboard,
-        bindings.selection,
-        bindings.file_jump,
-        bindings.screenshot,
-        "Alt+Space".parse().unwrap(),
-    ];
+    let mut shortcuts = bindings.all();
+    shortcuts.push("Alt+Space".parse().unwrap());
     shortcuts.sort_by_key(|shortcut| shortcut.id());
     shortcuts.dedup();
     shortcuts
 }
 
-fn register_capture_shortcuts(app: &AppHandle, bindings: HotkeyBindings) -> Result<(), String> {
+fn capture_shortcut_error_is_tolerated(
+    shortcut: Shortcut,
+    error: &str,
+    tolerated: &[Shortcut],
+) -> bool {
+    shortcut != "Alt+Space".parse().unwrap()
+        && shortcut_registration_error_is_tolerated(shortcut, error, tolerated)
+}
+
+
+fn register_capture_shortcuts(
+    app: &AppHandle,
+    bindings: HotkeyBindings,
+    tolerated: &[Shortcut],
+) -> Result<(), String> {
     let window = app
         .get_webview_window("skylark")
         .ok_or_else(|| "主窗口不存在".to_string())?;
-    let alt_space: Shortcut = "Alt+Space".parse().unwrap();
     let global_shortcut = app.global_shortcut();
-    let result = global_shortcut.on_shortcuts(
-        capture_shortcut_set(bindings),
-        move |_app, pressed, event| {
-            if event.state == ShortcutState::Pressed && *pressed == alt_space {
+    for shortcut in capture_shortcut_set(bindings) {
+        let window = window.clone();
+        if let Err(error) = global_shortcut.on_shortcuts([shortcut], move |_app, pressed, event| {
+            if event.state == ShortcutState::Pressed {
                 let _ = window.emit("hotkey-capture", pressed.to_string());
             }
-        },
-    );
-    if let Err(error) = result {
-        let _ = global_shortcut.unregister_all();
-        return Err(error.to_string());
+        }) {
+            if capture_shortcut_error_is_tolerated(shortcut, &error.to_string(), tolerated) {
+                eprintln!("[hotkey] 暂时无法预留已有快捷键 {shortcut}：{error}");
+                continue;
+            }
+            let _ = global_shortcut.unregister_all();
+            return Err(error.to_string());
+        }
     }
     Ok(())
 }
@@ -817,6 +854,30 @@ where
     F: FnOnce() -> Result<(), String>,
 {
     let global_shortcut = app.global_shortcut();
+    let (awaken, clipboard, selection, file_jump, screenshot) =
+        hotkey_settings().map_err(|error| error.to_string())?;
+    let mut known =
+        parse_shortcut_bindings(&awaken, &clipboard, &selection, &file_jump, &screenshot)?.all();
+    if let Some(capture) = *hotkey_capture_bindings().lock().unwrap() {
+        known.extend(capture.all());
+    }
+    known.push("Alt+Space".parse().unwrap());
+    known.sort_by_key(|shortcut| shortcut.id());
+    known.dedup();
+    // 插件批量注销中途失败会丢失跟踪表；逐项注销还可清掉本进程遗留的已知绑定。
+    // unregister 只操作本进程的 manager，不会注销其他应用的快捷键。
+    let mut errors = Vec::new();
+    for shortcut in known {
+        let tracked = global_shortcut.is_registered(shortcut);
+        if let Err(error) = global_shortcut.unregister(shortcut) {
+            if tracked {
+                errors.push(error.to_string());
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(format!("清理现有快捷键失败：{}", errors.join("；")));
+    }
     global_shortcut
         .unregister_all()
         .map_err(|error| format!("清理现有快捷键失败：{error}"))?;
@@ -824,11 +885,17 @@ where
 }
 
 fn restore_shortcuts(app: &AppHandle, bindings: HotkeyBindings) -> Result<(), String> {
-    replace_shortcuts(app, || register_shortcuts(app, bindings))
+    let tolerated = bindings.all();
+    replace_shortcuts(app, || {
+        register_shortcuts_with_tolerance(app, bindings, &tolerated)
+    })
 }
 
 fn restore_capture_shortcuts(app: &AppHandle, bindings: HotkeyBindings) -> Result<(), String> {
-    replace_shortcuts(app, || register_capture_shortcuts(app, bindings))
+    let tolerated = bindings.all();
+    replace_shortcuts(app, || {
+        register_capture_shortcuts(app, bindings, &tolerated)
+    })
 }
 
 fn clear_hotkey_capture_state() {
@@ -879,7 +946,10 @@ fn save_setting(app: AppHandle, setting_info: serde_json::Value) -> Result<(), S
         save_setting_data(setting_info).map_err(|error| error.to_string())?;
         return Ok(());
     }
-    if let Err(error) = replace_shortcuts(&app, || register_shortcuts(&app, bindings)) {
+    let tolerated = bindings.unchanged_shortcuts(old_bindings);
+    if let Err(error) = replace_shortcuts(&app, || {
+        register_shortcuts_with_tolerance(&app, bindings, &tolerated)
+    }) {
         let rollback = restore_shortcuts(&app, old_bindings);
         return Err(match rollback {
             Ok(()) => format!("新快捷键注册失败，已恢复原快捷键：{error}"),
@@ -909,9 +979,12 @@ fn set_hotkey_capture_active(app: AppHandle, active: bool) -> Result<(), String>
         parse_shortcut_bindings(&awaken, &clipboard, &selection, &file_jump, &screenshot)?;
     let previous = *hotkey_capture_bindings().lock().unwrap();
     let registration = if active {
-        replace_shortcuts(&app, || register_capture_shortcuts(&app, bindings))
+        let tolerated = bindings.all();
+        replace_shortcuts(&app, || {
+            register_capture_shortcuts(&app, bindings, &tolerated)
+        })
     } else {
-        replace_shortcuts(&app, || register_shortcuts(&app, bindings))
+        restore_shortcuts(&app, bindings)
     };
     if let Err(error) = registration {
         let rollback = if active {
@@ -950,7 +1023,13 @@ fn reserve_hotkey_capture(
         .lock()
         .unwrap()
         .ok_or_else(|| "快捷键录入状态已失效".to_string())?;
-    if let Err(error) = replace_shortcuts(&app, || register_capture_shortcuts(&app, bindings)) {
+    if bindings == previous {
+        return Ok(());
+    }
+    let tolerated = bindings.unchanged_shortcuts(previous);
+    if let Err(error) = replace_shortcuts(&app, || {
+        register_capture_shortcuts(&app, bindings, &tolerated)
+    }) {
         let rollback = restore_capture_shortcuts(&app, previous);
         return Err(match rollback {
             Ok(()) => format!("快捷键暂时无法占用，已恢复原录入快捷键：{error}"),

@@ -876,7 +876,8 @@ const App = () => {
 
             if (blocked) {
                 event.preventDefault();
-                event.stopPropagation();
+                // 录制框需接收组合键，但仍禁止浏览器执行调试快捷键的默认行为。
+                if (!event.target?.closest?.('.hotkeys-input')) event.stopPropagation();
             }
         };
 

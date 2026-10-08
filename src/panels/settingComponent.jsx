@@ -788,7 +788,7 @@ function hotkeyToDownKey(hotkey) {
         else if (normalized === 'alt' || normalized === 'option') downKey.alt = true;
         else if (normalized === 'shift') downKey.shift = true;
         else if (normalized === 'meta' || normalized === 'super' || normalized === 'command') downKey.meta = true;
-        else downKey.key = normalized === 'space' ? 'Space' : part;
+        else downKey.key = normalized === 'space' ? 'Space' : part.replace(/^Key([a-z])$/i, (_, letter) => letter.toUpperCase()).replace(/^Digit([0-9])$/i, '$1');
     }
     return downKey;
 }
@@ -807,9 +807,13 @@ function hotkeyDisplayParts(downKey = {}) {
     return parts;
 }
 
+function downKeyToHotkey(downKey) {
+    return [downKey.ctrl && 'Ctrl', downKey.alt && 'Alt', downKey.shift && 'Shift', downKey.meta && 'Super', downKey.key].filter(Boolean).join('+');
+}
+
 function HotkeyKeys({downKey}) {
     const parts = hotkeyDisplayParts(downKey);
-    if (parts.length === 0) return <span className="hotkeyPlaceholder">点击后按下快捷键</span>;
+    if (parts.length === 0) return <span className="hotkeyPlaceholder">未设置（点击录入）</span>;
     return <span className="hotkeyKeys">
         {parts.map((part, index) => <React.Fragment key={`${part.title}-${index}`}>
             {index > 0 && <span className="hotkeySeparator">+</span>}
@@ -842,9 +846,9 @@ const Component = () => {
     const [clipboardFileSwitch, setClipboardFileSwitch] = useState(false);
     const [hotkeyAwaken, setHotkeyAwaken] = useState("Alt+Space");
     const [hotkeyClipboard, setHotkeyClipboard] = useState("Ctrl+Alt+V");
-    const [hotkeySelection, setHotkeySelection] = useState("Ctrl+Alt+D");
+    const [hotkeySelection, setHotkeySelection] = useState("Ctrl+Alt+X");
     const [hotkeyFileJump, setHotkeyFileJump] = useState("Ctrl+G");
-    const [hotkeyScreenshot, setHotkeyScreenshot] = useState((navigator.userAgent || '').includes('Mac') ? "Option+S" : "Ctrl+Alt+S");
+    const [hotkeyScreenshot, setHotkeyScreenshot] = useState((navigator.userAgent || '').includes('Mac') ? "Option+D" : "Ctrl+Alt+D");
     const [appSearchPaths, setAppSearchPaths] = useState([]);
     const [appExcludePaths, setAppExcludePaths] = useState([]);
     const [fileSearchPaths, setFileSearchPaths] = useState(null);
@@ -876,18 +880,13 @@ const Component = () => {
     const hotkeyCaptureActive = useRef(false);
     const activeHotkeyField = useRef(null);
     const hotkeyCaptureTransition = useRef(Promise.resolve());
+    const hotkeyReservedDraft = useRef(null);
     const snippetSettingsLoaded = useRef(false);
     const hotkeyAwakenRef = useRef(hotkeyAwaken);
     const hotkeyClipboardRef = useRef(hotkeyClipboard);
     const hotkeySelectionRef = useRef(hotkeySelection);
     const hotkeyFileJumpRef = useRef(hotkeyFileJump);
     const hotkeyScreenshotRef = useRef(hotkeyScreenshot);
-
-    hotkeyAwakenRef.current = hotkeyAwaken;
-    hotkeyClipboardRef.current = hotkeyClipboard;
-    hotkeySelectionRef.current = hotkeySelection;
-    hotkeyFileJumpRef.current = hotkeyFileJump;
-    hotkeyScreenshotRef.current = hotkeyScreenshot;
 
     const loadIndexCounts = async () => {
         try {
@@ -946,11 +945,26 @@ const Component = () => {
         };
         loadTranslation();
         invoke("get_app_settings").then((settings) => {
-            setHotkeyAwaken(settings.hotkeyAwaken);
-            setHotkeyClipboard(settings.hotkeyClipboard);
-            setHotkeySelection(settings.hotkeySelection || ((navigator.userAgent || '').includes('Mac') ? "Option+D" : "Ctrl+Alt+D"));
-            setHotkeyFileJump(settings.hotkeyFileJump || "Ctrl+G");
-            setHotkeyScreenshot(settings.hotkeyScreenshot || ((navigator.userAgent || '').includes('Mac') ? "Option+S" : "Ctrl+Alt+S"));
+            const isMac = (navigator.userAgent || '').includes('Mac');
+            const defaults = {
+                lark: 'Alt+Space',
+                cbd: 'Ctrl+Alt+V',
+                selection: isMac ? 'Option+X' : 'Ctrl+Alt+X',
+                fileJump: 'Ctrl+G',
+                screenshot: isMac ? 'Option+D' : 'Ctrl+Alt+D'
+            };
+            const loadedHotkeys = {
+                lark: settings.hotkeyAwaken ?? defaults.lark,
+                cbd: settings.hotkeyClipboard ?? defaults.cbd,
+                selection: settings.hotkeySelection ?? defaults.selection,
+                fileJump: settings.hotkeyFileJump ?? defaults.fileJump,
+                screenshot: settings.hotkeyScreenshot ?? defaults.screenshot,
+            };
+            for (const [name, value] of Object.entries(loadedHotkeys)) {
+                const field = hotkeyFields()[name];
+                field.ref.current = value;
+                field.set(value);
+            }
             setClipboardCountSwitch(settings.clipboardCountSwitch ?? true);
             setClipboardCount(settings.clipboardCount ?? 100);
             setClipboardTextSwitch(settings.clipboardTextSwitch ?? false);
@@ -1033,7 +1047,11 @@ const Component = () => {
             };
             const protectedServices = await Promise.all(normalized.services.map(service => protectService(service, TRANSLATION_PROVIDER_CATALOG)));
             const protectedOcrServices = await Promise.all((ocrServices || []).map(service => protectService(service, OCR_PROVIDER_CATALOG)));
-            localStorage.setItem(TRANSLATION_SETTINGS_KEY, JSON.stringify({...normalized, services: protectedServices, ocrServices: protectedOcrServices}));
+            localStorage.setItem(TRANSLATION_SETTINGS_KEY, JSON.stringify({
+                ...normalized,
+                services: protectedServices,
+                ocrServices: protectedOcrServices
+            }));
             setTranslationSettings(normalized);
             setTranslationNotice('翻译设置已保存');
         } catch (error) {
@@ -1045,23 +1063,23 @@ const Component = () => {
         const id = `service-${Date.now()}`;
         setCollapsedTranslationServices(current => ({...current, [id]: false}));
         setTranslationSettings(current => ({
-        ...current,
-        services: [...current.services, {
-            id,
-            provider: 'niutrans',
-            name: '小牛翻译',
-            enabled: true,
-            apiKey: '',
-            appId: '',
-            appKey: '',
-            baseUrl: '',
-            model: '',
-            dictNo: '',
-            memoryNo: '',
-            dictflag: false,
-            dict: '',
-            needIntervene: false
-        }]
+            ...current,
+            services: [...current.services, {
+                id,
+                provider: 'niutrans',
+                name: '小牛翻译',
+                enabled: true,
+                apiKey: '',
+                appId: '',
+                appKey: '',
+                baseUrl: '',
+                model: '',
+                dictNo: '',
+                memoryNo: '',
+                dictflag: false,
+                dict: '',
+                needIntervene: false
+            }]
         }));
     };
 
@@ -1078,11 +1096,11 @@ const Component = () => {
         const id = `ocr-${Date.now()}`;
         setCollapsedOcrServices(current => ({...current, [id]: false}));
         setOcrServices(current => [...current, {
-        id,
-        provider: 'paddleocr-local',
-        name: 'PaddleOCR（本地）',
-        enabled: false,
-        config: {endpoint: 'http://127.0.0.1:8866/ocr', language: 'ch'}
+            id,
+            provider: 'paddleocr-local',
+            name: 'PaddleOCR（本地）',
+            enabled: false,
+            config: {endpoint: 'http://127.0.0.1:8866/ocr', language: 'ch'}
         }]);
     };
     const updateOcrService = (id, patch) => setOcrServices(current => current.map(service => {
@@ -1093,64 +1111,101 @@ const Component = () => {
     const removeOcrService = (id) => setOcrServices(current => current.filter(service => service.id !== id));
 
     useEffect(() => () => {
-        if (hotkeyCaptureActive.current) {
-            invoke('set_hotkey_capture_active', {active: false}).catch(console.error);
-        }
+        activeHotkeyField.current = null;
+        hotkeyCaptureActive.current = false;
+        hotkeyCaptureTransition.current.catch(() => {
+        }).then(() =>
+            invoke('set_hotkey_capture_active', {active: false})
+        ).catch(console.error);
     }, []);
 
     useEffect(() => {
         let disposed = false;
         let unlisten;
-        listen('hotkey-capture', async ({payload}) => {
+        listen('hotkey-capture', ({payload}) => {
             const name = activeHotkeyField.current;
-            if (!name || typeof payload !== 'string') return;
-            const nextAwaken = name === 'lark' ? payload : hotkeyAwakenRef.current;
-            const nextClipboard = name === 'cbd' ? payload : hotkeyClipboardRef.current;
-            const nextSelection = name === 'selection' ? payload : hotkeySelectionRef.current;
-            const nextFileJump = name === 'fileJump' ? payload : hotkeyFileJumpRef.current;
-            const nextScreenshot = name === 'screenshot' ? payload : hotkeyScreenshotRef.current;
-            try {
-                await invoke('reserve_hotkey_capture', {
-                    awaken: nextAwaken,
-                    clipboard: nextClipboard,
-                    selection: nextSelection,
-                    fileJump: nextFileJump,
-                    screenshot: nextScreenshot,
-                });
-                if (name === 'lark') {
-                    hotkeyAwakenRef.current = payload;
-                    setHotkeyAwaken(payload);
-                    setLarkDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
-                } else if (name === 'cbd') {
-                    hotkeyClipboardRef.current = payload;
-                    setHotkeyClipboard(payload);
-                    setCBDDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
-                } else if (name === 'selection') {
-                    hotkeySelectionRef.current = payload;
-                    setHotkeySelection(payload);
-                    setSelectionDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
-                } else if (name === 'fileJump') {
-                    hotkeyFileJumpRef.current = payload;
-                    setHotkeyFileJump(payload);
-                    setFileJumpDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
-                } else {
-                    hotkeyScreenshotRef.current = payload;
-                    setHotkeyScreenshot(payload);
-                    setScreenshotDisplayText({behavior: 'set', data: hotkeyToDownKey(payload)});
-                }
-                setSettingNotice({type: '', text: ''});
-            } catch (error) {
-                setSettingNotice({type: 'error', text: `快捷键暂时无法占用：${error}`});
-            }
+            if (!disposed && name && typeof payload === 'string') submitHotkeyCapture(name, payload);
         }).then((stop) => {
             if (disposed) stop();
             else unlisten = stop;
-        });
+        }).catch(console.error);
         return () => {
             disposed = true;
             unlisten?.();
         };
     }, []);
+
+    function hotkeyFields() {
+        return {
+            lark: {
+                ref: hotkeyAwakenRef,
+                set: setHotkeyAwaken,
+                display: setLarkDisplayText,
+                setting: 'hotkeyAwaken',
+                argument: 'awaken'
+            },
+            cbd: {
+                ref: hotkeyClipboardRef,
+                set: setHotkeyClipboard,
+                display: setCBDDisplayText,
+                setting: 'hotkeyClipboard',
+                argument: 'clipboard'
+            },
+            selection: {
+                ref: hotkeySelectionRef,
+                set: setHotkeySelection,
+                display: setSelectionDisplayText,
+                setting: 'hotkeySelection',
+                argument: 'selection'
+            },
+            fileJump: {
+                ref: hotkeyFileJumpRef,
+                set: setHotkeyFileJump,
+                display: setFileJumpDisplayText,
+                setting: 'hotkeyFileJump',
+                argument: 'fileJump'
+            },
+            screenshot: {
+                ref: hotkeyScreenshotRef,
+                set: setHotkeyScreenshot,
+                display: setScreenshotDisplayText,
+                setting: 'hotkeyScreenshot',
+                argument: 'screenshot'
+            },
+        };
+    }
+
+    function hotkeyDraft(property) {
+        return Object.fromEntries(Object.values(hotkeyFields()).map(field => [field[property], field.ref.current]));
+    }
+
+    function submitHotkeyCapture(name, value) {
+        if (!hotkeyCaptureActive.current) return Promise.resolve();
+        const candidate = downKeyToHotkey(hotkeyToDownKey(value));
+        // 原生回传和 DOM 键盘事件共用队列；执行时读取最新草稿，避免重复注册和相互覆盖。
+        const transition = hotkeyCaptureTransition.current.then(async () => {
+            const field = hotkeyFields()[name];
+            const draft = {...hotkeyDraft('argument'), [field.argument]: candidate};
+            const reservation = JSON.stringify(draft);
+            if (hotkeyReservedDraft.current !== reservation) {
+                await invoke('reserve_hotkey_capture', draft);
+                hotkeyReservedDraft.current = reservation;
+            }
+            if (field.ref.current !== candidate) {
+                field.ref.current = candidate;
+                field.set(candidate);
+                setSettingDirty(true);
+            }
+            field.display({behavior: 'set', data: hotkeyToDownKey(candidate)});
+            setSettingNotice({type: '', text: ''});
+        }).catch(error => {
+            const field = hotkeyFields()[name];
+            field.display({behavior: 'set', data: hotkeyToDownKey(field.ref.current)});
+            setSettingNotice({type: 'error', text: '快捷键暂时无法占用：' + error});
+        });
+        hotkeyCaptureTransition.current = transition;
+        return transition;
+    }
 
     async function loadCustomApps() {
         try {
@@ -1251,12 +1306,7 @@ const Component = () => {
         setSettingNotice({type: '', text: ''});
     }
     const handleSettingSave = async () => {
-        let all_setting = {
-            hotkeyAwaken,
-            hotkeyClipboard,
-            hotkeySelection,
-            hotkeyFileJump,
-            hotkeyScreenshot,
+        const otherSettings = {
             clipboardCountSwitch,
             clipboardCount,
             clipboardTextSwitch,
@@ -1269,10 +1319,16 @@ const Component = () => {
             pythonInterpreter: pythonInterpreter ?? null
         }
         try {
-            await hotkeyCaptureTransition.current;
-            await invoke('set_hotkey_capture_active', {active: false});
+            activeHotkeyField.current = null;
             hotkeyCaptureActive.current = false;
-            await invoke("save_setting", {settingInfo: all_setting});
+            const save = hotkeyCaptureTransition.current.catch(() => {
+            }).then(async () => {
+                await invoke('set_hotkey_capture_active', {active: false});
+                hotkeyReservedDraft.current = null;
+                await invoke('save_setting', {settingInfo: {...otherSettings, ...hotkeyDraft('setting')}});
+            });
+            hotkeyCaptureTransition.current = save;
+            await save;
             setSettingDirty(false);
             setSettingNotice({type: 'success', text: '设置已保存'});
         } catch (error) {
@@ -1302,16 +1358,20 @@ const Component = () => {
     };
 
     const handleHotkeyCapture = async (active) => {
+        if (active === hotkeyCaptureActive.current) return hotkeyCaptureTransition.current;
         hotkeyCaptureActive.current = active;
-        hotkeyCaptureTransition.current = hotkeyCaptureTransition.current
-            .catch(() => {
-            })
-            .then(() => invoke('set_hotkey_capture_active', {active}));
+        const transition = hotkeyCaptureTransition.current.catch(() => {
+        }).then(async () => {
+            await invoke('set_hotkey_capture_active', {active});
+            // 后端进入录制时用已保存绑定；下一次提交必须重新验证完整草稿。
+            hotkeyReservedDraft.current = null;
+        });
+        hotkeyCaptureTransition.current = transition;
         try {
-            await hotkeyCaptureTransition.current;
+            await transition;
         } catch (error) {
             hotkeyCaptureActive.current = false;
-            setSettingNotice({type: 'error', text: `快捷键录制状态切换失败：${error}`});
+            setSettingNotice({type: 'error', text: '快捷键录制状态切换失败：' + error});
             throw error;
         }
     }
@@ -1441,91 +1501,33 @@ const Component = () => {
 
 
     const handleHotkeysDown = async (event, name) => {
-        event.preventDefault();  // 防止默认行为
-        try {
-            await hotkeyCaptureTransition.current;
-        } catch {
+        event.stopPropagation();
+        if (event.key === 'Tab') return; // 保留键盘焦点导航。
+        event.preventDefault();
+        if (event.repeat) return;
+        const downKey = {alt: event.altKey, meta: event.metaKey, ctrl: event.ctrlKey, shift: event.shiftKey, key: ''};
+        const hasModifier = downKey.ctrl || downKey.alt || downKey.shift || downKey.meta;
+        if (!hasModifier && (event.key === 'Backspace' || event.key === 'Delete')) {
+            return submitHotkeyCapture(name, '');
+        }
+        if (!modifierKeyMap[event.key]) {
+            // Ctrl+Alt 或输入法可能改变 event.key，字母/数字优先使用物理按键编码。
+            downKey.key = /^Key[A-Z]$/.test(event.code) || /^Digit[0-9]$/.test(event.code)
+                ? hotkeyToDownKey(event.code).key
+                : event.code === 'Space' ? 'Space' : event.key;
+        }
+        hotkeyFields()[name].display({behavior: 'down', data: downKey});
+        if (!downKey.key) return;
+        if (!hasModifier) {
+            hotkeyFields()[name].display({behavior: 'set', data: hotkeyToDownKey(hotkeyFields()[name].ref.current)});
+            setSettingNotice({type: 'error', text: '快捷键必须至少包含一个修饰键（Ctrl、Alt、Shift 或 Win）'});
             return;
         }
-        let downKey = {
-            alt: event.altKey,
-            meta: event.metaKey,
-            ctrl: event.ctrlKey,
-            shift: event.shiftKey,
-            key: event.key.length === 1 ? event.key : ""
-        }
-        if (event.code === "Space") {
-            downKey.key = "Space"
-        }
-        if (name === "lark") {
-            setLarkDisplayText({behavior: "down", data: downKey})
-        } else if (name === "cbd") {
-            setCBDDisplayText({behavior: "down", data: downKey})
-        } else if (name === "selection") {
-            setSelectionDisplayText({behavior: "down", data: downKey})
-        } else if (name === "fileJump") {
-            setFileJumpDisplayText({behavior: "down", data: downKey})
-        } else if (name === "screenshot") {
-            setScreenshotDisplayText({behavior: "down", data: downKey})
-        }
-        const modifierOnly = ['Control', 'Alt', 'Shift', 'Meta'].includes(event.key);
-        if (!modifierOnly) {
-            const parts = [];
-            if (event.ctrlKey) parts.push("Control");
-            if (event.altKey) parts.push("Alt");
-            if (event.shiftKey) parts.push("Shift");
-            if (event.metaKey) parts.push("Super");
-            parts.push(event.code === "Space" ? "Space" : event.key.length === 1 ? event.key.toUpperCase() : event.key);
-            const candidate = parts.join("+");
-            const nextAwaken = name === 'lark' ? candidate : hotkeyAwaken;
-            const nextClipboard = name === 'cbd' ? candidate : hotkeyClipboard;
-            const nextSelection = name === 'selection' ? candidate : hotkeySelection;
-            const nextFileJump = name === 'fileJump' ? candidate : hotkeyFileJump;
-            const nextScreenshot = name === 'screenshot' ? candidate : hotkeyScreenshot;
-            try {
-                await invoke('reserve_hotkey_capture', {
-                    awaken: nextAwaken,
-                    clipboard: nextClipboard,
-                    selection: nextSelection,
-                    fileJump: nextFileJump,
-                    screenshot: nextScreenshot,
-                });
-                if (name === "lark") {
-                    hotkeyAwakenRef.current = candidate;
-                    setHotkeyAwaken(candidate);
-                } else if (name === "cbd") {
-                    hotkeyClipboardRef.current = candidate;
-                    setHotkeyClipboard(candidate);
-                } else if (name === "selection") {
-                    hotkeySelectionRef.current = candidate;
-                    setHotkeySelection(candidate);
-                } else if (name === "fileJump") {
-                    hotkeyFileJumpRef.current = candidate;
-                    setHotkeyFileJump(candidate);
-                } else {
-                    hotkeyScreenshotRef.current = candidate;
-                    setHotkeyScreenshot(candidate);
-                }
-                setSettingDirty(true);
-                setSettingNotice({type: '', text: ''});
-            } catch (error) {
-                if (name === "lark") {
-                    setLarkDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyAwaken)});
-                } else if (name === "cbd") {
-                    setCBDDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyClipboard)});
-                } else if (name === "selection") {
-                    setSelectionDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeySelection)});
-                } else if (name === "fileJump") {
-                    setFileJumpDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyFileJump)});
-                } else {
-                    setScreenshotDisplayText({behavior: 'set', data: hotkeyToDownKey(hotkeyScreenshot)});
-                }
-                setSettingNotice({type: 'error', text: `快捷键暂时无法占用：${error}`});
-            }
-        }
+        return submitHotkeyCapture(name, downKeyToHotkey(downKey));
     }
 
     const handleHotkeysUp = (event, name) => {
+        event.stopPropagation();
         let upKey = {
             key: modifierKeyMap[event.key] || event.key,
         }
@@ -1553,7 +1555,7 @@ const Component = () => {
         } else if (action.behavior === "up") {
             downKey = {...stats.downKey}
             if (!downKey.key || !(downKey.ctrl || downKey.alt || downKey.shift || downKey.meta)) {
-                if (Object.hasOwn(modifierKeyMap, action.data.key)) {
+                if (Object.values(modifierKeyMap).includes(action.data.key)) {
                     downKey[action.data.key] = false
                 }
                 if (downKey.key === action.data.key) {
@@ -1650,9 +1652,18 @@ const Component = () => {
                                 }))} onChange={(value) => updateTranslationService(service.id, {
                                     provider: value,
                                     name: TRANSLATION_PROVIDER_CATALOG.find(item => item.id === value)?.name || value,
-                                    ...(value === 'deepseek' ? {model: service.model || 'deepseek-flash', baseUrl: service.baseUrl || 'https://api.deepseek.com'} : {}),
-                                    ...(value === 'zhipu' ? {model: service.model || 'glm-5.3', baseUrl: service.baseUrl && service.baseUrl.includes('bigmodel.cn') ? service.baseUrl : 'https://open.bigmodel.cn/api/paas/v4'} : {}),
-                                    ...(value === 'tengxun' ? {region: service.region || 'ap-guangzhou', projectId: service.projectId || '0'} : {})
+                                    ...(value === 'deepseek' ? {
+                                        model: service.model || 'deepseek-flash',
+                                        baseUrl: service.baseUrl || 'https://api.deepseek.com'
+                                    } : {}),
+                                    ...(value === 'zhipu' ? {
+                                        model: service.model || 'glm-5.3',
+                                        baseUrl: service.baseUrl && service.baseUrl.includes('bigmodel.cn') ? service.baseUrl : 'https://open.bigmodel.cn/api/paas/v4'
+                                    } : {}),
+                                    ...(value === 'tengxun' ? {
+                                        region: service.region || 'ap-guangzhou',
+                                        projectId: service.projectId || '0'
+                                    } : {})
                                 })} style={{width: 180}}/><Input value={service.name} placeholder="服务显示名称"
                                                                  onChange={(event) => updateTranslationService(service.id, {name: event.target.value})}
                                                                  style={{width: 190}}/></div>
@@ -1673,58 +1684,81 @@ const Component = () => {
                                         [service.id]: !isOpen
                                     }));
                                 }}
-                            ><summary style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px'}}>配置详情</summary><div style={{padding: 14, borderRadius: 9, background: '#f8f9fb'}}>
-                                {service.provider === 'baidu' &&
-                                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
-                                        <label className="snippetField"><span
-                                            className="snippetLabel">APP ID</span><Input value={service.appId}
-                                                                                         placeholder="从百度开发者信息获取"
-                                                                                         onChange={(event) => updateTranslationService(service.id, {appId: event.target.value})}/></label>
-                                        <label className="snippetField"><span
-                                            className="snippetLabel">密钥</span><Input.Password value={service.appKey}
-                                                                                                placeholder="从百度开发者信息获取"
-                                                                                                onChange={(event) => updateTranslationService(service.id, {appKey: event.target.value})}/></label>
-                                        <label className="snippetSwitch" style={{gridColumn: '1 / -1'}}><Switch
-                                            size="small" checked={service.needIntervene}
-                                            onChange={(checked) => updateTranslationService(service.id, {needIntervene: checked})}/><span>启用我的术语库</span></label>
-                                    </div>}
-                                {service.provider === 'niutrans' &&
-                                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
-                                        <label className="snippetField"><span
-                                            className="snippetLabel">API Key</span><Input.Password
-                                            value={service.apiKey} placeholder="输入小牛 API Key"
-                                            onChange={(event) => updateTranslationService(service.id, {apiKey: event.target.value})}/></label>
-                                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8}}><label
+                            >
+                                <summary style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px'}}>配置详情
+                                </summary>
+                                <div style={{padding: 14, borderRadius: 9, background: '#f8f9fb'}}>
+                                    {service.provider === 'baidu' &&
+                                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
+                                            <label className="snippetField"><span
+                                                className="snippetLabel">APP ID</span><Input value={service.appId}
+                                                                                             placeholder="从百度开发者信息获取"
+                                                                                             onChange={(event) => updateTranslationService(service.id, {appId: event.target.value})}/></label>
+                                            <label className="snippetField"><span
+                                                className="snippetLabel">密钥</span><Input.Password
+                                                value={service.appKey}
+                                                placeholder="从百度开发者信息获取"
+                                                onChange={(event) => updateTranslationService(service.id, {appKey: event.target.value})}/></label>
+                                            <label className="snippetSwitch" style={{gridColumn: '1 / -1'}}><Switch
+                                                size="small" checked={service.needIntervene}
+                                                onChange={(checked) => updateTranslationService(service.id, {needIntervene: checked})}/><span>启用我的术语库</span></label>
+                                        </div>}
+                                    {service.provider === 'niutrans' &&
+                                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
+                                            <label className="snippetField"><span
+                                                className="snippetLabel">API Key</span><Input.Password
+                                                value={service.apiKey} placeholder="输入小牛 API Key"
+                                                onChange={(event) => updateTranslationService(service.id, {apiKey: event.target.value})}/></label>
+                                            <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8}}>
+                                                <label
+                                                    className="snippetField"><span
+                                                    className="snippetLabel">术语词典 ID</span><Input
+                                                    value={service.dictNo}
+                                                    onChange={(event) => updateTranslationService(service.id, {dictNo: event.target.value})}/></label><label
+                                                className="snippetField"><span
+                                                className="snippetLabel">翻译记忆 ID</span><Input
+                                                value={service.memoryNo}
+                                                onChange={(event) => updateTranslationService(service.id, {memoryNo: event.target.value})}/></label>
+                                            </div>
+                                        </div>}
+                                    {service.provider === 'tengxun' &&
+                                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12}}>
+                                            <label className="snippetField"><span
+                                                className="snippetLabel">SecretId</span><Input
+                                                value={service.secretId || ''}
+                                                onChange={(event) => updateTranslationService(service.id, {secretId: event.target.value})}/></label>
+                                            <label className="snippetField"><span
+                                                className="snippetLabel">SecretKey</span><Input.Password
+                                                value={service.secretKey || ''}
+                                                onChange={(event) => updateTranslationService(service.id, {secretKey: event.target.value})}/></label>
+                                            <label className="snippetField"><span
+                                                className="snippetLabel">地域</span><Input value={service.region || ''}
+                                                                                           placeholder="ap-guangzhou"
+                                                                                           onChange={(event) => updateTranslationService(service.id, {region: event.target.value})}/></label>
+                                            <label className="snippetField"><span
+                                                className="snippetLabel">项目 ID</span><Input
+                                                value={service.projectId || ''} placeholder="0"
+                                                onChange={(event) => updateTranslationService(service.id, {projectId: event.target.value})}/></label>
+                                        </div>}
+                                    {!['baidu', 'niutrans', 'tengxun'].includes(service.provider) &&
+                                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12}}>
+                                            <label
+                                                className="snippetField"><span
+                                                className="snippetLabel">API Key</span><Input.Password
+                                                value={service.apiKey}
+                                                onChange={(event) => updateTranslationService(service.id, {apiKey: event.target.value})}/></label><label
+                                            className="snippetField"><span className="snippetLabel">模型</span><Input
+                                            value={service.model}
+                                            placeholder={service.provider === 'deepseek' ? 'deepseek-flash' : service.provider === 'zhipu' ? 'glm-5.3' : ''}
+                                            onChange={(event) => updateTranslationService(service.id, {model: event.target.value})}/></label><label
                                             className="snippetField"><span
-                                            className="snippetLabel">术语词典 ID</span><Input value={service.dictNo}
-                                                                                              onChange={(event) => updateTranslationService(service.id, {dictNo: event.target.value})}/></label><label
-                                            className="snippetField"><span
-                                            className="snippetLabel">翻译记忆 ID</span><Input value={service.memoryNo}
-                                                                                              onChange={(event) => updateTranslationService(service.id, {memoryNo: event.target.value})}/></label>
-                                        </div>
-                                    </div>}
-                                {service.provider === 'tengxun' &&
-                                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12}}>
-                                        <label className="snippetField"><span className="snippetLabel">SecretId</span><Input value={service.secretId || ''} onChange={(event) => updateTranslationService(service.id, {secretId: event.target.value})}/></label>
-                                        <label className="snippetField"><span className="snippetLabel">SecretKey</span><Input.Password value={service.secretKey || ''} onChange={(event) => updateTranslationService(service.id, {secretKey: event.target.value})}/></label>
-                                        <label className="snippetField"><span className="snippetLabel">地域</span><Input value={service.region || ''} placeholder="ap-guangzhou" onChange={(event) => updateTranslationService(service.id, {region: event.target.value})}/></label>
-                                        <label className="snippetField"><span className="snippetLabel">项目 ID</span><Input value={service.projectId || ''} placeholder="0" onChange={(event) => updateTranslationService(service.id, {projectId: event.target.value})}/></label>
-                                    </div>}
-                                {!['baidu', 'niutrans', 'tengxun'].includes(service.provider) &&
-                                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12}}><label
-                                        className="snippetField"><span
-                                        className="snippetLabel">API Key</span><Input.Password value={service.apiKey}
-                                                                                               onChange={(event) => updateTranslationService(service.id, {apiKey: event.target.value})}/></label><label
-                                        className="snippetField"><span className="snippetLabel">模型</span><Input
-                                        value={service.model}
-                                        placeholder={service.provider === 'deepseek' ? 'deepseek-flash' : service.provider === 'zhipu' ? 'glm-5.3' : ''}
-                                        onChange={(event) => updateTranslationService(service.id, {model: event.target.value})}/></label><label
-                                        className="snippetField"><span className="snippetLabel">Base URL</span><Input
-                                        value={service.baseUrl}
-                                        placeholder={service.provider === 'deepseek' ? 'https://api.deepseek.com' : service.provider === 'zhipu' ? 'https://open.bigmodel.cn/api/paas/v4' : ''}
-                                        onChange={(event) => updateTranslationService(service.id, {baseUrl: event.target.value})}/></label>
-                                    </div>}
-                            </div></details>
+                                            className="snippetLabel">Base URL</span><Input
+                                            value={service.baseUrl}
+                                            placeholder={service.provider === 'deepseek' ? 'https://api.deepseek.com' : service.provider === 'zhipu' ? 'https://open.bigmodel.cn/api/paas/v4' : ''}
+                                            onChange={(event) => updateTranslationService(service.id, {baseUrl: event.target.value})}/></label>
+                                        </div>}
+                                </div>
+                            </details>
                         </div>)}
                         {translationNotice && <div
                             className={translationNotice.includes('失败') || translationNotice.includes('请') ? 'snippetError' : 'snippetHint'}
@@ -1756,70 +1790,74 @@ const Component = () => {
                                             [service.id]: !isOpen
                                         }));
                                     }}
-                                ><summary style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px'}}>配置详情</summary><div style={{
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    marginBottom: 16
-                                }}>
-                                    <div style={{display: 'flex', gap: 10}}><Select value={service.provider}
-                                                                                    options={OCR_PROVIDER_CATALOG.map(item => ({
-                                                                                        value: item.id,
-                                                                                        label: item.name
-                                                                                    }))}
-                                                                                    onChange={(value) => updateOcrService(service.id, {
-                                                                                        provider: value,
-                                                                                        name: OCR_PROVIDER_CATALOG.find(item => item.id === value)?.name || value,
-                                                                                        config: {}
-                                                                                    })} style={{width: 210}}/><Input
-                                        value={service.name}
-                                        onChange={(event) => updateOcrService(service.id, {name: event.target.value})}
-                                        style={{width: 190}}/></div>
-                                    <div style={{display: 'flex', gap: 8}}><Switch size="small"
-                                                                                   checked={service.enabled}
-                                                                                   onChange={(checked) => updateOcrService(service.id, {enabled: checked})}/><Button
-                                        danger type="text" aria-label="删除 OCR 服务" title="删除 OCR 服务"
-                                        onClick={() => removeOcrService(service.id)}
-                                        style={{fontSize: 20, width: 28, height: 28, padding: 0}}>×</Button></div>
-                                </div>
-                                <div style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                                    gap: 12,
-                                    padding: 14,
-                                    borderRadius: 9,
-                                    background: '#f8f9fb'
-                                }}>{(definition?.fields || []).map(field => <label className="snippetField"
-                                                                                   key={field.key}><span
-                                    className="snippetLabel">{field.label}{field.required ? ' *' : ''}</span>{field.type === 'boolean' ?
-                                    <Switch size="small" checked={config[field.key] ?? field.default ?? false}
-                                            onChange={(checked) => updateOcrService(service.id, {
-                                                config: {
-                                                    ...config,
-                                                    [field.key]: checked
-                                                }
-                                            })}/> : field.type === 'select' ?
-                                        <Select value={config[field.key] ?? field.default} options={field.options}
-                                                onChange={(value) => updateOcrService(service.id, {
+                                >
+                                    <summary style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px'}}>配置详情
+                                    </summary>
+                                    <div style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        marginBottom: 16
+                                    }}>
+                                        <div style={{display: 'flex', gap: 10}}><Select value={service.provider}
+                                                                                        options={OCR_PROVIDER_CATALOG.map(item => ({
+                                                                                            value: item.id,
+                                                                                            label: item.name
+                                                                                        }))}
+                                                                                        onChange={(value) => updateOcrService(service.id, {
+                                                                                            provider: value,
+                                                                                            name: OCR_PROVIDER_CATALOG.find(item => item.id === value)?.name || value,
+                                                                                            config: {}
+                                                                                        })} style={{width: 210}}/><Input
+                                            value={service.name}
+                                            onChange={(event) => updateOcrService(service.id, {name: event.target.value})}
+                                            style={{width: 190}}/></div>
+                                        <div style={{display: 'flex', gap: 8}}><Switch size="small"
+                                                                                       checked={service.enabled}
+                                                                                       onChange={(checked) => updateOcrService(service.id, {enabled: checked})}/><Button
+                                            danger type="text" aria-label="删除 OCR 服务" title="删除 OCR 服务"
+                                            onClick={() => removeOcrService(service.id)}
+                                            style={{fontSize: 20, width: 28, height: 28, padding: 0}}>×</Button></div>
+                                    </div>
+                                    <div style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                                        gap: 12,
+                                        padding: 14,
+                                        borderRadius: 9,
+                                        background: '#f8f9fb'
+                                    }}>{(definition?.fields || []).map(field => <label className="snippetField"
+                                                                                       key={field.key}><span
+                                        className="snippetLabel">{field.label}{field.required ? ' *' : ''}</span>{field.type === 'boolean' ?
+                                        <Switch size="small" checked={config[field.key] ?? field.default ?? false}
+                                                onChange={(checked) => updateOcrService(service.id, {
                                                     config: {
                                                         ...config,
-                                                        [field.key]: value
+                                                        [field.key]: checked
                                                     }
-                                                })} style={{width: '100%'}}/> : field.type === 'password' ?
-                                            <Input.Password value={config[field.key] || ''}
-                                                            onChange={(event) => updateOcrService(service.id, {
-                                                                config: {
-                                                                    ...config,
-                                                                    [field.key]: event.target.value
-                                                                }
-                                                            })}/> :
-                                            <Input value={config[field.key] || field.default || ''}
-                                                   onChange={(event) => updateOcrService(service.id, {
-                                                       config: {
-                                                           ...config,
-                                                           [field.key]: event.target.value
-                                                       }
-                                                   })}/>}</label>)}</div></details>
+                                                })}/> : field.type === 'select' ?
+                                            <Select value={config[field.key] ?? field.default} options={field.options}
+                                                    onChange={(value) => updateOcrService(service.id, {
+                                                        config: {
+                                                            ...config,
+                                                            [field.key]: value
+                                                        }
+                                                    })} style={{width: '100%'}}/> : field.type === 'password' ?
+                                                <Input.Password value={config[field.key] || ''}
+                                                                onChange={(event) => updateOcrService(service.id, {
+                                                                    config: {
+                                                                        ...config,
+                                                                        [field.key]: event.target.value
+                                                                    }
+                                                                })}/> :
+                                                <Input value={config[field.key] || field.default || ''}
+                                                       onChange={(event) => updateOcrService(service.id, {
+                                                           config: {
+                                                               ...config,
+                                                               [field.key]: event.target.value
+                                                           }
+                                                       })}/>}</label>)}</div>
+                                </details>
                             </div>;
                         })}
                     </section>
@@ -2120,7 +2158,9 @@ const Component = () => {
                     <section className="appSettingCard">
                         <h3 className="snippetHeading">快捷键{settingDirty &&
                             <span className="settingDirtyMark" aria-label="有未保存修改">*</span>}</h3>
-                        <div className="snippetHint">点击快捷键框，然后按下新的组合键。</div>
+                        <div className="snippetHint">点击快捷键框后按下包含修饰键的组合键；按 Backspace 或 Delete
+                            清空为未设置。修改后点击保存才会生效。
+                        </div>
                         <div className="hotkeysFrame"
                              onFocusCapture={() => handleHotkeyCapture(true).catch(() => {
                              })}
@@ -2136,7 +2176,7 @@ const Component = () => {
                                     <div className="hotkeyName">打开百灵鸟</div>
                                     <div className="hotkeyDescription">显示或隐藏主搜索窗口</div>
                                 </div>
-                                <div contentEditable suppressContentEditableWarning className="hotkeys-input"
+                                <div tabIndex={0} className="hotkeys-input"
                                      role="textbox" aria-label="百灵鸟快捷键"
                                      onFocus={() => {
                                          activeHotkeyField.current = 'lark';
@@ -2148,10 +2188,10 @@ const Component = () => {
                             </div>
                             <div className="hotkeys-item">
                                 <div>
-                                <div className="hotkeyName">打开剪贴板</div>
+                                    <div className="hotkeyName">打开剪贴板</div>
                                     <div className="hotkeyDescription">快速打开剪贴板历史</div>
                                 </div>
-                                <div contentEditable suppressContentEditableWarning className="hotkeys-input"
+                                <div tabIndex={0} className="hotkeys-input"
                                      role="textbox" aria-label="剪贴板快捷键"
                                      onFocus={() => {
                                          activeHotkeyField.current = 'cbd';
@@ -2166,7 +2206,7 @@ const Component = () => {
                                     <div className="hotkeyName">文件跳转</div>
                                     <div className="hotkeyDescription">文件选择框自动跳转到当前目录</div>
                                 </div>
-                                <div contentEditable suppressContentEditableWarning className="hotkeys-input"
+                                <div tabIndex={0} className="hotkeys-input"
                                      role="textbox" aria-label="文件跳转快捷键"
                                      onFocus={() => {
                                          activeHotkeyField.current = 'fileJump';
@@ -2181,7 +2221,7 @@ const Component = () => {
                                     <div className="hotkeyName">划词翻译</div>
                                     <div className="hotkeyDescription">获取当前选区并打开翻译面板</div>
                                 </div>
-                                <div contentEditable suppressContentEditableWarning className="hotkeys-input"
+                                <div tabIndex={0} className="hotkeys-input"
                                      role="textbox" aria-label="划词翻译快捷键"
                                      onFocus={() => {
                                          activeHotkeyField.current = 'selection';
@@ -2196,7 +2236,7 @@ const Component = () => {
                                     <div className="hotkeyName">截图翻译</div>
                                     <div className="hotkeyDescription">使用截图区域识别文字并翻译（功能开发中）</div>
                                 </div>
-                                <div contentEditable suppressContentEditableWarning className="hotkeys-input"
+                                <div tabIndex={0} className="hotkeys-input"
                                      role="textbox" aria-label="截图翻译快捷键"
                                      onFocus={() => {
                                          activeHotkeyField.current = 'screenshot';

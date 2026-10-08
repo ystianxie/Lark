@@ -6,6 +6,7 @@ export default function ScreenshotOverlay({capture, result, onCancel, onSelected
     const cancelingRef = useRef(false);
     const onCancelRef = useRef(onCancel);
     const [drag, setDrag] = useState(null);
+    const [pointer, setPointer] = useState(null);
 
     useEffect(() => {
         onCancelRef.current = onCancel;
@@ -48,8 +49,10 @@ export default function ScreenshotOverlay({capture, result, onCancel, onSelected
         setDrag({start, current: start});
     };
     const move = event => {
+        const current = point(event);
+        setPointer(current);
         if (!drag) return;
-        setDrag({...drag, current: point(event)});
+        setDrag({...drag, current});
     };
     const finish = event => {
         if (!drag) return;
@@ -110,7 +113,7 @@ export default function ScreenshotOverlay({capture, result, onCancel, onSelected
     if (!capture) return null;
 
     return <div ref={overlayRef} tabIndex={-1} role="application"
-                 style={{position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,.32)', cursor: 'crosshair', userSelect: 'none', outline: 'none'}}
+                 style={{position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,.32)', cursor: 'none', userSelect: 'none', outline: 'none'}}
                  onPointerDown={event => {
                      event.currentTarget.focus({preventScroll: true});
                      begin(event);
@@ -118,8 +121,10 @@ export default function ScreenshotOverlay({capture, result, onCancel, onSelected
         <img ref={imageRef} src={capture.dataUrl} alt="截图背景" draggable={false}
              style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none'}}/>
         <div style={{position: 'absolute', inset: 0, background: 'rgba(0,0,0,.32)', pointerEvents: 'none'}}/>
-        {selection && <div style={{position: 'absolute', left: selection.left, top: selection.top, width: selection.width, height: selection.height,
-            border: '2px solid #1677ff', background: 'rgba(22,119,255,.12)', boxSizing: 'border-box', pointerEvents: 'none'}}/>}
+        {pointer && <div aria-hidden="true" style={{position: 'fixed', left: pointer.x, top: pointer.y, width: 24, height: 24, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 1, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,.9))'}}>
+            <span style={{position: 'absolute', left: 11, top: 0, width: 2, height: 24, borderRadius: 1, background: '#ffcf33', boxShadow: '0 0 0 1px #171717'}}/><span style={{position: 'absolute', left: 0, top: 11, width: 24, height: 2, borderRadius: 1, background: '#ffcf33', boxShadow: '0 0 0 1px #171717'}}/><span style={{position: 'absolute', left: 8, top: 8, width: 8, height: 8, borderRadius: '50%', background: '#ff4d6d', border: '1px solid white', boxSizing: 'border-box'}}/>
+        </div>}
+        {selection && <div style={{position: 'absolute', left: selection.left, top: selection.top, width: selection.width, height: selection.height, border: '2px solid #1677ff', background: 'rgba(22,119,255,.12)', boxSizing: 'border-box', pointerEvents: 'none'}}/>}
         <div style={{position: 'absolute', left: 18, top: 18, padding: '7px 11px', color: '#fff', background: 'rgba(0,0,0,.62)', borderRadius: 7, fontSize: 13, pointerEvents: 'none'}}>
             拖动选择截图区域 · Esc 取消
         </div>

@@ -74,17 +74,17 @@ fn default_hotkey_file_jump() -> String {
 
 fn default_hotkey_screenshot() -> String {
     if cfg!(target_os = "macos") {
-        "Option+S".to_string()
+        "Option+D".to_string()
     } else {
-        "Ctrl+Alt+S".to_string()
+        "Ctrl+Alt+D".to_string()
     }
 }
 
 fn default_hotkey_selection() -> String {
     if cfg!(target_os = "macos") {
-        "Option+D".to_string()
+        "Option+X".to_string()
     } else {
-        "Ctrl+Alt+D".to_string()
+        "Ctrl+Alt+X".to_string()
     }
 }
 impl Default for BaseConfig {
@@ -215,9 +215,7 @@ impl Default for BaseConfig {
             ],
             local_app_search_paths: vec![
                 r"D:\App".to_string(),
-                r"D:\Apps".to_string(),
-                r"C:\App".to_string(),
-                r"C:\Apps".to_string(),
+                r"D:\Apps".to_string()
             ],
             local_app_search_exclude_paths: Vec::new(),
             app_index_initialized: false,
