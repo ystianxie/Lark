@@ -9,6 +9,7 @@ import deepseek from '../assets/deepseek.svg';
 import zhipuIcon from '../assets/智谱.svg';
 import tengxunIcon from '../assets/腾讯翻译君.svg';
 import unknownProviderIcon from '../assets/翻译.svg';
+import './translationComponent.css';
 
 const {TextArea} = Input;
 
@@ -313,21 +314,25 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
         </section>
         <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, padding: '2px 0'}}><Select
             showSearch
+            virtual={false}
             optionFilterProp="label"
             popupMatchSelectWidth={false}
             style={{minWidth: 150, flex: '1 1 0', maxWidth: 260}}
             value={sourceLanguage}
             onChange={setSourceLanguage}
+            popupClassName="translation-language-select-dropdown"
             options={sourceLanguageOptions}/><Button icon={<SwapOutlined/>} onClick={() => {
             setSourceLanguage(target);
             setTarget(sourceLanguage === 'auto' ? 'en' : sourceLanguage);
         }} aria-label="交换语言" title="交换语言"/><Select
             showSearch
+            virtual={false}
             optionFilterProp="label"
             popupMatchSelectWidth={false}
             style={{minWidth: 150, flex: '1 1 0', maxWidth: 260}}
             value={target}
             onChange={setTarget}
+            popupClassName="translation-language-select-dropdown"
             options={translationLanguageOptions}/></div>
         <section style={{
             width: '100%',

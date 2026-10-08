@@ -1685,7 +1685,8 @@ const Component = () => {
                                     }));
                                 }}
                             >
-                                <summary style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px'}}>配置详情
+                                <summary
+                                    style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px', color: "#000"}}>配置详情
                                 </summary>
                                 <div style={{padding: 14, borderRadius: 9, background: '#f8f9fb'}}>
                                     {service.provider === 'baidu' &&
@@ -1791,7 +1792,12 @@ const Component = () => {
                                         }));
                                     }}
                                 >
-                                    <summary style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px'}}>配置详情
+                                    <summary style={{
+                                        cursor: 'pointer',
+                                        padding: '6px 0',
+                                        fontSize: '12px',
+                                        color: "#000"
+                                    }}>配置详情
                                     </summary>
                                     <div style={{
                                         display: 'flex',
@@ -2234,7 +2240,7 @@ const Component = () => {
                             <div className="hotkeys-item">
                                 <div>
                                     <div className="hotkeyName">截图翻译</div>
-                                    <div className="hotkeyDescription">使用截图区域识别文字并翻译（功能开发中）</div>
+                                    <div className="hotkeyDescription">使用截图区域识别文字并翻译</div>
                                 </div>
                                 <div tabIndex={0} className="hotkeys-input"
                                      role="textbox" aria-label="截图翻译快捷键"

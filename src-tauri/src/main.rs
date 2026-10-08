@@ -302,9 +302,8 @@ fn ensure_notification_window(app: &AppHandle) -> Result<(), String> {
             .min_inner_size(320.0, 60.0)
             .max_inner_size(480.0, 800.0)
             .decorations(false)
-            // Avoid a softbuffer Win32 assertion when the notification WebView
-            // is resized before its transparent surface has a backing bitmap.
-            .transparent(false)
+            // Keep the window surface transparent so only the rounded notification cards are visible.
+            .transparent(true)
             .shadow(false)
             .resizable(false)
             .always_on_top(true)

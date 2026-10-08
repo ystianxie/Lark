@@ -1,0 +1,22 @@
+/* The Select popup is portaled outside the panel. Keep its native scrollbar scoped to these dropdowns. */
+.translation-language-select-dropdown .rc-virtual-list-holder {
+    scrollbar-color: #d9d9d9 #fff;
+    scrollbar-width: thin;
+}
+
+.translation-language-select-dropdown .rc-virtual-list-holder::-webkit-scrollbar {
+    width: 8px;
+}
+
+.translation-language-select-dropdown .rc-virtual-list-holder::-webkit-scrollbar-track {
+    background: #fff;
+}
+
+.translation-language-select-dropdown .rc-virtual-list-holder::-webkit-scrollbar-thumb {
+    background: #d9d9d9;
+    border-radius: 8px;
+}
+
+.translation-language-select-dropdown .rc-virtual-list-holder::-webkit-scrollbar-thumb:hover {
+    background: #bfbfbf;
+}
