@@ -255,7 +255,12 @@ ${handlers.join(",\n")}
       const file = payload.file ?? null;
       const currentContext = {...context, input: {...context.input, text, file}};
       const value = await handler(text, file, currentContext);
-      if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "notification")) {
+      // Python workflow handlers return a transport envelope even when they do
+      // not include a notification. Unwrap it in both cases; otherwise the
+      // envelope itself is normalized as a result object and falls back to the
+      // plugin name as its title.
+      if (value && typeof value === "object" && !Array.isArray(value) &&
+          (Object.hasOwn(value, "notification") || (value.ok === true && Object.hasOwn(value, "result")))) {
         return {ok: value.ok === true, result: normalizePluginResults(value.result, ${JSON.stringify(name)}), notification: value.notification};
       }
       return normalizePluginResults(value, ${JSON.stringify(name)});
