@@ -17,6 +17,7 @@ import {habitRank, normalizeHabitState, updateHabitState} from "./appHabit";
 import {executePluginWorkflow, normalizePluginPath} from "./pluginRuntime";
 import {normalizePluginResults} from "./pluginScaffold";
 import {schedulePluginExecution} from "./pluginExecution";
+import {getAppLocationPath} from "./utils/appLocation";
 import PluginView from "./PluginView";
 import {useLocalStorage} from "react-use";
 import {
@@ -712,15 +713,15 @@ const App = () => {
                 await invoke("open_app", {
                     appPath: currentComponent.data,
                     appName: currentComponent.title,
+                    appArguments: currentComponent.arguments || "",
                 });
                 await appWindow.hide();
                 initStatus();
             } else {
+                const locationPath = getAppLocationPath(currentComponent);
+                if (!locationPath) return;
                 await invoke("open_explorer", {
-                    // AppsFolder entries launch through a shell URI in `data`.
-                    // `desc` carries the concrete executable path used to reveal
-                    // the installation directory.
-                    path: currentComponent.desc || currentComponent.data,
+                    path: locationPath,
                 });
                 await appWindow.hide();
             }

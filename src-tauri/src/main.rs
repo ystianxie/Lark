@@ -803,6 +803,62 @@ fn register_shortcuts_best_effort(
         .collect()
 }
 
+fn start_hotkey_retry_worker(app: &AppHandle, failed: Vec<(Shortcut, String)>) {
+    if failed.is_empty() {
+        return;
+    }
+    let pending = failed
+        .into_iter()
+        .map(|(shortcut, _)| shortcut)
+        .collect::<Vec<_>>();
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut pending = pending;
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            if pending.is_empty() {
+                break;
+            }
+            if HOTKEY_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+                continue;
+            }
+            let Ok(_guard) = HOTKEY_REGISTRATION_LOCK.lock() else {
+                continue;
+            };
+            let Ok((awaken, clipboard, selection, file_jump, screenshot)) = hotkey_settings()
+            else {
+                continue;
+            };
+            let Ok(bindings) =
+                parse_shortcut_bindings(&awaken, &clipboard, &selection, &file_jump, &screenshot)
+            else {
+                continue;
+            };
+            let configured = bindings.all();
+            pending.retain(|shortcut| configured.contains(shortcut));
+            let Some(window) = app.get_webview_window("skylark") else {
+                continue;
+            };
+            let global_shortcut = app.global_shortcut();
+            pending.retain(|shortcut| {
+                let window = window.clone();
+                match global_shortcut.on_shortcuts([*shortcut], move |app, pressed, event| {
+                    handle_shortcut(app, &window, bindings, pressed, event);
+                }) {
+                    Ok(()) => {
+                        eprintln!("[hotkey] 后台重试注册成功：{shortcut}");
+                        false
+                    }
+                    Err(error) => {
+                        eprintln!("[hotkey] 后台重试仍失败 {shortcut}：{error}");
+                        true
+                    }
+                }
+            });
+        }
+    });
+}
+
 fn capture_shortcut_set(bindings: HotkeyBindings) -> Vec<Shortcut> {
     let mut shortcuts = bindings.all();
     shortcuts.push("Alt+Space".parse().unwrap());
@@ -1628,6 +1684,7 @@ fn main() {
                 &hotkey_file_jump,
                 &hotkey_screenshot,
             );
+            start_hotkey_retry_worker(app.handle(), failed_hotkeys.clone());
             utils::window::disable_system_menu(app)?;
             utils::window::set_window_shadow(app);
             println!("{:?}", &hotkey_awaken);

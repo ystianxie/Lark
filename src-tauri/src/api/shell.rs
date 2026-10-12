@@ -484,7 +484,7 @@ mod python_plugin_tests {
 
 #[tauri::command(rename_all = "camelCase")]
 #[cfg(target_os = "macos")]
-pub fn open_app(app_path: &str, app_name: &str) {
+pub fn open_app(app_path: &str, app_name: &str, _app_arguments: &str) {
     unsafe {
         let pool: id = NSAutoreleasePool::new(nil);
 
@@ -503,7 +503,7 @@ pub fn open_app(app_path: &str, app_name: &str) {
 }
 #[tauri::command(rename_all = "camelCase")]
 #[cfg(target_os = "windows")]
-pub fn open_app(app_path: &str, app_name: &str) {
+pub fn open_app(app_path: &str, app_name: &str, app_arguments: &str) {
     if app_path
         .to_ascii_lowercase()
         .starts_with("shell:appsfolder\\")
@@ -519,7 +519,7 @@ pub fn open_app(app_path: &str, app_name: &str) {
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase());
-    if matches!(extension.as_deref(), Some("rdp" | "url")) {
+    if matches!(extension.as_deref(), Some("lnk" | "rdp" | "url")) {
         open_file(app_path);
         return;
     }
@@ -527,6 +527,19 @@ pub fn open_app(app_path: &str, app_name: &str) {
     let current_dir = Path::new(app_path).parent().unwrap();
     let program = app_path.split("\\").last().expect("aa.exe");
     println!("打开app:{:?}", app_path);
+    if !app_arguments.trim().is_empty() {
+        let mut command = Command::new(app_path);
+        command
+            .raw_arg(app_arguments)
+            .current_dir(current_dir)
+            .creation_flags(0x08000000);
+        let result = command.spawn().map_err(|error| {
+            println!("带参数启动失败: app={app_path}, args={app_arguments:?}, error={error}");
+            error
+        });
+        println!("打开程序[args]:{:?}", result);
+        return;
+    }
     if crate::api::explorer::is_process_running(program) {
         // 激活窗口
         println!("Process {} is already running.", app_name);

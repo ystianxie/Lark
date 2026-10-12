@@ -45,6 +45,10 @@ pub struct FileIndex {
     pub title: String,
     pub path: String,
     pub desc: String,
+    #[serde(default)]
+    pub target_path: String,
+    #[serde(default)]
+    pub arguments: String,
     pub icon: String,
     pub pinyin: String,
     pub abb: String,
@@ -396,6 +400,65 @@ fn ensure_app_index_custom_column(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_app_index_arguments_column(conn: &Connection) -> Result<()> {
+    let has_arguments = {
+        let mut stmt = conn.prepare("PRAGMA table_info(app_index)")?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let result = columns
+            .filter_map(std::result::Result::ok)
+            .any(|column| column == "arguments");
+        result
+    };
+    if !has_arguments {
+        conn.execute(
+            "ALTER TABLE app_index ADD COLUMN arguments TEXT NOT NULL DEFAULT ''",
+            (),
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_app_index_target_path_column(conn: &Connection) -> Result<()> {
+    let has_column = {
+        let mut stmt = conn.prepare("PRAGMA table_info(app_index)")?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let found = columns
+            .filter_map(std::result::Result::ok)
+            .any(|column| column == "target_path");
+        found
+    };
+    if !has_column {
+        // Backfill once, before desc becomes presentation-only. Keep startup
+        // migration atomic so a failed update cannot lose old target metadata.
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
+            "ALTER TABLE app_index ADD COLUMN target_path TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+        tx.execute_batch(
+            r#"
+            UPDATE app_index SET target_path = CASE
+                WHEN coalesce(desc, '') <> '' THEN desc
+                WHEN lower(path) NOT LIKE '%.lnk' THEN path
+                ELSE '' END;
+        "#,
+        )?;
+        #[cfg(target_os = "windows")]
+        tx.execute_batch(
+            r#"
+            UPDATE app_index SET desc = ''
+            WHERE (is_custom = 0 AND (
+                lower(path) LIKE 'shell:appsfolder\%'
+                OR instr(replace(lower(path), '/', '\'), '\start menu\') > 0
+            )) OR target_path NOT GLOB '[A-Za-z]:[\/]*'
+               OR lower(target_path) LIKE '%.ico';
+        "#,
+        )?;
+        tx.commit()?;
+    }
+    Ok(())
+}
+
 #[allow(unused)]
 impl IndexSQL {
     pub fn new() -> Self {
@@ -446,6 +509,8 @@ impl IndexSQL {
             title        TEXT DEFAULT '',
             path        TEXT NOT NULL UNIQUE,
             desc        TEXT DEFAULT '',
+            arguments   TEXT NOT NULL DEFAULT '',
+            target_path TEXT NOT NULL DEFAULT '',
             icon        TEXT DEFAULT '',
             pinyin      TEXT DEFAULT '',
             abb         TEXT DEFAULT '',
@@ -459,6 +524,8 @@ impl IndexSQL {
         c.execute_batch(sql).unwrap();
         // Migrate databases created before manual application entries were introduced.
         ensure_app_index_custom_column(&c).unwrap();
+        ensure_app_index_arguments_column(&c).unwrap();
+        ensure_app_index_target_path_column(&c).unwrap();
         let sql = r#"
         CREATE TABLE IF NOT EXISTS file_index
         (
@@ -627,7 +694,7 @@ impl IndexSQL {
     }
 
     pub fn insert_app_index(&self, r: &FileIndex) -> Result<i64> {
-        let sql = "insert into app_index (title,path,desc,icon,pinyin,abb,md5) values (?1,?2,?3,?4,?5,?6,?7)";
+        let sql = "insert into app_index (title,path,desc,arguments,icon,pinyin,abb,md5,target_path) values (?1,?2,?3,?4,?5,?6,?7,?8,?9)";
         let md5 = string_factory::md5(r.path.as_str());
         let res = self.conn.execute(
             sql,
@@ -635,11 +702,12 @@ impl IndexSQL {
                 &r.title,
                 &r.path,
                 &r.desc,
+                &r.arguments,
                 &r.icon,
                 &r.pinyin,
                 &r.abb,
-                &r.file_type,
                 &md5,
+                &r.target_path,
             ],
         );
         match res {
@@ -657,8 +725,8 @@ impl IndexSQL {
         {
             let mut stmt = tx.prepare(
                 r#"
-                INSERT INTO app_index (title, path, desc, icon, pinyin, abb, md5)
-                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, md5, target_path)
+                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
                 WHERE NOT EXISTS (
                     SELECT 1 FROM app_index
                     WHERE replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
@@ -667,7 +735,17 @@ impl IndexSQL {
             )?;
             for r in paths {
                 let md5 = string_factory::md5(r.path.as_str());
-                let params = &[&r.title, &r.path, &r.desc, &r.icon, &r.pinyin, &r.abb, &md5];
+                let params = &[
+                    &r.title,
+                    &r.path,
+                    &r.desc,
+                    &r.arguments,
+                    &r.icon,
+                    &r.pinyin,
+                    &r.abb,
+                    &md5,
+                    &r.target_path,
+                ];
                 let res = stmt.execute(params);
                 match res {
                     Ok(_) => {
@@ -702,8 +780,8 @@ impl IndexSQL {
         let inserted = {
             let mut stmt = tx.prepare(
                 r#"
-                INSERT INTO app_index (title, path, desc, icon, pinyin, abb, type, md5, is_custom)
-                SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'app', ?7, 0
+                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, type, md5, is_custom, target_path)
+                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'app', ?8, 0, ?9
                 WHERE NOT EXISTS (
                     SELECT 1 FROM app_index
                     WHERE replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
@@ -720,7 +798,15 @@ impl IndexSQL {
                 }
                 let md5 = string_factory::md5(&app.path);
                 inserted += stmt.execute(rusqlite::params![
-                    app.title, app.path, app.desc, app.icon, app.pinyin, app.abb, md5,
+                    app.title,
+                    app.path,
+                    app.desc,
+                    app.arguments,
+                    app.icon,
+                    app.pinyin,
+                    app.abb,
+                    md5,
+                    app.target_path,
                 ])?;
             }
             inserted
@@ -758,19 +844,21 @@ impl IndexSQL {
             let updated = tx.execute(
                 r#"
                 UPDATE app_index SET
-                    title = ?1, path = ?2, desc = ?3, icon = ?4, pinyin = ?5,
-                    abb = ?6, type = 'app', md5 = ?7, is_custom = 1
-                WHERE id = ?8
+                    title = ?1, path = ?2, desc = ?3, arguments = ?4, icon = ?5, pinyin = ?6,
+                    abb = ?7, type = 'app', md5 = ?8, is_custom = 1, target_path = ?10
+                WHERE id = ?9
                 "#,
                 rusqlite::params![
                     &app.title,
                     &app.path,
                     &app.desc,
+                    &app.arguments,
                     &app.icon,
                     &app.pinyin,
                     &app.abb,
                     &md5,
-                    id
+                    id,
+                    &app.target_path,
                 ],
             )?;
             if updated != 1 {
@@ -779,17 +867,19 @@ impl IndexSQL {
         } else {
             tx.execute(
                 r#"
-                INSERT INTO app_index (title, path, desc, icon, pinyin, abb, type, md5, is_custom)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'app', ?7, 1)
+                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, type, md5, is_custom, target_path)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'app', ?8, 1, ?9)
                 "#,
                 rusqlite::params![
                     &app.title,
                     &app.path,
                     &app.desc,
+                    &app.arguments,
                     &app.icon,
                     &app.pinyin,
                     &app.abb,
-                    md5
+                    md5,
+                    &app.target_path,
                 ],
             )?;
         }
@@ -799,7 +889,7 @@ impl IndexSQL {
 
     pub fn list_custom_app_indexes(&self) -> Result<Vec<FileIndex>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, path, desc, icon FROM app_index WHERE is_custom = 1 ORDER BY title COLLATE NOCASE",
+            "SELECT id, title, path, desc, arguments, icon, target_path FROM app_index WHERE is_custom = 1 ORDER BY title COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(FileIndex {
@@ -807,7 +897,9 @@ impl IndexSQL {
                 title: row.get(1)?,
                 path: row.get(2)?,
                 desc: row.get(3)?,
-                icon: row.get(4)?,
+                arguments: row.get(4)?,
+                icon: row.get(5)?,
+                target_path: row.get(6)?,
                 file_type: "app".to_string(),
                 ..Default::default()
             })
@@ -845,7 +937,7 @@ impl IndexSQL {
         let contains = format!("%{}%", escaped);
         let offset = offset.max(0) as i64;
 
-        let sql = "SELECT id, title, path, desc, icon FROM app_index
+        let sql = "SELECT id, title, path, desc, arguments, icon, target_path FROM app_index
              WHERE title COLLATE NOCASE LIKE ?2 ESCAPE '\\'
                 OR pinyin COLLATE NOCASE LIKE ?2 ESCAPE '\\'
                 OR abb COLLATE NOCASE LIKE ?2 ESCAPE '\\'
@@ -874,7 +966,9 @@ impl IndexSQL {
                 title: row.get(1)?,
                 path: row.get(2)?,
                 desc: row.get(3)?,
-                icon: row.get(4)?,
+                arguments: row.get(4)?,
+                icon: row.get(5)?,
+                target_path: row.get(6)?,
                 file_type: "app".to_string(),
                 ..Default::default()
             };
@@ -1380,6 +1474,8 @@ mod app_index_tests {
             CREATE TABLE app_index (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT DEFAULT '', path TEXT NOT NULL UNIQUE, desc TEXT DEFAULT '',
+                arguments TEXT NOT NULL DEFAULT '',
+                target_path TEXT NOT NULL DEFAULT '',
                 icon TEXT DEFAULT '', pinyin TEXT DEFAULT '', abb TEXT DEFAULT '',
                 type TEXT DEFAULT 'app', md5 TEXT NOT NULL,
                 is_custom INTEGER NOT NULL DEFAULT 0,
@@ -1477,6 +1573,210 @@ mod app_index_tests {
 
         assert!(db.find_app("   ", 0).unwrap().is_empty());
         assert_eq!(db.find_app("code", -10).unwrap()[0].title, "Code");
+    }
+
+    #[test]
+    fn discovered_app_arguments_round_trip_through_rebuild_and_search() {
+        let mut db = test_index();
+        db.replace_discovered_app_indexes(vec![FileIndex {
+            title: "Node.js command prompt".to_string(),
+            path: r"C:\Windows\System32\cmd.exe".to_string(),
+            desc: r"C:\Windows\System32\cmd.exe".to_string(),
+            target_path: r"C:\Windows\System32\cmd.exe".to_string(),
+            arguments: "/K nodevars.bat".to_string(),
+            md5: "".to_string(),
+            ..Default::default()
+        }])
+        .unwrap();
+
+        let result = db.find_app("Node.js", 0).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].arguments, "/K nodevars.bat");
+        assert_eq!(result[0].target_path, r"C:\Windows\System32\cmd.exe");
+    }
+
+    #[test]
+    fn shell_target_survives_rebuild_and_search_with_empty_description() {
+        let mut db = test_index();
+        let target = "::{2559A1F3-21D7-11D4-BDAF-00C04F60B9F0}";
+        let app = FileIndex {
+            title: "运行".to_string(),
+            path: r"shell:AppsFolder\Microsoft.Windows.Shell.RunDialog".to_string(),
+            target_path: target.to_string(),
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            db.replace_discovered_app_indexes(vec![app.clone()])
+                .unwrap();
+            let result = db.find_app("运行", 0).unwrap();
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0].target_path, target);
+            assert!(result[0].desc.is_empty());
+        }
+    }
+
+    #[test]
+    fn all_app_writers_persist_target_independently_of_description() {
+        let mut db = test_index();
+        let mut app = FileIndex {
+            title: "Tool".to_string(),
+            path: r"C:\Menu\Tool.lnk".to_string(),
+            target_path: r"C:\Apps\Tool.exe".to_string(),
+            ..Default::default()
+        };
+        db.insert_app_index(&app).unwrap();
+        app.path = r"C:\Menu\Tool2.lnk".to_string();
+        db.insert_app_indexes(vec![app.clone()]).unwrap();
+        let results = db.find_app("Tool", 0).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .all(|item| item.target_path == app.target_path && item.desc.is_empty()));
+        app.path = r"C:\Manual\Tool.exe".to_string();
+        db.upsert_custom_app_index(&app).unwrap();
+        assert_eq!(
+            db.list_custom_app_indexes().unwrap()[0].target_path,
+            app.target_path
+        );
+        app.target_path = r"D:\Apps\Tool.exe".to_string();
+        db.upsert_custom_app_index(&app).unwrap();
+        let result = db.list_custom_app_indexes().unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].target_path, app.target_path);
+        assert!(result[0].desc.is_empty());
+    }
+
+    #[test]
+    fn target_path_migration_preserves_old_targets_and_only_cleans_display_text_once() {
+        let db = test_index();
+        db.conn
+            .execute("ALTER TABLE app_index DROP COLUMN target_path", [])
+            .unwrap();
+        let guid = "::{2559A1F3-21D7-11D4-BDAF-00C04F60B9F0}";
+        let entries = [
+            (
+                "Run",
+                r"shell:AppsFolder\Microsoft.Windows.Shell.RunDialog",
+                guid,
+                0,
+                guid,
+                "",
+            ),
+            (
+                "Registered",
+                r"shell:AppsFolder\Tool",
+                r"C:\Apps\Tool.exe",
+                0,
+                r"C:\Apps\Tool.exe",
+                "",
+            ),
+            (
+                "Start Menu",
+                r"C:/Users/User/Start Menu/Programs/Tool.lnk",
+                r"C:\Apps\Tool.exe",
+                0,
+                r"C:\Apps\Tool.exe",
+                "",
+            ),
+            (
+                "Desktop",
+                r"C:\Users\User\Desktop\Tool.lnk",
+                r"C:\Apps\Tool.exe",
+                0,
+                r"C:\Apps\Tool.exe",
+                r"C:\Apps\Tool.exe",
+            ),
+            (
+                "Charles",
+                r"C:\Users\User\Desktop\Charles.lnk",
+                r"C:\Installer\Charles.ico",
+                0,
+                r"C:\Installer\Charles.ico",
+                "",
+            ),
+            (
+                "Manual",
+                r"C:\Start Menu\Custom.exe",
+                r"C:\Start Menu\Custom.exe",
+                1,
+                r"C:\Start Menu\Custom.exe",
+                r"C:\Start Menu\Custom.exe",
+            ),
+            (
+                "Unknown",
+                r"C:\Users\User\Desktop\Unknown.lnk",
+                "",
+                0,
+                "",
+                "",
+            ),
+            (
+                "Direct",
+                r"D:\Apps\Direct.exe",
+                "",
+                0,
+                r"D:\Apps\Direct.exe",
+                "",
+            ),
+        ];
+        for (title, path, desc, custom, _, _) in entries {
+            db.conn
+                .execute(
+                    "INSERT INTO app_index (title,path,desc,md5,is_custom) VALUES (?1,?2,?3,?4,?5)",
+                    rusqlite::params![title, path, desc, title, custom],
+                )
+                .unwrap();
+        }
+        ensure_app_index_target_path_column(&db.conn).unwrap();
+        for (title, _, _, _, target, desc) in entries {
+            let result = db.find_app(title, 0).unwrap();
+            let item = result.iter().find(|item| item.title == title).unwrap();
+            assert_eq!(item.target_path, target, "{title}");
+            assert_eq!(item.desc, desc, "{title}");
+        }
+        db.conn
+            .execute(
+                "UPDATE app_index SET desc = 'display-only' WHERE title = 'Registered'",
+                [],
+            )
+            .unwrap();
+        ensure_app_index_target_path_column(&db.conn).unwrap();
+        let app = db.find_app("Registered", 0).unwrap().remove(0);
+        assert_eq!(app.target_path, r"C:\Apps\Tool.exe");
+        assert_eq!(app.desc, "display-only");
+        assert_eq!(db.list_custom_app_indexes().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rebuild_keeps_shortcuts_with_distinct_arguments_same_target_and_empty_desc() {
+        let mut db = test_index();
+        let apps = ["", "/K nodevars.bat", "/C tools.cmd"]
+            .iter()
+            .enumerate()
+            .map(|(i, args)| FileIndex {
+                title: format!("Console {i}"),
+                path: format!(r"C:\Menu\Console {i}.lnk"),
+                target_path: r"C:\Windows\System32\cmd.exe".to_string(),
+                arguments: args.to_string(),
+                ..Default::default()
+            })
+            .collect();
+        assert_eq!(db.replace_discovered_app_indexes(apps).unwrap(), 3);
+        let results = db.find_app("Console", 0).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(
+            results
+                .iter()
+                .map(|item| item.arguments.as_str())
+                .collect::<Vec<_>>(),
+            vec!["", "/K nodevars.bat", "/C tools.cmd"]
+        );
+        assert!(
+            results
+                .iter()
+                .all(|item| item.target_path == r"C:\Windows\System32\cmd.exe"
+                    && item.desc.is_empty())
+        );
     }
 
     #[test]

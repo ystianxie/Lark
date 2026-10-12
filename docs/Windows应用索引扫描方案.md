@@ -1,10 +1,12 @@
 # Windows 应用索引扫描方案
 
-> 更新时间：2026-09-21
+> 更新时间：2026-10-11
 > 适用范围：Windows 应用索引。macOS 扫描逻辑保持原样。
 > 相关实现：`src-tauri/src/api/explorer.rs`、`src-tauri/src/api/windows_apps.rs`、`src-tauri/src/utils/database.rs`、`src-tauri/src/api/file.rs`
 
 ## 1. 目标
+
+> 2026-10-12 补充：当前字段、参数关联及跨来源去重规则以 `docs/应用索引扫描过滤流程.md` 为准。开始菜单也作为补充来源；有效 `.lnk` 保存原始入口用于启动，目标保存在新增的 `target_path`。所有来源统一按已知 `target_path + arguments` 去重，参数无法确认时按 `path` 保留；确认重复后手动记录优先，其次保留 AppsFolder 的入口和图标。`desc` 仅用于展示，AppsFolder 和开始菜单留空，桌面、配置目录及手动应用显示普通目标路径。工作目录不参与去重。
 
 索引展示的是用户可以直接启动的应用，而不是磁盘上所有的 `.exe`。当前方案采用“注册应用优先、文件系统补充”的分层策略：
 
@@ -161,7 +163,7 @@ DELETE FROM app_index WHERE is_custom = 0
 - `.rdp`：沿用 Windows 文件关联；
 - `.url`：不进入应用索引。
 
-图标优先使用 AppsFolder 属性提供的包图标，其次使用关联图标或 PE 图标。属性读取失败、图标路径无扩展名或图标损坏都只影响图标，不影响应用记录。
+图标优先使用 AppsFolder 属性提供的包图标，其次通过 `IShellItemImageFactory` 读取 AppsFolder 原始 `path` 的图标，最后尝试 `target_path` 的目标图标。虚拟 Shell 标识不按普通文件路径读取图标。属性读取失败、图标路径无扩展名或图标损坏都只影响图标，不影响应用记录。
 
 ## 8. 典型结果
 

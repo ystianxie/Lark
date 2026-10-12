@@ -26,6 +26,7 @@ import {debounce} from "lodash/function.js";
 import {invoke, convertFileSrc} from '@tauri-apps/api/core';
 import {isMacOs, isWindows} from 'react-device-detect';
 import {action_readFile} from "./baseComponent.jsx"
+import {getAppLocationPath} from "./utils/appLocation";
 import ReactDOM from 'react-dom';
 
 const appWindow = getCurrentWindow();
@@ -52,7 +53,8 @@ function TemplateComponent({
     };
 
     const displayDesc = (component, selected) => {
-        if (fnDown && selected && (component.type === "app" || component.type === "file")) {
+        if (fnDown && selected && (component.type === "file"
+            || (component.type === "app" && getAppLocationPath(component)))) {
             return "打开所在文件夹";
         } else {
             return component.desc?.replace(/\n/g, " ");

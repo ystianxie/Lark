@@ -1,7 +1,7 @@
 import {invoke} from "@tauri-apps/api/core";
 
-async function open_app(app_path, app_name) {
-    await invoke("open_app", {appPath: app_path, appName: app_name});
+async function open_app(app_path, app_name, app_arguments = "") {
+    await invoke("open_app", {appPath: app_path, appName: app_name, appArguments: app_arguments});
 }
 
 
