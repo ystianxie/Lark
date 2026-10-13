@@ -62,6 +62,8 @@ pub struct BaseConfig {
     /// 是否已经完成或跳过首次使用向导。旧配置缺少此字段时按未完成处理。
     #[serde(default)]
     pub onboarding_completed: bool,
+    #[serde(default)]
+    pub appearance: super::appearance::Appearance,
 }
 
 fn default_snippet_trigger() -> String {
@@ -145,6 +147,7 @@ impl Default for BaseConfig {
             text_snippets: Vec::new(),
             python_interpreter: None,
             onboarding_completed: false,
+            appearance: super::appearance::Appearance::default(),
         }
     }
     #[cfg(target_os = "windows")]
@@ -213,10 +216,7 @@ impl Default for BaseConfig {
                 "msi".to_string(),
                 "evt".to_string(),
             ],
-            local_app_search_paths: vec![
-                r"D:\App".to_string(),
-                r"D:\Apps".to_string()
-            ],
+            local_app_search_paths: vec![r"D:\App".to_string(), r"D:\Apps".to_string()],
             local_app_search_exclude_paths: Vec::new(),
             app_index_initialized: false,
             file_index_initialized: false,
@@ -226,6 +226,7 @@ impl Default for BaseConfig {
             text_snippets: Vec::new(),
             python_interpreter: None,
             onboarding_completed: false,
+            appearance: super::appearance::Appearance::default(),
         }
     }
 }
@@ -561,6 +562,18 @@ pub fn app_settings() -> Result<Value> {
 pub fn save_onboarding_completed(completed: bool) -> Result<()> {
     let mut config = Config::new();
     config.update_local_config(ConfigUpdate::OnboardingCompleted(completed));
+    config.save_local_config()
+}
+
+pub(super) fn read_appearance() -> Result<super::appearance::Appearance> {
+    Ok(Config::read_local_config()?.base.appearance)
+}
+
+pub(super) fn save_appearance_data(appearance: super::appearance::Appearance) -> Result<()> {
+    let mut config = Config {
+        config: Config::read_local_config()?,
+    };
+    config.config.base.appearance = appearance;
     config.save_local_config()
 }
 

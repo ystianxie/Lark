@@ -1,0 +1,174 @@
+:root {
+  --font-family-ui: "HarmonyOS Sans", "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  --panel-bg: #f5f6f8;
+  --panel-surface: #fff;
+  --surface-muted: #f8f9fb;
+  --surface-hover: #eceff4;
+  --text-primary: #273142;
+  --text-secondary: #667085;
+  --text-muted: #8a94a3;
+  --text-on-accent: #fff;
+  --border-color: #dce1e9;
+  --border-subtle: #e9edf3;
+  --accent: #4f7df3;
+  --accent-hover: #416ce0;
+  --accent-soft: #edf2ff;
+  --accent-border: #afc4f8;
+  --focus-ring: rgba(79, 125, 243, .16);
+  --danger: #c43f3f;
+  --danger-soft: #fff0ef;
+  --danger-border: #f4c4bf;
+  --warning: #936900;
+  --warning-soft: #fff3cd;
+  --success: #238659;
+  --success-soft: #edf8ef;
+  --purple: #8055ba;
+  --purple-soft: #f2edfa;
+  --scrollbar-track: #edf0f4;
+  --scrollbar-thumb: #b8c0cc;
+  --scrollbar-hover: #9da7b5;
+  --surface-shadow: rgba(25, 35, 50, .06);
+  --surface-overlay: rgba(255, 255, 255, .94);
+  --launcher-bg: #252628;
+  --launcher-input-bg: #242422;
+  --launcher-border: #606060;
+  --launcher-text: #d5d5d6;
+  --launcher-muted: #9199a5;
+  --launcher-hover: rgba(255, 255, 255, .09);
+  --launcher-chip-border: rgba(255, 255, 255, .14);
+  --launcher-icon-bg: rgba(250, 250, 250, .75);
+  --result-text: #e4e7ec;
+  --result-muted: #9199a5;
+  --result-hint-border: #42464e;
+  --result-selected-bg: #303e50;
+  --result-selected-border: #465b74;
+  --result-selected-accent: #8ab9ee;
+  --result-selected-text: #f3f6fb;
+  --result-selected-muted: #b1bfd0;
+  --result-selected-hint-bg: #394b61;
+  --result-selected-hint-border: #586c84;
+  --result-selected-hint-text: #d9e7f8;
+  --result-file-bg: #33373d;
+  --result-file-accent: #a1a9b6;
+  --result-app-bg: #2c3949;
+  --result-app-accent: #82b7ef;
+  --result-image-bg: #2b3e3c;
+  --result-image-accent: #74c7b9;
+  --result-code-bg: #383247;
+  --result-code-accent: #b6a0e4;
+  --result-utility-bg: #34394b;
+  --result-utility-accent: #b3bde2;
+}
+
+:root[data-theme="light"],
+:root[data-theme="frosted"] {
+  --launcher-bg: #f5f6f8;
+  --launcher-input-bg: #fff;
+  --launcher-border: #d1d8e3;
+  --launcher-text: #273142;
+  --launcher-muted: #667085;
+  --launcher-hover: #e9edf4;
+  --launcher-chip-border: #d1d8e3;
+  --launcher-icon-bg: #e9edf4;
+  --result-text: #273142;
+  --result-muted: #667085;
+  --result-hint-border: #d4dbe5;
+  --result-selected-bg: #e8efff;
+  --result-selected-border: #b8ccfa;
+  --result-selected-accent: #4f7df3;
+  --result-selected-text: #233f78;
+  --result-selected-muted: #506990;
+  --result-selected-hint-bg: #dce7fd;
+  --result-selected-hint-border: #b4c8f2;
+  --result-selected-hint-text: #3157a0;
+  --result-file-bg: #e7ebf1;
+  --result-file-accent: #667085;
+  --result-app-bg: #e2edfc;
+  --result-app-accent: #3872bb;
+  --result-image-bg: #def2ec;
+  --result-image-accent: #2c8674;
+  --result-code-bg: #ece5f8;
+  --result-code-accent: #8055ba;
+  --result-utility-bg: #e6eafa;
+  --result-utility-accent: #5b6bab;
+}
+
+:root[data-theme="frosted"] {
+  --launcher-bg: rgba(238, 244, 244, .66);
+  --launcher-input-bg: transparent;
+  --launcher-border: rgba(255, 255, 255, .65);
+  --launcher-text: #23343a;
+  --launcher-muted: #52666d;
+  --launcher-hover: rgba(255, 255, 255, .38);
+  --launcher-chip-border: rgba(83, 109, 119, .18);
+  --launcher-icon-bg: rgba(255, 255, 255, .48);
+  --result-text: #23343a;
+  --result-muted: #52666d;
+  --result-hint-border: rgba(83, 109, 119, .2);
+  --result-selected-bg: rgba(255, 255, 255, .5);
+  --result-selected-border: rgba(65, 117, 133, .32);
+  --result-selected-accent: #39788a;
+  --result-selected-text: #1d424e;
+  --result-selected-muted: #42616b;
+  --result-selected-hint-bg: rgba(211, 230, 234, .7);
+  --result-selected-hint-border: rgba(65, 117, 133, .28);
+  --result-selected-hint-text: #2c6474;
+  --result-file-bg: rgba(234, 240, 242, .58);
+  --result-app-bg: rgba(219, 233, 243, .65);
+  --result-image-bg: rgba(218, 240, 230, .65);
+  --result-code-bg: rgba(233, 224, 245, .65);
+  --result-utility-bg: rgba(224, 232, 244, .65);
+}
+
+/* An unsupported native compositor gets a denser surface to keep text readable. */
+:root[data-theme="frosted"][data-native-blur="inactive"] {
+  --launcher-bg: rgba(238, 244, 244, .94);
+}
+
+:root[data-theme="frosted"] #mainDiv {
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, .24), rgba(198, 220, 225, .12));
+  backdrop-filter: blur(24px) saturate(115%);
+  -webkit-backdrop-filter: blur(24px) saturate(115%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55);
+}
+
+:root[data-theme="dark"] {
+  --panel-bg: #1e222a;
+  --panel-surface: #252a33;
+  --surface-muted: #222731;
+  --surface-hover: #303744;
+  --text-primary: #e3e8f0;
+  --text-secondary: #a8b2c1;
+  --text-muted: #8e9aad;
+  --text-on-accent: #172238;
+  --border-color: #414a59;
+  --border-subtle: #343c49;
+  --accent: #7aa7ff;
+  --accent-hover: #9abbff;
+  --accent-soft: #293a58;
+  --accent-border: #4d6b9d;
+  --focus-ring: rgba(122, 167, 255, .2);
+  --danger: #f18e8e;
+  --danger-soft: #442c32;
+  --danger-border: #77434b;
+  --warning: #e6bd65;
+  --warning-soft: #443b26;
+  --success: #72c99e;
+  --success-soft: #263e33;
+  --purple: #b79ce8;
+  --purple-soft: #373044;
+  --scrollbar-track: #222731;
+  --scrollbar-thumb: #4c5869;
+  --scrollbar-hover: #627087;
+  --surface-shadow: rgba(0, 0, 0, .2);
+  --surface-overlay: rgba(37, 42, 51, .96);
+  --launcher-bg: #1e222a;
+  --launcher-input-bg: #252a33;
+  --launcher-border: #414a59;
+  --launcher-text: #e3e8f0;
+}
+
+.panelSubPage { color: var(--text-primary); }
+.panelSubPage input::placeholder,
+.panelSubPage textarea::placeholder { color: var(--text-muted); }
+#mainInput::placeholder { color: var(--launcher-muted); opacity: 1; }

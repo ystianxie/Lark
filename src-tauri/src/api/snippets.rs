@@ -35,17 +35,21 @@ pub fn update_settings(enabled: bool, trigger: String, snippets: Vec<TextSnippet
 }
 
 #[cfg(target_os = "windows")]
-pub fn start() {
-    thread::spawn(|| {
+pub fn start(app: tauri::AppHandle) {
+    thread::spawn(move || {
         let mut state = MatchState::default();
-        if let Err(error) = rdev::listen(move |event| handle_event(event, &mut state)) {
+        let mut keyboard = crate::api::file_jump_hotkey::KeyboardState::default();
+        if let Err(error) = rdev::listen(move |event| {
+            keyboard.handle_event(event.event_type, &app, INJECTING.load(Ordering::Acquire));
+            handle_event(event, &mut state);
+        }) {
             eprintln!("文本片段键盘监听启动失败: {error:?}");
         }
     });
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn start() {}
+pub fn start(_app: tauri::AppHandle) {}
 
 fn handle_event(event: Event, state: &mut MatchState) {
     if INJECTING.load(Ordering::Acquire) {

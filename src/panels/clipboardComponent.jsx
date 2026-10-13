@@ -33,7 +33,7 @@ const Wrapper = createGlobalStyle`
    .settingSmallFrame {
         height: 80px;
         width: 150px;
-        background-color: #cbcbcb;
+        background-color: var(--surface-hover);
         display: flex;
         justify-content: center;
         align-items: center;
@@ -42,12 +42,12 @@ const Wrapper = createGlobalStyle`
         border-radius: 10px;
     }
     .hotkeys-input {
-      border: 1px solid #d9d9d9;
+      border: 1px solid var(--border-color);
       padding: 4px 11px;
       border-radius: 2px;
       outline: none;
       white-space: pre-wrap;
-      background-color:white;
+      background-color:var(--panel-surface);
       width:250px;
       border-radius:6px;
       font-size:18px;
@@ -56,18 +56,18 @@ const Wrapper = createGlobalStyle`
     
     .hotkeys-input:empty:before {
       content: attr(placeholder);
-      color: #bfbfbf;
+      color: var(--text-muted);
     }
     .hotkeys-input:focus {
       outline: none;
-      border-color: #1890ff; /* 选中时的边框颜色 */
+      border-color: var(--accent); /* 选中时的边框颜色 */
     }
     
     .highlight {
-      color: black; 
+      color: var(--text-primary);
     }
     .lowlight {
-        color: #bfbfbf;
+        color: var(--text-muted);
     }
     
     .hotkeysFrame {
@@ -92,16 +92,16 @@ const Wrapper = createGlobalStyle`
         overflow: hidden;
         border-top-left-radius: 10px;
         border-bottom-left-radius: 10px;
-        background: #242424;
+        background: var(--launcher-bg);
     }
     .clipboard-list-surface #scrollableDiv {
         position: relative;
         box-sizing: border-box;
         width: 100% !important;
-        background: #242424;
+        background: var(--launcher-bg);
     }
     .panelSubPage .clipboard-list-surface #scrollableDiv {
-        scrollbar-color: rgba(0, 0, 0, 0.42) transparent;
+        scrollbar-color: var(--scrollbar-thumb) transparent;
         scrollbar-width: thin;
     }
     .panelSubPage .clipboard-list-surface #scrollableDiv::-webkit-scrollbar {
@@ -112,33 +112,33 @@ const Wrapper = createGlobalStyle`
         background: transparent;
     }
     .panelSubPage .clipboard-list-surface #scrollableDiv::-webkit-scrollbar-thumb {
-        background: rgba(0, 0, 0, 0.32);
+        background: var(--scrollbar-thumb);
         border-radius: 6px;
     }
     .panelSubPage .clipboard-list-surface #scrollableDiv::-webkit-scrollbar-thumb:hover {
-        background: rgba(0, 0, 0, 0.52);
+        background: var(--scrollbar-thumb);
     }
     .clipboard-list-surface .ant-list,
     .clipboard-list-surface .ant-list-items {
-        background: #242424;
+        background: var(--launcher-bg);
     }
     .clipboard-list-surface .ant-list-item {
         padding-right: 48px !important;
-        background-color: #242424;
+        background-color: var(--launcher-bg);
     }
     .clipboard-list-surface .ant-list-item:hover:not(.activate) {
-        background-color: #2d2d2d;
+        background-color: var(--launcher-hover);
     }
     .clipboard-list-surface .ant-list-item.activate {
-        background-color: #31575b;
-        box-shadow: inset 2px 0 #70b9bf;
+        background-color: var(--result-selected-bg);
+        box-shadow: inset 2px 0 var(--result-selected-accent);
     }
     .clipboard-list-surface .clipboard-item {
         width: 100%;
-        color: #c9c9cc;
+        color: var(--launcher-text);
     }
     .clipboard-list-surface .ant-list-item.activate .clipboard-item {
-        color: #f0f3f3;
+        color: var(--result-selected-text);
     }
     .clipboard-shortcuts {
         position: absolute;
@@ -158,10 +158,10 @@ const Wrapper = createGlobalStyle`
         align-items: center;
         justify-content: center;
         line-height: 1;
-        color: #777b82;
+        color: var(--launcher-muted);
     }
     .clipboard-shortcut.activate {
-        color: #e8f2f2;
+        color: var(--result-selected-hint-text);
         font-size: 14px;
     }
     .clipboard-list-surface .ant-list-item {
@@ -176,7 +176,7 @@ const Wrapper = createGlobalStyle`
         -ms-user-select: none;
         cursor: default;
         width: 70%;
-        color: #d5d5d6;
+        color: var(--launcher-text);
     }
     .ant-list-item{
         box-sizing: border-box;
@@ -185,12 +185,12 @@ const Wrapper = createGlobalStyle`
         flex: none !important;
         width: 100%;
         padding: 0 10px !important;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.035) !important;
-        color: #d5d5d6;
+        border-bottom: 1px solid var(--launcher-chip-border) !important;
+        color: var(--launcher-text);
         transition: background-color 120ms ease;
     }
     .ant-list-item:hover:not(.activate){
-        background-color: rgba(255, 255, 255, 0.045);
+        background-color: var(--launcher-hover);
     }
     .ant-list-item-meta{
         flex: none !important;
@@ -202,11 +202,11 @@ const Wrapper = createGlobalStyle`
     }
     .ant-list-item-meta-avatar .ant-avatar{
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.08);
+        background: var(--launcher-chip-border);
     }
     .ant-list-item.activate{
-        background-color: rgba(58, 127, 135, 0.38);
-        box-shadow: inset 2px 0 #62aeb4;
+        background-color: var(--result-selected-bg);
+        box-shadow: inset 2px 0 var(--result-selected-accent);
     }
     .clipboard-item-wrapper{
         display: flex;
@@ -222,12 +222,12 @@ const Wrapper = createGlobalStyle`
         flex-direction: column;
         width: 50%;
         padding: 14px 16px 12px;
-        background-color: #242424;
-        color: #d5d5d6;
-        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        background-color: var(--launcher-bg);
+        color: var(--launcher-text);
+        border-left: 1px solid var(--launcher-chip-border);
     }
     .panelSubPage .clipboard-preview {
-        scrollbar-color: rgba(0, 0, 0, 0.42) transparent;
+        scrollbar-color: var(--scrollbar-thumb) transparent;
         scrollbar-width: thin;
     }
     .panelSubPage .clipboard-preview::-webkit-scrollbar {
@@ -238,11 +238,11 @@ const Wrapper = createGlobalStyle`
         background: transparent;
     }
     .panelSubPage .clipboard-preview::-webkit-scrollbar-thumb {
-        background: rgba(0, 0, 0, 0.42);
+        background: var(--scrollbar-thumb);
         border-radius: 6px;
     }
     .panelSubPage .clipboard-preview::-webkit-scrollbar-thumb:hover {
-        background: rgba(0, 0, 0, 0.62);
+        background: var(--scrollbar-thumb);
     }
     .clipboard-preview{
         box-sizing: border-box;
@@ -252,8 +252,8 @@ const Wrapper = createGlobalStyle`
         overflow: auto;
         padding: 12px;
         border-radius: 10px;
-        background-color: rgba(255, 255, 255, 0.045);
-        color: #dedee0;
+        background-color: var(--launcher-hover);
+        color: var(--launcher-text);
         font-size: 14px;
         line-height: 1.55;
         overflow-wrap: anywhere;
@@ -268,7 +268,7 @@ const Wrapper = createGlobalStyle`
         align-items: center;
         gap: 9px;
         min-height: 28px;
-        color: #dedee0;
+        color: var(--launcher-text);
     }
     .clipboard-preview-file img{
         flex: none;
@@ -290,7 +290,7 @@ const Wrapper = createGlobalStyle`
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #8f9095;
+        color: var(--launcher-muted);
         font-size: 14px;
     }
     .clipboard-metadata{
@@ -298,7 +298,7 @@ const Wrapper = createGlobalStyle`
         justify-content: space-between;
         gap: 10px;
         padding-top: 10px;
-        color: #929399;
+        color: var(--launcher-muted);
         font-size: 11px;
         font-variant-numeric: tabular-nums;
         white-space: nowrap;

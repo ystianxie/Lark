@@ -11,6 +11,7 @@ import {useCallback, useEffect, useRef, useState} from "react";
 import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import {listen} from "@tauri-apps/api/event";
 import ScreenshotOverlay from "./panels/ScreenshotOverlay";
+import {suspendNativeAppearanceEffect} from "./theme/nativeEffect";
 import webImg from "./assets/web.svg";
 import baseComponent from "./baseComponent";
 import {habitRank, normalizeHabitState, updateHabitState} from "./appHabit";
@@ -122,7 +123,10 @@ const App = () => {
         screenshotWindowState.current = null;
         setScreenshotCapture(null);
         screenshotCaptureRef.current = null;
-        if (!previous) return;
+        if (!previous) {
+            await suspendNativeAppearanceEffect(false);
+            return;
+        }
         try {
             await appWindow.setSize(previous.size);
             await appWindow.setPosition(previous.position);
@@ -137,6 +141,8 @@ const App = () => {
             }
         } catch (error) {
             console.warn('恢复截图窗口失败', error);
+        } finally {
+            await suspendNativeAppearanceEffect(false);
         }
     };
 
@@ -162,6 +168,7 @@ const App = () => {
         // blur handler does not treat the transition as a normal auto-hide.
         screenshotCaptureRef.current = {pending: true};
         try {
+            await suspendNativeAppearanceEffect(true);
             console.time("[Screenshot] 1-获取窗口状态");
             // 并行获取窗口状态，避免串行等待
             const [size, position, alwaysOnTop, visible] = await Promise.all([

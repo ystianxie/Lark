@@ -13,6 +13,7 @@ import {
 import {invoke} from "@tauri-apps/api/core";
 import {open} from "@tauri-apps/plugin-dialog";
 import {listen} from "@tauri-apps/api/event";
+import ThemePanel from './ThemePanel';
 
 const Wrapper = createGlobalStyle`
     a {
@@ -42,8 +43,8 @@ const Wrapper = createGlobalStyle`
         box-sizing: border-box;
         min-height: 78px;
         min-width: 0;
-        background: #fafafa;
-        border: 1px solid #ededed;
+        background: var(--surface-muted);
+        border: 1px solid var(--border-subtle);
         display: flex;
         justify-content: center;
         align-items: center;
@@ -59,21 +60,21 @@ const Wrapper = createGlobalStyle`
         min-height: 42px;
         padding: 6px 10px;
         overflow: hidden;
-        border: 1px solid #d9d9d9;
+        border: 1px solid var(--border-color);
         border-radius: 8px;
         outline: none;
-        background: #fff;
+        background: var(--panel-surface);
         cursor: text;
     }
 
     .hotkeys-input:empty:before {
         content: attr(placeholder);
-        color: #bfbfbf;
+        color: var(--text-muted);
     }
 
     .hotkeys-input:focus {
-        border-color: #1677ff;
-        box-shadow: 0 0 0 2px rgba(5, 145, 255, 0.1);
+        border-color: var(--accent-border);
+        box-shadow: 0 0 0 2px var(--focus-ring);
     }
 
     .hotkeyKeys {
@@ -90,27 +91,27 @@ const Wrapper = createGlobalStyle`
         min-width: 27px;
         height: 26px;
         padding: 0 7px;
-        border: 1px solid #d6dbe3;
+        border: 1px solid var(--border-color);
         border-bottom-width: 2px;
         border-radius: 6px;
-        background: linear-gradient(#fff, #f7f8fa);
-        color: #303846;
+        background: linear-gradient(var(--panel-surface), var(--surface-muted));
+        color: var(--text-primary);
         font-family: "Segoe UI", sans-serif;
         font-size: 12px;
         font-weight: 600;
         line-height: 1;
-        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+        box-shadow: 0 1px 1px var(--surface-shadow);
         white-space: nowrap;
     }
 
     .hotkeySeparator {
-        color: #b8bec8;
+        color: var(--text-muted);
         font-size: 12px;
         user-select: none;
     }
 
     .hotkeyPlaceholder {
-        color: #bfbfbf;
+        color: var(--text-muted);
         font-size: 13px;
     }
 
@@ -122,10 +123,10 @@ const Wrapper = createGlobalStyle`
 
     .appSettingCard {
         padding: 14px;
-        border: 1px solid #e8e8e8;
+        border: 1px solid var(--border-subtle);
         border-radius: 10px;
-        background: #fff;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+        background: var(--panel-surface);
+        box-shadow: 0 1px 2px var(--surface-shadow);
     }
 
     .appSettingActionRow {
@@ -153,14 +154,14 @@ const Wrapper = createGlobalStyle`
     }
 
     .hotkeyName {
-        color: #262626;
+        color: var(--text-primary);
         font-size: 13px;
         font-weight: 600;
     }
 
     .hotkeyDescription {
         margin-top: 2px;
-        color: #8c8c8c;
+        color: var(--text-secondary);
         font-size: 11px;
     }
 
@@ -180,8 +181,8 @@ const Wrapper = createGlobalStyle`
         justify-content: flex-end;
         gap: 8px;
         padding: 10px 12px;
-        background: rgba(255, 255, 255, .94);
-        border-top: 1px solid #edf0f5;
+        background: var(--surface-overlay);
+        border-top: 1px solid var(--border-subtle);
         border-radius: 8px;
     }
 
@@ -203,36 +204,36 @@ const Wrapper = createGlobalStyle`
         align-items: center;
         gap: 12px;
         padding: 9px 12px;
-        border: 1px solid #dce8ff;
+        border: 1px solid var(--border-color);
         border-radius: 8px;
-        background: #fff;
-        color: #475569;
+        background: var(--panel-surface);
+        color: var(--text-secondary);
         font-size: 12px;
     }
 
     .indexCountValue {
-        color: #2563eb;
+        color: var(--accent);
         font-size: 15px;
         font-weight: 650;
     }
 
     .indexSettingsIntro {
         padding: 16px 18px;
-        border: 1px solid #dce8ff;
+        border: 1px solid var(--border-color);
         border-radius: 12px;
-        background: linear-gradient(135deg, #f7faff 0%, #eef5ff 100%);
+        background: linear-gradient(135deg, var(--surface-muted) 0%, var(--accent-soft) 100%);
     }
 
     .indexSettingsTitle {
         margin: 0;
-        color: #1f2937;
+        color: var(--text-primary);
         font-size: 16px;
         font-weight: 650;
     }
 
     .indexSettingsDescription {
         margin: 5px 0 0;
-        color: #64748b;
+        color: var(--text-secondary);
         font-size: 12px;
         line-height: 1.6;
     }
@@ -246,10 +247,10 @@ const Wrapper = createGlobalStyle`
     .indexSettingCard {
         min-width: 0;
         padding: 14px;
-        border: 1px solid #e6eaf0;
+        border: 1px solid var(--border-subtle);
         border-radius: 12px;
-        background: #fff;
-        box-shadow: 0 2px 8px rgba(31, 41, 55, 0.04);
+        background: var(--panel-surface);
+        box-shadow: 0 2px 8px var(--surface-shadow);
     }
 
     .indexSettingHeader {
@@ -262,14 +263,14 @@ const Wrapper = createGlobalStyle`
 
     .indexSettingHeading {
         margin: 0;
-        color: #262f3d;
+        color: var(--text-primary);
         font-size: 13px;
         font-weight: 650;
     }
 
     .indexSettingHint {
         margin-top: 3px;
-        color: #8a94a3;
+        color: var(--text-muted);
         font-size: 11px;
         line-height: 1.45;
     }
@@ -278,8 +279,8 @@ const Wrapper = createGlobalStyle`
         flex: none;
         padding: 2px 8px;
         border-radius: 999px;
-        background: #f0f5ff;
-        color: #3b6edc;
+        background: var(--accent-soft);
+        color: var(--accent);
         font-size: 11px;
         font-weight: 600;
     }
@@ -290,9 +291,9 @@ const Wrapper = createGlobalStyle`
         max-height: 132px;
         padding: 9px;
         overflow-y: auto;
-        border: 1px solid #e5e9ef;
+        border: 1px solid var(--border-subtle);
         border-radius: 9px;
-        background: #fafbfc;
+        background: var(--surface-muted);
     }
 
     .indexSettingList::-webkit-scrollbar {
@@ -301,22 +302,22 @@ const Wrapper = createGlobalStyle`
 
     .indexSettingList::-webkit-scrollbar-thumb {
         border-radius: 999px;
-        background: #d6deea;
+        background: var(--accent-soft);
     }
 
     .indexSettingList::-webkit-scrollbar-track {
         border-radius: 999px;
-        background: #f1f4f8;
+        background: var(--surface-muted);
     }
 
     .indexSettingList .ant-tag {
         max-width: 100%;
         margin: 0 6px 6px 0;
         overflow: hidden;
-        border-color: #dbe5f5;
+        border-color: var(--border-color);
         border-radius: 6px;
-        background: #fff;
-        color: #46566c;
+        background: var(--panel-surface);
+        color: var(--text-secondary);
         text-overflow: ellipsis;
     }
 
@@ -325,7 +326,7 @@ const Wrapper = createGlobalStyle`
         min-height: 64px;
         align-items: center;
         justify-content: center;
-        color: #a0a8b4;
+        color: var(--text-muted);
         font-size: 12px;
         text-align: center;
     }
@@ -349,13 +350,13 @@ const Wrapper = createGlobalStyle`
         position: sticky;
         bottom: 0;
         z-index: 2;
-        background: rgba(255, 255, 255, .94);
-        border-top: 1px solid #edf0f5;
+        background: var(--surface-overlay);
+        border-top: 1px solid var(--border-subtle);
         border-radius: 8px;
     }
 
     .indexSettingsFooterHint {
-        color: #8c8c8c;
+        color: var(--text-secondary);
         font-size: 11px;
     }
 
@@ -373,31 +374,31 @@ const Wrapper = createGlobalStyle`
 
     .customAppsIntro {
         padding: 16px 18px;
-        border: 1px solid #dce8ff;
+        border: 1px solid var(--border-color);
         border-radius: 12px;
-        background: linear-gradient(135deg, #f7faff 0%, #eef5ff 100%);
+        background: linear-gradient(135deg, var(--surface-muted) 0%, var(--accent-soft) 100%);
     }
 
     .customAppsTitle {
         margin: 0;
-        color: #1f2937;
+        color: var(--text-primary);
         font-size: 16px;
         font-weight: 650;
     }
 
     .customAppsDescription {
         margin: 5px 0 0;
-        color: #64748b;
+        color: var(--text-secondary);
         font-size: 12px;
         line-height: 1.6;
     }
 
     .customAppCard {
         padding: 14px;
-        border: 1px solid #e6eaf0;
+        border: 1px solid var(--border-subtle);
         border-radius: 12px;
-        background: #fff;
-        box-shadow: 0 2px 8px rgba(31, 41, 55, 0.04);
+        background: var(--panel-surface);
+        box-shadow: 0 2px 8px var(--surface-shadow);
     }
 
     .customAppFormHeader,
@@ -411,14 +412,14 @@ const Wrapper = createGlobalStyle`
 
     .customAppHeading {
         margin: 0;
-        color: #262f3d;
+        color: var(--text-primary);
         font-size: 13px;
         font-weight: 650;
     }
 
     .customAppHint {
         margin-top: 3px;
-        color: #8a94a3;
+        color: var(--text-muted);
         font-size: 11px;
         line-height: 1.45;
     }
@@ -427,8 +428,8 @@ const Wrapper = createGlobalStyle`
         flex: none;
         padding: 2px 8px;
         border-radius: 999px;
-        background: #f0f5ff;
-        color: #3b6edc;
+        background: var(--accent-soft);
+        color: var(--accent);
         font-size: 11px;
         font-weight: 600;
     }
@@ -442,19 +443,19 @@ const Wrapper = createGlobalStyle`
 
     .customAppError {
         padding: 9px 11px;
-        border: 1px solid #ffccc7;
+        border: 1px solid var(--danger-border);
         border-radius: 8px;
-        background: #fff2f0;
-        color: #cf1322;
+        background: var(--danger-soft);
+        color: var(--danger);
         font-size: 12px;
     }
 
     .customAppList {
         max-height: 320px;
         overflow-y: auto;
-        border: 1px solid #e5e9ef;
+        border: 1px solid var(--border-subtle);
         border-radius: 9px;
-        background: #fafbfc;
+        background: var(--surface-muted);
     }
 
     .customAppItem {
@@ -462,13 +463,13 @@ const Wrapper = createGlobalStyle`
         align-items: center;
         gap: 11px;
         padding: 10px 12px;
-        border-bottom: 1px solid #e9edf2;
-        background: #fff;
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--panel-surface);
         transition: background-color 0.15s ease;
     }
 
     .customAppItem:hover {
-        background: #f8fbff;
+        background: var(--surface-muted);
     }
 
     .customAppItem:last-child {
@@ -486,17 +487,17 @@ const Wrapper = createGlobalStyle`
 
     .customAppIcon {
         padding: 3px;
-        border: 1px solid #edf0f4;
+        border: 1px solid var(--border-subtle);
         object-fit: contain;
-        background: #fff;
+        background: var(--panel-surface);
     }
 
     .customAppIconFallback {
         display: flex;
         align-items: center;
         justify-content: center;
-        background: linear-gradient(135deg, #e8f1ff, #dce9ff);
-        color: #3b6edc;
+        background: linear-gradient(135deg, var(--accent-soft), var(--accent-soft));
+        color: var(--accent);
         font-size: 15px;
         font-weight: 700;
     }
@@ -508,7 +509,7 @@ const Wrapper = createGlobalStyle`
 
     .customAppName {
         overflow: hidden;
-        color: #273142;
+        color: var(--text-primary);
         font-size: 13px;
         font-weight: 600;
         text-overflow: ellipsis;
@@ -518,7 +519,7 @@ const Wrapper = createGlobalStyle`
     .customAppPath {
         margin-top: 3px;
         overflow: hidden;
-        color: #8a94a3;
+        color: var(--text-muted);
         font-family: Consolas, "SFMono-Regular", monospace;
         font-size: 11px;
         text-overflow: ellipsis;
@@ -531,14 +532,14 @@ const Wrapper = createGlobalStyle`
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #a0a8b4;
+        color: var(--text-muted);
         font-size: 12px;
         text-align: center;
     }
 
     .customAppEmptyTitle {
         margin-bottom: 4px;
-        color: #7d8795;
+        color: var(--text-muted);
         font-size: 13px;
         font-weight: 600;
     }
@@ -555,19 +556,19 @@ const Wrapper = createGlobalStyle`
 
     .settingError {
         margin: 0 15px 8px;
-        color: #d4380d;
+        color: var(--danger);
         font-size: 12px;
         line-height: 1.5;
     }
 
     .settingNotice {
-        color: #389e0d;
+        color: var(--success);
         font-size: 13px;
     }
 
     .settingDirtyMark,
     .settingDirtyHint {
-        color: #cf1322;
+        color: var(--danger);
     }
 
     .settingDirtyMark {
@@ -588,10 +589,10 @@ const Wrapper = createGlobalStyle`
 
     .snippetCard {
         padding: 14px;
-        border: 1px solid #e8e8e8;
+        border: 1px solid var(--border-subtle);
         border-radius: 10px;
-        background: #fff;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+        background: var(--panel-surface);
+        box-shadow: 0 1px 2px var(--surface-shadow);
     }
 
     .snippetStatusRow {
@@ -603,14 +604,14 @@ const Wrapper = createGlobalStyle`
 
     .snippetHeading {
         margin: 0;
-        color: #1f1f1f;
+        color: var(--text-primary);
         font-size: 15px;
         font-weight: 600;
     }
 
     .snippetHint {
         margin-top: 4px;
-        color: #8c8c8c;
+        color: var(--text-secondary);
         font-size: 12px;
         line-height: 1.5;
     }
@@ -626,7 +627,7 @@ const Wrapper = createGlobalStyle`
         display: flex;
         align-items: center;
         gap: 8px;
-        color: #595959;
+        color: var(--text-primary);
         font-size: 13px;
         white-space: nowrap;
     }
@@ -635,7 +636,7 @@ const Wrapper = createGlobalStyle`
         display: flex;
         align-items: center;
         gap: 8px;
-        color: #595959;
+        color: var(--text-primary);
         font-size: 13px;
         white-space: nowrap;
     }
@@ -661,7 +662,7 @@ const Wrapper = createGlobalStyle`
     }
 
     .snippetLabel {
-        color: #595959;
+        color: var(--text-primary);
         font-size: 12px;
         font-weight: 500;
     }
@@ -678,13 +679,13 @@ const Wrapper = createGlobalStyle`
     }
 
     .snippetCount {
-        color: #8c8c8c;
+        color: var(--text-secondary);
         font-size: 12px;
     }
 
     .snippetList {
         overflow: hidden;
-        border: 1px solid #f0f0f0;
+        border: 1px solid var(--border-subtle);
         border-radius: 8px;
     }
 
@@ -695,7 +696,7 @@ const Wrapper = createGlobalStyle`
         align-items: center;
         min-height: 48px;
         padding: 9px 10px;
-        border-bottom: 1px solid #f0f0f0;
+        border-bottom: 1px solid var(--border-subtle);
     }
 
     .snippetRow:last-child {
@@ -706,8 +707,8 @@ const Wrapper = createGlobalStyle`
         overflow: hidden;
         padding: 4px 8px;
         border-radius: 6px;
-        background: #f0f5ff;
-        color: #2458a6;
+        background: var(--accent-soft);
+        color: var(--accent);
         font-family: Consolas, monospace;
         font-size: 13px;
         font-weight: 600;
@@ -718,7 +719,7 @@ const Wrapper = createGlobalStyle`
     .snippetPreview {
         display: -webkit-box;
         overflow: hidden;
-        color: #595959;
+        color: var(--text-primary);
         font-size: 13px;
         line-height: 1.45;
         overflow-wrap: anywhere;
@@ -729,17 +730,17 @@ const Wrapper = createGlobalStyle`
 
     .snippetEmpty {
         padding: 26px 16px;
-        color: #8c8c8c;
+        color: var(--text-secondary);
         text-align: center;
         font-size: 13px;
     }
 
     .snippetError {
         padding: 9px 12px;
-        border: 1px solid #ffccc7;
+        border: 1px solid var(--danger-border);
         border-radius: 8px;
-        background: #fff2f0;
-        color: #cf1322;
+        background: var(--danger-soft);
+        color: var(--danger);
         font-size: 13px;
     }
 
@@ -1577,11 +1578,13 @@ const Component = () => {
             <div id="settingframe">
                 <Tabs activeKey={activeTab} onChange={setActiveTab} centered items={[
                     {key: 'app', label: '常规设置'},
+                    {key: 'appearance', label: '外观'},
                     {key: 'translation', label: '翻译服务'},
                     {key: 'index', label: '索引扫描'},
                     {key: 'custom', label: '手动应用'},
                     {key: 'snippets', label: '文本片段'}
                 ]}/>
+                {activeTab === 'appearance' && <ThemePanel/>}
                 {activeTab === 'translation' && <div style={{padding: '8px 18px 24px'}}>
                     <section className="snippetCard">
                         <h3 className="snippetHeading">翻译方向</h3>
@@ -1634,10 +1637,10 @@ const Component = () => {
                         {translationSettings.services.map(service => <div key={service.id} style={{
                             padding: 18,
                             marginTop: 14,
-                            border: '1px solid #e8eaf0',
+                            border: '1px solid var(--border-subtle)',
                             borderRadius: 12,
-                            background: '#fff',
-                            boxShadow: '0 2px 8px rgba(31,35,41,.04)'
+                            background: 'var(--panel-surface)',
+                            boxShadow: '0 2px 8px var(--surface-shadow)'
                         }}>
                             <div style={{
                                 display: 'flex',
@@ -1686,9 +1689,9 @@ const Component = () => {
                                 }}
                             >
                                 <summary
-                                    style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px', color: "#000"}}>配置详情
+                                    style={{cursor: 'pointer', padding: '6px 0', fontSize: '12px', color: "var(--text-primary)"}}>配置详情
                                 </summary>
-                                <div style={{padding: 14, borderRadius: 9, background: '#f8f9fb'}}>
+                                <div style={{padding: 14, borderRadius: 9, background: 'var(--surface-muted)'}}>
                                     {service.provider === 'baidu' &&
                                         <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
                                             <label className="snippetField"><span
@@ -1778,9 +1781,9 @@ const Component = () => {
                             return <div key={service.id} style={{
                                 padding: 18,
                                 marginTop: 14,
-                                border: '1px solid #e8eaf0',
+                                border: '1px solid var(--border-subtle)',
                                 borderRadius: 12,
-                                background: '#fff'
+                                background: 'var(--panel-surface)'
                             }}>
                                 <details
                                     open={collapsedOcrServices[service.id] !== true}
@@ -1796,7 +1799,7 @@ const Component = () => {
                                         cursor: 'pointer',
                                         padding: '6px 0',
                                         fontSize: '12px',
-                                        color: "#000"
+                                        color: "var(--text-primary)"
                                     }}>配置详情
                                     </summary>
                                     <div style={{
@@ -1831,7 +1834,7 @@ const Component = () => {
                                         gap: 12,
                                         padding: 14,
                                         borderRadius: 9,
-                                        background: '#f8f9fb'
+                                        background: 'var(--surface-muted)'
                                     }}>{(definition?.fields || []).map(field => <label className="snippetField"
                                                                                        key={field.key}><span
                                         className="snippetLabel">{field.label}{field.required ? ' *' : ''}</span>{field.type === 'boolean' ?
@@ -1877,9 +1880,9 @@ const Component = () => {
                         gap: 12,
                         margin: '16px -18px -24px',
                         padding: '12px 18px',
-                        background: 'rgba(255,255,255,.94)',
-                        borderTop: '1px solid #edf0f4',
-                        boxShadow: '0 -3px 10px rgba(31,35,41,.04)'
+                        background: 'var(--surface-overlay)',
+                        borderTop: '1px solid var(--border-subtle)',
+                        boxShadow: '0 -3px 10px var(--surface-shadow)'
                     }}>
                         {translationNotice && <span
                             className={translationNotice.includes('失败') || translationNotice.includes('请') ? 'snippetError' : 'snippetHint'}>{translationNotice}</span>}
@@ -1915,7 +1918,7 @@ const Component = () => {
                             <label className="snippetField">
                                 <span className="snippetLabel">关键词</span>
                                 <Input value={newSnippetKeyword} placeholder="例如 email"
-                                       prefix={<span style={{color: '#8c8c8c'}}>{snippetTrigger || ';'}</span>}
+                                       prefix={<span style={{color: 'var(--text-secondary)'}}>{snippetTrigger || ';'}</span>}
                                        onChange={(event) => setNewSnippetKeyword(event.target.value)}/>
                             </label>
                             <label className="snippetField">

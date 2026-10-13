@@ -1,7 +1,7 @@
 //! Windows Explorer 前台路径监听器。
 //!
-//! 第一版采用低频轮询：获取前台窗口，再通过 `IShellWindows` 找到相同 HWND
-//! 的 Explorer 窗口并读取 `LocationURL`。模块不会自动启动；调用
+//! 采用低频轮询：获取前台窗口，通过 `IShellWindows` 匹配窗口和当前可见的
+//! 标签页，再读取该标签页的 `LocationURL`。模块不会自动启动；调用
 //! [`start_test_listener`] 即可手工验证。
 
 #[cfg(target_os = "windows")]
@@ -12,13 +12,16 @@ mod platform {
     use std::thread::{self, JoinHandle};
     use std::time::Duration;
 
-    use windows::core::{Interface, VARIANT};
+    use windows::core::{w, Interface, PCWSTR, VARIANT};
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, IDispatch, CLSCTX_ALL,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IDispatch, IServiceProvider, CLSCTX_ALL,
         COINIT_APARTMENTTHREADED,
     };
-    use windows::Win32::UI::Shell::{IShellWindows, IWebBrowserApp, ShellWindows};
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    use windows::Win32::UI::Shell::{IShellBrowser, IShellWindows, IWebBrowserApp, ShellWindows};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowExW, GetClassNameW, GetForegroundWindow, IsWindowVisible,
+    };
 
     use crate::api::dialog_probe::{probe_foreground_dialog, DialogConfidence};
 
@@ -215,6 +218,17 @@ mod platform {
         if foreground.0.is_null() {
             return Ok(None);
         }
+        let mut class_name = [0u16; 128];
+        let class_length = unsafe { GetClassNameW(foreground, &mut class_name) } as usize;
+        if String::from_utf16_lossy(&class_name[..class_length]) == "PulseMainWindow" {
+            let path = crate::api::pulse_path::active_path()?;
+            return Ok(if unsafe { GetForegroundWindow() } == foreground {
+                path
+            } else {
+                None
+            });
+        }
+        let active_tab = active_explorer_tab(foreground)?;
 
         let shell_windows: IShellWindows = unsafe {
             CoCreateInstance(&ShellWindows, None, CLSCTX_ALL)
@@ -242,14 +256,109 @@ mod platform {
                 continue;
             }
 
+            // Windows 11 的多个标签页共享 IWebBrowserApp.HWND，必须进一步
+            // 匹配 IShellBrowser 的标签页 HWND，不能直接取枚举中的第一项。
+            if active_tab.is_some() {
+                let browser_tab = item
+                    .cast::<IServiceProvider>()
+                    .ok()
+                    .and_then(|provider| unsafe {
+                        provider
+                            .QueryService::<IShellBrowser>(&IShellBrowser::IID)
+                            .ok()
+                    })
+                    .and_then(|shell_browser| unsafe { shell_browser.GetWindow().ok() });
+                if !matches_explorer_tab(active_tab, browser_tab) {
+                    continue;
+                }
+            }
+
             let location_url = unsafe { browser.LocationURL() }
                 .map_err(|error| format!("读取 Explorer LocationURL 失败: {error}"))?
                 .to_string();
 
+            // COM 调用期间可能切换了窗口或标签页，下一轮再读取，避免缓存旧页。
+            if unsafe { GetForegroundWindow() } != foreground
+                || active_explorer_tab(foreground)? != active_tab
+            {
+                return Ok(None);
+            }
             return Ok(file_url_to_path(&location_url));
         }
 
         Ok(None)
+    }
+
+    fn active_explorer_tab(foreground: HWND) -> Result<Option<HWND>, String> {
+        let mut previous = HWND::default();
+        let mut has_tabs = false;
+        while let Ok(tab) = unsafe {
+            FindWindowExW(
+                foreground,
+                previous,
+                w!("ShellTabWindowClass"),
+                PCWSTR::null(),
+            )
+        } {
+            has_tabs = true;
+            if unsafe { IsWindowVisible(tab) }.as_bool() {
+                return Ok(Some(tab));
+            }
+            previous = tab;
+        }
+        if has_tabs {
+            // 标签页正在切换时不能回退到第一项；保留缓存，下一轮重试。
+            Err("Explorer 标签页暂时不可见".to_string())
+        } else {
+            // Windows 10 等没有标签页子窗口的版本仍按顶层窗口匹配。
+            Ok(None)
+        }
+    }
+
+    fn matches_explorer_tab(active: Option<HWND>, candidate: Option<HWND>) -> bool {
+        active.is_none() || active == candidate
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn hwnd(value: usize) -> HWND {
+            HWND(value as *mut std::ffi::c_void)
+        }
+
+        #[test]
+        fn skips_first_tab_when_second_tab_is_active() {
+            let active = Some(hwnd(2));
+            let tabs = [Some(hwnd(1)), Some(hwnd(2)), Some(hwnd(3))];
+            assert_eq!(
+                tabs.iter()
+                    .position(|tab| matches_explorer_tab(active, *tab)),
+                Some(1)
+            );
+        }
+
+        #[test]
+        fn does_not_fall_back_when_active_tab_cannot_be_matched() {
+            assert!(!matches_explorer_tab(Some(hwnd(2)), Some(hwnd(1))));
+            assert!(!matches_explorer_tab(Some(hwnd(2)), None));
+        }
+
+        #[test]
+        fn supports_explorer_without_tab_windows() {
+            assert!(matches_explorer_tab(None, None));
+            assert!(matches_explorer_tab(None, Some(hwnd(1))));
+        }
+
+        #[test]
+        #[ignore = "requires a foreground file manager and LARK_EXPLORER_TEST_PATH"]
+        fn reads_foreground_file_manager_directory() {
+            let expected = PathBuf::from(
+                std::env::var_os("LARK_EXPLORER_TEST_PATH")
+                    .expect("set LARK_EXPLORER_TEST_PATH to the active directory"),
+            );
+            assert_eq!(foreground_explorer_path().unwrap(), Some(expected));
+        }
     }
 
     fn file_url_to_path(url: &str) -> Option<PathBuf> {

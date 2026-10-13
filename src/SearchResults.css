@@ -1,0 +1,162 @@
+/* 每行 50px，与窗口高度计算和键盘/滚轮定位保持一致。 */
+.searchResults {
+    position: relative;
+    color: var(--result-text);
+}
+
+.searchResults-list {
+    height: 450px;
+    overflow-y: scroll;
+    overflow-x: hidden;
+}
+
+.searchResults .templateComponent {
+    --result-accent: var(--result-file-accent);
+    --result-icon-bg: var(--result-file-bg);
+    box-sizing: border-box;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    height: 50px;
+    padding: 6px 12px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    cursor: default;
+    user-select: none;
+}
+
+.searchResults .search-result--folder,
+.searchResults .search-result--app {
+    --result-accent: var(--result-app-accent);
+    --result-icon-bg: var(--result-app-bg);
+}
+
+.searchResults .search-result--image {
+    --result-accent: var(--result-image-accent);
+    --result-icon-bg: var(--result-image-bg);
+}
+
+.searchResults .search-result--code {
+    --result-accent: var(--result-code-accent);
+    --result-icon-bg: var(--result-code-bg);
+}
+
+.searchResults .search-result--utility {
+    --result-accent: var(--result-utility-accent);
+    --result-icon-bg: var(--result-utility-bg);
+}
+
+.searchResults .templateBaseIcon,
+.searchResults .templateImgIcon {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    background: var(--result-icon-bg);
+    color: var(--result-accent);
+    font-size: 12px;
+    font-weight: 500;
+    overflow: hidden;
+}
+
+/* 覆盖内置图标沿用的 activateComponent 尺寸，输入框的激活图标不受影响。 */
+.searchResults .templateImgIcon > img,
+.searchResults .templateImgIcon > svg,
+.searchResults .templateImgIcon > .activateComponent {
+    box-sizing: border-box;
+    flex: none;
+    width: 24px !important;
+    height: 24px;
+    max-width: 24px;
+    max-height: 24px;
+    margin: 0;
+    padding: 0;
+    border-radius: 3px;
+    background: transparent;
+    object-fit: contain;
+    font-size: 18px;
+}
+
+.searchResults .templateContent {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.searchResults .templateTitle,
+.searchResults .templateDesc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.searchResults .templateTitle {
+    color: var(--result-text);
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 20px;
+}
+
+.searchResults .templateDesc {
+    color: var(--result-muted);
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.searchResults .templateHint {
+    box-sizing: border-box;
+    display: flex;
+    flex: 0 0 46px;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    border: 1px solid var(--result-hint-border);
+    border-radius: 5px;
+    color: var(--result-muted);
+    font-size: 11px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.searchResults .templateHint:empty {
+    visibility: hidden;
+}
+
+.searchResults .templateComponent.activate {
+    background: var(--result-selected-bg);
+    border-color: var(--result-selected-border);
+}
+
+.searchResults .templateComponent.activate::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 15px;
+    width: 3px;
+    height: 18px;
+    border-radius: 0 3px 3px 0;
+    background: var(--result-selected-accent);
+}
+
+.searchResults .activate .templateTitle {
+    color: var(--result-selected-text);
+}
+
+.searchResults .activate .templateDesc {
+    color: var(--result-selected-muted);
+}
+
+.searchResults .activate .templateHint {
+    background: var(--result-selected-hint-bg);
+    border-color: var(--result-selected-hint-border);
+    color: var(--result-selected-hint-text);
+    font-size: 14px;
+}

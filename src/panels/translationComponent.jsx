@@ -242,10 +242,10 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
     if (screenshotResult) {
         return <div style={{height: '100%', boxSizing: 'border-box', padding: 16, overflowY: 'auto'}}>
             <div style={{display: 'flex', flexDirection: 'column', gap: 14, height: '100%', minHeight: 0}}>
-                <div style={{flex: '0 0 auto', overflow: 'hidden', borderRadius: 8, background: '#f0f1f3'}}>
+                <div style={{flex: '0 0 auto', overflow: 'hidden', borderRadius: 8, background: 'var(--surface-muted)'}}>
                     <img src={screenshotResult.dataUrl} alt="已选截图" style={{display: 'block', width: '100%', maxHeight: 300, objectFit: 'contain'}}/>
                 </div>
-                <label style={{display: 'flex', flexDirection: 'column', gap: 6, minHeight: 0, flex: '1 1 auto', color: '#595959', fontSize: 12, fontWeight: 500}}>
+                <label style={{display: 'flex', flexDirection: 'column', gap: 6, minHeight: 0, flex: '1 1 auto', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500}}>
                     <span>OCR 结果{ocrStatus === 'loading' ? '（识别中…）' : ''}</span>
                     <Input.TextArea value={screenshotText} onChange={event => setScreenshotText(event.target.value)} placeholder={ocrError || 'OCR 结果将在这里显示，也可以手动编辑'} style={{flex: 1, resize: 'none'}}/>
                 </label>
@@ -272,11 +272,11 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
             width: '100%',
             minWidth: 0,
             boxSizing: 'border-box',
-            border: '1px solid #d9d9d9',
+            border: '1px solid var(--border-color)',
             borderRadius: 12,
-            background: '#fff',
+            background: 'var(--panel-surface)',
             padding: 11,
-            boxShadow: '0 1px 2px rgba(0,0,0,.04)'
+            boxShadow: '0 1px 2px var(--surface-shadow)'
         }}>
             <TextArea data-translation-source="true" autoFocus value={source} onChange={event => {
                 const value = event.target.value;
@@ -292,16 +292,16 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
             }}/>
             <div style={{display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap'}}><Button size="small" type="text"
                                                                                            icon={<CopyOutlined/>}
-                                                                                           style={{color: '#1677ff'}}
+                                                                                           style={{color: 'var(--accent)'}}
                                                                                            onClick={() => copySource(x => x)}
                                                                                            aria-label="复制原文"
                                                                                            title="复制原文"/><Button
-                size="small" type="text" icon={<CopyOutlined/>} style={{color: '#13a673'}}
+                size="small" type="text" icon={<CopyOutlined/>} style={{color: 'var(--success)'}}
                 onClick={() => copySource(toSnake)} aria-label="复制蛇形命名" title="复制蛇形命名"/><Button size="small"
                                                                                                             type="text"
                                                                                                             icon={
                                                                                                                 <CopyOutlined/>}
-                                                                                                            style={{color: '#722ed1'}}
+                                                                                                            style={{color: 'var(--purple)'}}
                                                                                                             onClick={() => copySource(toCamel)}
                                                                                                             aria-label="复制小驼峰命名"
                                                                                                             title="复制小驼峰命名"/><Button
@@ -343,11 +343,11 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
             boxSizing: 'border-box',
             overflowY: 'auto',
             overflowX: 'hidden',
-            border: '1px solid #d9d9d9',
+            border: '1px solid var(--border-color)',
             borderRadius: 12,
-            background: '#fff',
+            background: 'var(--panel-surface)',
             padding: 12,
-            boxShadow: '0 1px 2px rgba(0,0,0,.04)'
+            boxShadow: '0 1px 2px var(--surface-shadow)'
         }}>
             {!services.length &&
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先在设置中配置并启用翻译服务"/>}
@@ -369,10 +369,10 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
                     maxWidth: '100%',
                     minWidth: 0,
                     boxSizing: 'border-box',
-                    border: '1px solid #e6e8ed',
+                    border: '1px solid var(--border-subtle)',
                     borderRadius: 9,
                     overflow: 'hidden',
-                    background: '#fff'
+                    background: 'var(--panel-surface)'
                 }}>
                     <div role="button" tabIndex={0} onClick={toggle} onKeyDown={event => {
                         if (event.key === 'Enter' || event.key === ' ') {
@@ -386,7 +386,7 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
                         minWidth: 0,
                         boxSizing: 'border-box',
                         border: 0,
-                        background: '#fafbfc',
+                        background: 'var(--surface-muted)',
                         padding: '6px 8px',
                         alignItems: 'center',
                         gap: 5,
@@ -414,17 +414,17 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
                         gap: 1,
                         flexShrink: 0
                     }}><Button type="text" size="small" icon={<CopyOutlined/>}
-                               style={{color: '#1677ff', paddingInline: 3}} disabled={!item.text} onClick={event => {
+                               style={{color: 'var(--accent)', paddingInline: 3}} disabled={!item.text} onClick={event => {
                         stopToggle(event);
                         copyText(item.text);
                     }} aria-label="复制原文" title="复制原文"/><Button type="text" size="small" icon={<CopyOutlined/>}
-                                                                       style={{color: '#13a673', paddingInline: 3}}
+                                                                       style={{color: 'var(--success)', paddingInline: 3}}
                                                                        disabled={!item.text} onClick={event => {
                         stopToggle(event);
                         copyText(toSnake(item.text));
                     }} aria-label="复制蛇形命名" title="复制蛇形命名"/><Button type="text" size="small"
                                                                                icon={<CopyOutlined/>} style={{
-                        color: '#722ed1',
+                        color: 'var(--purple)',
                         paddingInline: 3
                     }} disabled={!item.text} onClick={event => {
                         stopToggle(event);
@@ -432,7 +432,7 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
                     }} aria-label="复制小驼峰命名" title="复制小驼峰命名"/></span><span style={{
                         marginLeft: 3,
                         flexShrink: 0,
-                        color: item.status === 'loading' ? '#1677ff' : item.status === 'error' ? '#ff4d4f' : '#8c8c8c',
+                        color: item.status === 'loading' ? 'var(--accent)' : item.status === 'error' ? 'var(--danger)' : 'var(--text-secondary)',
                         fontSize: 11
                     }}>{item.status === 'loading' ? '翻译中' : item.status === 'error' ? '失败' : '结果'}</span></div>
                     {!collapsed[service.id] && <div style={{
@@ -454,7 +454,7 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
                             wordBreak: 'break-word',
                             fontSize: 13,
                             lineHeight: 1.6,
-                            color: item.text ? '#262626' : '#bfbfbf'
+                            color: item.text ? 'var(--text-primary)' : 'var(--text-muted)'
                         }}>{item.text || (item.status === 'loading' ? '正在翻译…' : '等待翻译')}</div>
                     </div>}</div>
             })}</div>

@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useRef, useState} from "react";
+import "./SearchResults.css";
 import fileImg from "./assets/file.svg";
 import calcImg from "./assets/calc.svg";
 import settingImg from "./assets/setting.svg";
@@ -31,6 +32,26 @@ import ReactDOM from 'react-dom';
 
 const appWindow = getCurrentWindow();
 
+function getResultKind(component) {
+    if (component.type !== "file") return component.type === "app" ? "app" : "utility";
+    const extension = String(component.file_type || component.title?.split(".").pop() || "").toLowerCase().replace(/^\./, "");
+    if (extension === "folder") return "folder";
+    if (/^(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/.test(extension)) return "image";
+    if (/^(js|jsx|ts|tsx|json|html|css|scss|py|rs|c|cpp|h|java|vue|toml|yaml|yml)$/.test(extension)) return "code";
+    return "file";
+}
+
+function compactResultPath(path) {
+    if (!path || path.length <= 68) return path;
+    const separator = path.includes("\\") ? "\\" : "/";
+    const parts = path.split(separator);
+    if (parts.length <= 3) return path;
+    // 保留盘符（或 UNC 主机）与末尾目录，完整路径仍通过 title 查看。
+    const prefix = path.startsWith("\\\\") ? parts.slice(0, 4) : parts.slice(0, 1);
+    if (parts.length <= prefix.length + 2) return path;
+    return [...prefix, "…", ...parts.slice(-2)].join(separator);
+}
+
 function TemplateComponent({
                                components,
                                selectedKey,
@@ -40,7 +61,7 @@ function TemplateComponent({
                                onFirstVisibleChange
                            }) {
     const scrollContainerRef = useRef(null);
-    const [selectedIndex, setSelectedIndex] = useState(selectedKey || 1)
+    const [firstVisibleIndex, setFirstVisibleIndex] = useState(0);
     const handleMouseEnter = (e, index) => {
         console.log("触发", index, e, isMacOs, isWindows)
         if (isMacOs) {
@@ -57,14 +78,14 @@ function TemplateComponent({
             || (component.type === "app" && getAppLocationPath(component)))) {
             return "打开所在文件夹";
         } else {
-            return component.desc?.replace(/\n/g, " ");
+            const description = component.desc?.replace(/\n/g, " ");
+            return component.type === "file" ? compactResultPath(description) : description;
         }
     };
     let size = components.length > 9 ? 9 : components.length;
 
     useEffect(() => {
         if (components.length === 0) {
-            setSelectedIndex(1)
             return
         }
 
@@ -151,8 +172,7 @@ function TemplateComponent({
         const syncViewport = () => {
             const firstVisible = get_first_item()
             onFirstVisibleChange?.(firstVisible)
-            const selectedPosition = selectedKey - firstVisible + 1
-            setSelectedIndex(Math.min(9, Math.max(1, selectedPosition)))
+            setFirstVisibleIndex(firstVisible)
         }
 
         syncViewport()
@@ -162,25 +182,26 @@ function TemplateComponent({
 
     const showHotkeys = (index) => {
         // 快捷键提示文本
-        if (index + 1 === selectedIndex) {
+        if (index === selectedKey) {
             return "⏎"
         }
-        if (index + 1 < 10) {
-            return "⌘" + (index + 1)
+        const number = index - firstVisibleIndex + 1;
+        if (number >= 1 && number <= 9) {
+            return (isMacOs ? "⌘" : "Alt+") + number;
         }
         return ""
     }
 
     return (
-        <div style={{position: "relative"}}>
+        <div className="searchResults">
             {
                 size !== 0 ? <>
-                    <div id="scrollableDiv" style={{height: "450px", overflowY: "scroll"}}
+                    <div id="scrollableDiv" className="searchResults-list"
                          ref={scrollContainerRef}
                     >
                         {
                             components.map((component, index) => (
-                                <div className={`templateComponent ${selectedKey === index ? 'activate' : ''}`}
+                                <div className={`templateComponent search-result--${getResultKind(component)} ${selectedKey === index ? 'activate' : ''}`}
                                      key={index}
                                      data-index={index}
                                      onMouseEnter={(event) => handleMouseEnter(event, index)}
@@ -195,34 +216,16 @@ function TemplateComponent({
                                                 {component.icon}
                                             </div>
                                     }
-                                    <div style={{
-                                        display: "flex",
-                                        justifyContent: "space-between",
-                                        alignItems: "center",
-                                        width: "100%"
-                                    }}>
-                                        <div className="templateContent">
-                                            <div className="templateTitle">
-                                                {component.title}
-                                            </div>
-                                            <div className="templateDesc">
-                                                {displayDesc(component, selectedKey === index)}
-                                            </div>
+                                    <div className="templateContent">
+                                        <div className="templateTitle" title={component.title}>
+                                            {component.title}
                                         </div>
-
+                                        <div className="templateDesc" title={component.desc}>
+                                            {displayDesc(component, selectedKey === index)}
+                                        </div>
                                     </div>
+                                    <span className="templateHint">{showHotkeys(index)}</span>
 
-                                </div>
-                            ))
-                        }
-
-                    </div>
-                    <div>
-                        {
-                            new Array(size).fill('').map((component, index) => (
-                                <div className='templateHint' key={"hint" + index}
-                                     style={{top: 3.5 + 11.1 * index + "%"}}>
-                                    {showHotkeys(index)}
                                 </div>
                             ))
                         }
@@ -291,7 +294,8 @@ function SubpageComponent({component, keyDown, pluginLibraryProps}) {
     }, [component])
 
     let subpageStyle = {
-        backgroundColor: "#d8d8d7",
+        backgroundColor: "var(--panel-bg)",
+        color: "var(--text-primary)",
         height: "100%",
         borderRadius: "10px",
         borderWidth: "0px",

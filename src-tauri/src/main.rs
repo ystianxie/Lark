@@ -667,6 +667,13 @@ impl HotkeyBindings {
         .collect()
     }
 
+    fn global(self) -> Vec<Shortcut> {
+        [self.awaken, self.clipboard, self.selection, self.screenshot]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
     // 只容忍同一功能未改动的已有冲突；新绑定或跨功能移动仍须真正注册成功。
     fn unchanged_shortcuts(self, previous: Self) -> Vec<Shortcut> {
         [
@@ -693,7 +700,7 @@ fn parse_shortcut_bindings(
 }
 
 fn handle_shortcut(
-    app: &AppHandle,
+    _app: &AppHandle,
     window: &tauri::WebviewWindow,
     bindings: HotkeyBindings,
     pressed: &Shortcut,
@@ -728,16 +735,6 @@ fn handle_shortcut(
                 }
             }
         });
-    } else if Some(*pressed) == bindings.file_jump {
-        let app = app.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            if let Err(error) = app
-                .state::<api::listary_jump::ListaryJumpHandle>()
-                .trigger_ctrl_g()
-            {
-                eprintln!("[ListaryJump] 快捷键触发失败：{error}");
-            }
-        });
     } else if Some(*pressed) == bindings.screenshot {
         let _ = window.emit("translation-screenshot-request", ());
     }
@@ -760,7 +757,7 @@ fn register_shortcuts_with_tolerance(
         .get_webview_window("skylark")
         .ok_or_else(|| "主窗口不存在".to_string())?;
     let global_shortcut = app.global_shortcut();
-    for shortcut in bindings.all() {
+    for shortcut in bindings.global() {
         let window = window.clone();
         if let Err(error) = global_shortcut.on_shortcuts([shortcut], move |app, pressed, event| {
             handle_shortcut(app, &window, bindings, pressed, event);
@@ -782,14 +779,14 @@ fn register_shortcuts_best_effort(
 ) -> Vec<(Shortcut, String)> {
     let Some(window) = app.get_webview_window("skylark") else {
         return bindings
-            .all()
+            .global()
             .into_iter()
             .map(|shortcut| (shortcut, "主窗口不存在".to_string()))
             .collect();
     };
     let global_shortcut = app.global_shortcut();
     bindings
-        .all()
+        .global()
         .into_iter()
         .filter_map(|shortcut| {
             let window = window.clone();
@@ -834,7 +831,7 @@ fn start_hotkey_retry_worker(app: &AppHandle, failed: Vec<(Shortcut, String)>) {
             else {
                 continue;
             };
-            let configured = bindings.all();
+            let configured = bindings.global();
             pending.retain(|shortcut| configured.contains(shortcut));
             let Some(window) = app.get_webview_window("skylark") else {
                 continue;
@@ -860,11 +857,28 @@ fn start_hotkey_retry_worker(app: &AppHandle, failed: Vec<(Shortcut, String)>) {
 }
 
 fn capture_shortcut_set(bindings: HotkeyBindings) -> Vec<Shortcut> {
-    let mut shortcuts = bindings.all();
+    let mut shortcuts = bindings.global();
     shortcuts.push("Alt+Space".parse().unwrap());
     shortcuts.sort_by_key(|shortcut| shortcut.id());
     shortcuts.dedup();
     shortcuts
+}
+
+#[test]
+fn file_jump_is_validated_but_never_registered_globally() {
+    let bindings = HotkeyBindings::parse(
+        "Alt+Space",
+        "Ctrl+Alt+V",
+        "Ctrl+Alt+X",
+        "Ctrl+G",
+        "Ctrl+Alt+D",
+    )
+    .unwrap();
+    let file_jump = bindings.file_jump.unwrap();
+    assert!(bindings.all().contains(&file_jump));
+    assert!(!bindings.global().contains(&file_jump));
+    assert!(!capture_shortcut_set(bindings).contains(&file_jump));
+    assert!(HotkeyBindings::parse("Alt+Space", "", "", "G", "").is_err());
 }
 
 fn capture_shortcut_error_is_tolerated(
@@ -875,7 +889,6 @@ fn capture_shortcut_error_is_tolerated(
     shortcut != "Alt+Space".parse().unwrap()
         && shortcut_registration_error_is_tolerated(shortcut, error, tolerated)
 }
-
 
 fn register_capture_shortcuts(
     app: &AppHandle,
@@ -1018,6 +1031,7 @@ fn save_setting(app: AppHandle, setting_info: serde_json::Value) -> Result<(), S
             Err(e) => format!("设置写入失败，恢复原快捷键也失败：{error}；{e}"),
         });
     }
+    api::file_jump_hotkey::update_binding(bindings.file_jump);
     clear_hotkey_capture_state();
     Ok(())
 }
@@ -1587,7 +1601,6 @@ fn main() {
         config.base.snippet_trigger.clone(),
         config.base.text_snippets.clone(),
     );
-    api::snippets::start();
 
     tauri::Builder::default()
         .plugin(win_file_drop::init())
@@ -1615,6 +1628,16 @@ fn main() {
                 app.manage(Mutex::new(watcher));
             }
             app.manage(api::listary_jump::ListaryJumpHandle::start());
+            api::file_jump_hotkey::update_binding(if hotkey_file_jump.trim().is_empty() {
+                None
+            } else {
+                Some(
+                    hotkey_file_jump
+                        .parse()
+                        .expect("invalid file jump shortcut"),
+                )
+            });
+            api::snippets::start(app.handle().clone());
             let bootstrap_app = app.handle().clone();
             let bootstrap_config = config.clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -1868,6 +1891,10 @@ fn main() {
             update_plugin,
             get_app_dir,
             save_setting,
+            config::appearance::get_appearance,
+            config::appearance::save_appearance,
+            config::appearance::set_frosted_effect,
+            config::appearance::update_frosted_bounds,
             set_hotkey_capture_active,
             reserve_hotkey_capture,
             get_hotkey_settings,

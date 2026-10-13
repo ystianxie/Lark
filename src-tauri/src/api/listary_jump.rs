@@ -68,8 +68,7 @@ impl ListaryJumpHandle {
 
     /// 主动执行一次跳转。
     ///
-    /// 这是预留给全局 Ctrl+G 回调的入口。调用线程可能短暂阻塞，
-    /// 正式接入快捷键时建议放入普通后台线程执行。
+    /// 键盘监听匹配到配置的快捷键后，在后台线程调用；内部再次确认前台对话框。
     pub fn trigger_ctrl_g(&self) -> Result<DialogNavigationMethod, String> {
         let path = self
             .latest_explorer_path

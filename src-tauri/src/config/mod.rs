@@ -1,3 +1,4 @@
+pub mod appearance;
 mod config;
 pub mod plugins;
 
