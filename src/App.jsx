@@ -439,8 +439,8 @@ const App = () => {
             setFnDown(true);
         }
         if (componentInfoRef.current?.type === "panel") {
-            // panel 仍由主输入框接收键盘事件，但不允许按键修改输入内容。
-            if (event.key !== "Tab" || !["showComponent", "todoComponent", "hostsComponent"].includes(componentInfoRef.current?.data)) event.preventDefault();
+            // panel 仍由主输入框接收键盘事件；Tab 交给浏览器进入 panel 内部控件。
+            if (event.key !== "Tab") event.preventDefault();
             if (event.key === "Escape" && isComposing.ppos === 0) {
                 // workspace 内部页面（例如插件创建/编辑器）自己处理 Esc，
                 // 不要让宿主的全局处理器直接清空 panel。
@@ -664,6 +664,7 @@ const App = () => {
         }
         if (plugin && currentComponent.type === "panel") {
             await updateAppHabit(inputValue, currentComponent.title || plugin.name);
+            setComponent(createActiveIcon(currentComponent.icon));
             setComponentInfo({...currentComponent, pluginManifest: plugin});
             setInputValue("");
             await modifyWindowSize("expanded");
@@ -891,11 +892,19 @@ const App = () => {
         };
     }, []);
 
+    const focusPanelInputIfNeeded = () => {
+        const panelRoot = document.getElementById("subPageFrame");
+        const activeElement = document.activeElement;
+        // 子组件通过 autoFocus 已将焦点交给自己的控件时，不要再抢回主输入框。
+        if (panelRoot?.contains(activeElement) && activeElement !== panelRoot) return;
+        inputBox.current?.focus({preventScroll: true});
+    };
+
     useEffect(() => {
-        // panel 的键盘事件仍由主输入框接收，再通过 keyDown 传给面板组件。
-        if (componentInfo.type === "panel" && componentInfo.data !== "todoComponent") {
-            setTimeout(() => inputBox.current?.focus({preventScroll: true}), 50);
-        }
+        // Panel 内有 autoFocus 控件时尊重组件焦点；没有时主输入框继续接收键盘快捷键。
+        if (componentInfo.type !== "panel" || componentInfo.data === "todoComponent") return;
+        const timer = setTimeout(focusPanelInputIfNeeded, 50);
+        return () => clearTimeout(timer);
     }, [componentInfo]);
 
     useEffect(() => {
@@ -1264,21 +1273,10 @@ const App = () => {
         };
         const focusPanelInputAfterWake = async () => {
             // Alt+Space 恢复 native 窗口后，WebView 需要显式恢复一次键盘焦点。
-            // 只从自定义唤醒事件调用，不能放进 onFocusChanged，否则会形成焦点循环。
+            // 只从明确的唤醒事件调用；优先保留 panel 内 autoFocus 控件的焦点。
             await webview.setFocus();
-            setTimeout(() => {
-                inputBox.current?.focus({preventScroll: true});
-            }, 50);
+            setTimeout(focusPanelInputIfNeeded, 50);
         };
-        const unListenWindowFocus = appWindow.onFocusChanged(({payload: focused}) => {
-            if (!focused) return;
-            // 截图期间焦点应交给遮罩，不能被这个通用的输入框聚焦逻辑抢回去。
-            if (screenshotCaptureRef.current) return;
-            setTimeout(() => {
-                if (screenshotCaptureRef.current) return;
-                inputBox.current?.focus({preventScroll: true});
-            }, 50);
-        });
         // window.onVisibleChanged(({ payload }) => {
         //   if (payload === true) {
         //     console.log("窗口变为可见，尝试聚焦输入框");
@@ -1443,7 +1441,6 @@ const App = () => {
             unListenComponentsShowRequest.then((f) => f());
             unListenOnboardingMainResetRequest.then((f) => f());
             unListenAutoHide.then((f) => f());
-            unListenWindowFocus.then((f) => f());
             unListenFileDrop.then((f) => f());
             unListenFileIndex.then((f) => f());
             document.removeEventListener("keydown", handleGlobalKeyDown);

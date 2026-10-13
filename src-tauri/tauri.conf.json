@@ -1,6 +1,6 @@
 {
   "productName": "Lark",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
@@ -75,7 +75,8 @@
     "trayIcon": {
       "iconPath": "icons/icon.ico",
       "iconAsTemplate": true,
-      "showMenuOnLeftClick": false
+      "showMenuOnLeftClick": false,
+      "tooltip": "Lark"
     }
   },
   "bundle": {

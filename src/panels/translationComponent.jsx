@@ -278,7 +278,7 @@ export default function TranslationComponent({initialText = '', autoTranslate = 
             padding: 11,
             boxShadow: '0 1px 2px rgba(0,0,0,.04)'
         }}>
-            <TextArea autoFocus value={source} onChange={event => {
+            <TextArea data-translation-source="true" autoFocus value={source} onChange={event => {
                 const value = event.target.value;
                 sourceRef.current = value;
                 requestRef.current += 1;
