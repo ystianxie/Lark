@@ -9,6 +9,7 @@ pub mod file_watcher;
 pub mod listary_jump;
 pub mod proxy_pool;
 pub mod shell;
+pub mod admin_launch;
 pub mod snippets;
 #[cfg(target_os = "windows")]
 pub mod windows_app_watcher;

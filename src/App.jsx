@@ -19,6 +19,7 @@ import {executePluginWorkflow, normalizePluginPath} from "./pluginRuntime";
 import {normalizePluginResults} from "./pluginScaffold";
 import {schedulePluginExecution} from "./pluginExecution";
 import {getAppLocationPath} from "./utils/appLocation";
+import ResultContextMenu from "./ResultContextMenu";
 import PluginView from "./PluginView";
 import {useLocalStorage} from "react-use";
 import {
@@ -52,6 +53,7 @@ function getResultShortcutNumber(event) {
 }
 
 const App = () => {
+    const [resultMenu, setResultMenu] = useState(null);
     // 键入值
     const [inputValue, setInputValue] = useState("");
     const [searchOffset, setSearchOffset] = useState(0);
@@ -63,6 +65,55 @@ const App = () => {
     const [componentInfo, setComponentInfo] = useState("");
     // 搜索组件结果数组
     const [keywordComponent, setKeywordComponent] = useState([]);
+    useEffect(() => setResultMenu(null), [keywordComponent]);
+
+    const showResultContextMenu = (event, index) => {
+        const item = keywordComponent[index];
+        if (item?.type !== "app") return;
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedIndex(index);
+        setResultMenu({item, x: event.clientX, y: event.clientY});
+    };
+
+    const runResultMenuAction = async (action) => {
+        const item = resultMenu?.item;
+        setResultMenu(null);
+        if (!item) return;
+        try {
+            if (action === "admin") {
+                let started;
+                try {
+                    started = await invoke("open_app_as_admin", {
+                        // AppsFolder entries keep the Shell launch URI in data and,
+                        // for classic Win32 apps, the real executable in target_path.
+                        appPath: item.target_path || item.data,
+                        appArguments: item.arguments || "",
+                    });
+                } catch (error) {
+                    // UWP/MSIX entries may not expose an elevated executable.
+                    // Preserve the menu action by falling back to normal launch.
+                    await invoke("open_app", {
+                        appPath: item.data,
+                        appName: item.title,
+                        appArguments: item.arguments || "",
+                    });
+                    started = true;
+                }
+                if (!started) return; // 用户取消 UAC。
+                await updateAppHabit(inputValue, item.title);
+                await appWindow.hide();
+                initStatus();
+            } else {
+                await invoke("open_explorer", {path: getAppLocationPath(item)});
+                await appWindow.hide();
+            }
+        } catch (error) {
+            await invoke("notify", {notification: {
+                level: "error", title: "启动失败", message: String(error), durationMs: 4000,
+            }}).catch(console.error);
+        }
+    };
     // 当前选中组件索引
     const [selectedIndex, setSelectedIndex] = useState(-1);
     // 输入状态判断
@@ -1537,12 +1588,15 @@ const App = () => {
                                 selectedKey: selectedIndex,
                                 setSelectedKey: setSelectedIndex,
                                 confirmSelected: confirmComponentSelected,
+                                onResultContextMenu: showResultContextMenu,
                                 fnDown,
                                 onFirstVisibleChange: handleFirstVisibleResultChange,
                             }}
                         />
                     </Suspense>
                 ) : null}
+                {resultMenu && <ResultContextMenu menu={resultMenu}
+                    onClose={() => setResultMenu(null)} onAction={runResultMenuAction} />}
                 {componentInfo?.type === "panel" && componentInfo.pluginManifest ? (
                     <PluginView
                         manifest={componentInfo.pluginManifest}

@@ -57,6 +57,7 @@ function TemplateComponent({
                                selectedKey,
                                setSelectedKey,
                                confirmSelected,
+                               onResultContextMenu,
                                fnDown,
                                onFirstVisibleChange
                            }) {
@@ -206,6 +207,7 @@ function TemplateComponent({
                                      data-index={index}
                                      onMouseEnter={(event) => handleMouseEnter(event, index)}
                                      onClick={() => confirmSelected(index)}
+                                     onContextMenu={(event) => onResultContextMenu?.(event, index)}
                                 >
                                     {
                                         typeof (component.icon) == "string" ?

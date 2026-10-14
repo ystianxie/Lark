@@ -1858,6 +1858,7 @@ fn main() {
             get_file_index_status,
             get_index_counts,
             open_app,
+            api::admin_launch::open_app_as_admin,
             open_environment_variables,
             open_url,
             get_file_icon,

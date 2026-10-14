@@ -606,6 +606,17 @@ fn get_apps_with_depth(
             } else {
                 continue;
             }
+
+            // Windows Installer keeps generated shortcut helpers under its
+            // cache directory. They are not user-facing applications, even
+            // when a shortcut resolves to one of those helper executables.
+            if is_windows_installer_cache_path(&app_path) {
+                println!(
+                    "[AppIndexTrace] 跳过 Windows Installer 缓存入口: title={}, target={}",
+                    app_title, app_path
+                );
+                continue;
+            }
         }
         println!(
             "应用：{}，路径：{}",
@@ -805,6 +816,17 @@ pub fn open_explorer(path: &str) -> String {
 }
 
 pub fn open_explorer_result(path: &str) -> Result<(), String> {
+    // AppsFolder entries are Shell namespace paths rather than filesystem
+    // paths, so Path::exists() cannot be used to validate them.
+    #[cfg(target_os = "windows")]
+    if path.trim().to_ascii_lowercase().starts_with(r"shell:appsfolder\") {
+        Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("打开 Shell 应用位置失败：{error}"))?;
+        return Ok(());
+    }
     let target = Path::new(path);
     if !target.exists() {
         return Err(format!("目标路径不存在：{path}"));
@@ -1340,10 +1362,32 @@ fn append_secondary_apps(
         let advertised_shortcut = app
             .get("advertised_shortcut")
             .is_some_and(|value| value == "true");
+        let arguments = app.get("arguments").cloned().unwrap_or_default();
         if title.trim().is_empty() || path.trim().is_empty() {
             println!(
                 "[AppIndexTrace] 跳过快捷方式（字段为空）: source={}, title={}, path={}, target_path={}",
                 source, title, path, target_path
+            );
+            continue;
+        }
+        if is_windows_installer_cache_path(target_path) {
+            println!(
+                "[AppIndexTrace] 跳过 Windows Installer 缓存入口: source={}, title={}, target={}",
+                source, title, target_path
+            );
+            continue;
+        }
+        if is_filtered_app(path, title) || is_filtered_app(target_path, title) {
+            println!(
+                "[AppIndexTrace] 跳过占位图标入口: source={}, title={}, path={}, target={}",
+                source, title, path, target_path
+            );
+            continue;
+        }
+        if is_batch_script_launcher(target_path, &arguments) {
+            println!(
+                "[AppIndexTrace] 跳过批处理启动入口: source={}, title={}, target={}, arguments={}",
+                source, title, target_path, arguments
             );
             continue;
         }
@@ -1367,7 +1411,6 @@ fn append_secondary_apps(
             );
             continue;
         }
-        let arguments = app.get("arguments").cloned().unwrap_or_default();
         let known = app
             .get("arguments_known")
             .is_some_and(|value| value == "true");
@@ -1438,7 +1481,7 @@ fn app_entry_key(path: &str, target_path: &str, arguments: Option<&str>) -> Stri
 /// The original argument string remains unchanged for launching and persistence.
 #[cfg(target_os = "windows")]
 fn normalize_arguments_for_identity(arguments: &str) -> String {
-    const SOURCE_ARGUMENT_KEYS: &[&str] = &["/from"];
+    const SOURCE_ARGUMENT_KEYS: &[&str] = &["/from","-StartType","--launch-from"];
 
     tokenize_windows_arguments(arguments)
         .into_iter()
@@ -1450,7 +1493,7 @@ fn normalize_arguments_for_identity(arguments: &str) -> String {
                 .iter()
                 .any(|source_key| key.eq_ignore_ascii_case(source_key))
             {
-                "/from".to_string()
+                "__source__".to_string()
             } else {
                 token
             }
@@ -1618,6 +1661,25 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                     app.executable,
                     arguments.is_some()
                 );
+            }
+            if is_batch_script_launcher(
+                &app.executable,
+                arguments.as_deref().unwrap_or_default(),
+            ) {
+                println!(
+                    "[AppIndexTrace] 跳过批处理启动入口: source=AppsFolder, title={}, target={}, arguments={}",
+                    title,
+                    app.executable,
+                    arguments.as_deref().unwrap_or_default()
+                );
+                continue;
+            }
+            if !app.executable.is_empty() && is_filtered_app(&app.executable, title) {
+                println!(
+                    "[AppIndexTrace] 跳过占位图标入口: source=AppsFolder, title={}, target={}",
+                    title, app.executable
+                );
+                continue;
             }
             if should_skip_web_launcher(
                 title,
@@ -2024,6 +2086,34 @@ fn is_launchable_shortcut_target(target: &str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+fn is_windows_installer_cache_path(target: &str) -> bool {
+    let normalized = target
+        .trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    let normalized = normalized.strip_prefix(r"\\?\").unwrap_or(&normalized);
+    normalized == r"c:\windows\installer" || normalized.starts_with(r"c:\windows\installer\")
+}
+
+#[cfg(target_os = "windows")]
+fn is_batch_script_launcher(target: &str, arguments: &str) -> bool {
+    let target_is_command_shell = Path::new(target)
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            value.eq_ignore_ascii_case("exe") || value.eq_ignore_ascii_case("com")
+        })
+        && Path::new(target)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| {
+                value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("command")
+            });
+    target_is_command_shell && arguments.to_ascii_lowercase().contains(".bat")
+}
+
+#[cfg(target_os = "windows")]
 fn is_explicit_system_entry(title: &str, target: &str) -> bool {
     let normalized = title.trim().to_ascii_lowercase();
     let known_title = [
@@ -2093,8 +2183,9 @@ mod app_scan_tests {
     use super::{
         app_display_desc, is_auxiliary_app_entry, is_launchable_shortcut_target,
         is_portable_auxiliary_app, is_under_registered_app_dir, is_user_visible_auxiliary_app,
-        is_web_launcher_entry, local_app_file_path, matching_working_directory_executable,
-        normalize_app_product_key, portable_family_key, registered_app_directory, AppPathChecks,
+        is_web_launcher_entry, is_windows_installer_cache_path, local_app_file_path,
+        matching_working_directory_executable, normalize_app_product_key, portable_family_key,
+        registered_app_directory, AppPathChecks,
     };
     use super::{app_entry_key, append_secondary_apps, associated_shortcut_arguments, AppMetadata};
     use crate::utils::database::FileIndex;
@@ -2702,6 +2793,22 @@ mod app_scan_tests {
         ] {
             assert!(is_launchable_shortcut_target(target), "{target}");
         }
+    }
+
+    #[test]
+    fn windows_installer_cache_targets_are_filtered_without_prefix_collisions() {
+        assert!(is_windows_installer_cache_path(
+            r#"C:/WINDOWS/Installer/{89EB7BF6}/NewShortcut11.exe"#
+        ));
+        assert!(is_windows_installer_cache_path(
+            r#"\\?\C:\Windows\Installer\{89EB7BF6}\NewShortcut11.exe"#
+        ));
+        assert!(!is_windows_installer_cache_path(
+            r"C:\Windows\InstallerBackup\NewShortcut11.exe"
+        ));
+        assert!(!is_windows_installer_cache_path(
+            r"D:\Windows\Installer\NewShortcut11.exe"
+        ));
     }
 
     #[test]

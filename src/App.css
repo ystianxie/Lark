@@ -106,7 +106,7 @@ select {
 
 
 #mainDiv {
-    border-radius: 15px;
+    border-radius: 16px;
     background-color: var(--launcher-bg);
     padding: 8px;
     width: 97.5%;
