@@ -9,3 +9,6 @@ pub mod img_factory;
 pub mod json_factory;
 pub mod string_factory;
 pub mod ocr;
+
+#[cfg(windows)]
+pub mod background;

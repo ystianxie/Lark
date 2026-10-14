@@ -1894,7 +1894,6 @@ fn main() {
             config::appearance::get_appearance,
             config::appearance::save_appearance,
             config::appearance::set_frosted_effect,
-            config::appearance::update_frosted_bounds,
             set_hotkey_capture_active,
             reserve_hotkey_capture,
             get_hotkey_settings,

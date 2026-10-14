@@ -1,6 +1,6 @@
 {
   "productName": "Lark",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
@@ -89,7 +89,12 @@
       "icons/icon-192x192.png",
       "icons/icon-512x512.png"
     ],
-    "externalBin": []
+    "externalBin": [],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    }
   },
   "identifier": "com.starsxu.lark"
 }
