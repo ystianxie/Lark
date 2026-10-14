@@ -436,7 +436,7 @@ const Wrapper = createGlobalStyle`
 
     .customAppForm {
         display: grid;
-        grid-template-columns: minmax(140px, 0.35fr) minmax(220px, 1fr) auto;
+        grid-template-columns: minmax(140px, 0.35fr) minmax(220px, 1fr) minmax(180px, 0.8fr) auto;
         gap: 8px;
         align-items: center;
     }
@@ -863,6 +863,7 @@ const Component = () => {
     const [customApps, setCustomApps] = useState([]);
     const [customAppName, setCustomAppName] = useState('');
     const [customAppPath, setCustomAppPath] = useState('');
+    const [customAppArguments, setCustomAppArguments] = useState('');
     const [customAppError, setCustomAppError] = useState('');
     const [snippetEnabled, setSnippetEnabled] = useState(false);
     const [snippetTrigger, setSnippetTrigger] = useState(';');
@@ -1477,14 +1478,16 @@ const Component = () => {
     const addCustomApp = async () => {
         const appName = customAppName.trim();
         const appPath = customAppPath.trim();
+        const appArguments = customAppArguments.trim();
         if (!appName || !appPath) {
             setCustomAppError('请输入应用名称和 .exe 路径');
             return;
         }
         try {
-            await invoke("add_custom_app_index", {appName, appPath});
+            await invoke("add_custom_app_index", {appName, appPath, appArguments});
             setCustomAppName('');
             setCustomAppPath('');
+            setCustomAppArguments('');
             await loadCustomApps();
         } catch (error) {
             setCustomAppError(String(error));
@@ -2102,7 +2105,7 @@ const Component = () => {
                         <div className="customAppFormHeader">
                             <div>
                                 <h3 className="customAppHeading">添加应用</h3>
-                                <div className="customAppHint">填写显示名称和可执行文件的完整路径</div>
+                                <div className="customAppHint">填写显示名称、可执行文件的完整路径和可选启动参数</div>
                             </div>
                         </div>
                         <div className="customAppForm">
@@ -2110,6 +2113,9 @@ const Component = () => {
                                    onChange={(event) => setCustomAppName(event.target.value)}/>
                             <Input value={customAppPath} placeholder="例如 D:\\Apps\\MyApp.exe" aria-label="应用路径"
                                    onChange={(event) => setCustomAppPath(event.target.value)}
+                                   onPressEnter={addCustomApp}/>
+                            <Input value={customAppArguments} placeholder="启动参数（可选）" aria-label="启动参数（可选）"
+                                   onChange={(event) => setCustomAppArguments(event.target.value)}
                                    onPressEnter={addCustomApp}/>
                             <Button type="primary" onClick={addCustomApp}>添加应用</Button>
                         </div>
@@ -2138,6 +2144,7 @@ const Component = () => {
                                 <div className="customAppMeta">
                                     <div className="customAppName" title={app.title}>{app.title}</div>
                                     <div className="customAppPath" title={app.path}>{app.path}</div>
+                                    {app.arguments && <div className="customAppPath" title={app.arguments}>参数：{app.arguments}</div>}
                                 </div>
                                 <Popconfirm title="删除这个手动应用？" onConfirm={() => deleteCustomApp(app.id)}
                                             okText="删除" cancelText="取消">

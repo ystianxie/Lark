@@ -1420,11 +1420,99 @@ fn app_entry_key(path: &str, target_path: &str, arguments: Option<&str>) -> Stri
     };
     if !target.is_empty() && !target.contains('�') {
         if let Some(arguments) = arguments {
-            return serde_json::to_string(&("target", normalize_app_launch_key(target), arguments))
-                .unwrap();
+            let identity_arguments = normalize_arguments_for_identity(arguments);
+            return serde_json::to_string(&(
+                "target",
+                normalize_app_launch_key(target),
+                identity_arguments,
+            ))
+            .unwrap();
         }
     }
     serde_json::to_string(&("entry", normalize_app_launch_key(path))).unwrap()
+}
+
+/// Normalize only the arguments that are known to describe the launch source.
+///
+/// The returned value is used exclusively in the in-memory de-duplication key.
+/// The original argument string remains unchanged for launching and persistence.
+#[cfg(target_os = "windows")]
+fn normalize_arguments_for_identity(arguments: &str) -> String {
+    const SOURCE_ARGUMENT_KEYS: &[&str] = &["/from"];
+
+    tokenize_windows_arguments(arguments)
+        .into_iter()
+        .map(|token| {
+            let Some((key, _value)) = split_argument_assignment(&token) else {
+                return token;
+            };
+            if SOURCE_ARGUMENT_KEYS
+                .iter()
+                .any(|source_key| key.eq_ignore_ascii_case(source_key))
+            {
+                "/from".to_string()
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Split a Windows-style argument into a key and value when it uses `/key=value`
+/// or `/key:value` syntax. Only the first separator is significant.
+#[cfg(target_os = "windows")]
+fn split_argument_assignment(argument: &str) -> Option<(&str, &str)> {
+    let separator = argument.find(['=', ':'])?;
+    let key = &argument[..separator];
+    if key.starts_with('/') || key.starts_with('-') {
+        Some((key, &argument[separator + 1..]))
+    } else {
+        None
+    }
+}
+
+/// Tokenize enough of the Windows command-line grammar to keep quoted spaces in
+/// one token. Quotes are retained so non-source arguments keep their existing
+/// identity semantics; they are only used to decide where a token ends.
+#[cfg(target_os = "windows")]
+fn tokenize_windows_arguments(arguments: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut in_quotes = false;
+    let mut backslashes = 0usize;
+
+    for character in arguments.chars() {
+        match character {
+            '\\' => {
+                backslashes += 1;
+                token.push(character);
+            }
+            '"' => {
+                // An odd number of preceding backslashes escapes the quote;
+                // otherwise the quote toggles grouping and is retained.
+                if backslashes % 2 == 0 {
+                    in_quotes = !in_quotes;
+                }
+                token.push(character);
+                backslashes = 0;
+            }
+            character if character.is_whitespace() && !in_quotes => {
+                if !token.is_empty() {
+                    tokens.push(std::mem::take(&mut token));
+                }
+                backslashes = 0;
+            }
+            _ => {
+                token.push(character);
+                backslashes = 0;
+            }
+        }
+    }
+    if !token.is_empty() {
+        tokens.push(token);
+    }
+    tokens
 }
 
 pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
@@ -2042,6 +2130,33 @@ mod app_scan_tests {
         assert_eq!(
             app_entry_key(target, "", Some("")),
             app_entry_key(target, target, Some(""))
+        );
+    }
+
+    #[test]
+    fn source_arguments_are_ignored_only_in_the_deduplication_key() {
+        let target = r"C:\Program Files\WPS\wps.exe";
+        assert_eq!(
+            app_entry_key(target, target, Some(r"/w /from=startmenu")),
+            app_entry_key(target, target, Some(r"/w /from=desktop_shortcut")),
+        );
+        assert_ne!(
+            app_entry_key(target, target, Some(r"/w /mode=editor")),
+            app_entry_key(target, target, Some(r"/w /mode=viewer")),
+        );
+    }
+
+    #[test]
+    fn argument_tokenizer_keeps_quoted_spaces_and_normalizes_source_key() {
+        assert_eq!(
+            super::normalize_arguments_for_identity(
+                r#"/w /from=desktop_shortcut /file="C:\Users\A User\book.xlsx""#
+            ),
+            r#"/w /from /file="C:\Users\A User\book.xlsx""#
+        );
+        assert_eq!(
+            super::normalize_arguments_for_identity(r"/FROM=STARTMENU /x:y"),
+            "/from /x:y"
         );
     }
 
@@ -2674,9 +2789,14 @@ fn expand_app_environment(value: &str) -> String {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn add_custom_app_index(app_path: String, app_name: String) -> Result<(), String> {
+pub fn add_custom_app_index(
+    app_path: String,
+    app_name: String,
+    app_arguments: String,
+) -> Result<(), String> {
     let app_path = app_path.trim().trim_matches('"');
     let app_name = app_name.trim();
+    let app_arguments = app_arguments.trim();
     if app_name.is_empty() {
         return Err("应用名称不能为空".to_string());
     }
@@ -2714,6 +2834,7 @@ pub fn add_custom_app_index(app_path: String, app_name: String) -> Result<(), St
         path: canonical_path.clone(),
         desc: canonical_path.clone(),
         target_path: canonical_path.clone(),
+        arguments: app_arguments.to_string(),
         icon: read_icon_to_base64(canonical_path),
         pinyin,
         abb,
