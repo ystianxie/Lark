@@ -20,14 +20,21 @@ pub fn read_selected_text() -> Result<Option<String>, String> {
         };
 
         let keys = [
-            VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU, VK_SHIFT,
-            VK_LSHIFT, VK_RSHIFT, VK_LWIN, VK_RWIN,
+            VK_CONTROL,
+            VK_LCONTROL,
+            VK_RCONTROL,
+            VK_MENU,
+            VK_LMENU,
+            VK_RMENU,
+            VK_SHIFT,
+            VK_LSHIFT,
+            VK_RSHIFT,
+            VK_LWIN,
+            VK_RWIN,
         ];
         let deadline = Instant::now() + Duration::from_millis(500);
         while Instant::now() < deadline {
-            let modifier_down = keys
-                .iter()
-                .any(|key| unsafe { GetAsyncKeyState(*key) } < 0);
+            let modifier_down = keys.iter().any(|key| unsafe { GetAsyncKeyState(*key) } < 0);
             if !modifier_down {
                 return;
             }

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:desktop": "node scripts/validate-bundled-plugins.mjs && pnpm build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

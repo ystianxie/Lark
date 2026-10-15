@@ -1,5 +1,6 @@
 export const THEME_STORAGE_KEY = "lark.appearance";
-export const DEFAULT_APPEARANCE = Object.freeze({ theme: "classic" });
+export const DEFAULT_WALLPAPER = Object.freeze({ path: "", enabled: false, scale: 100, x: 50, y: 50, opacity: 35 });
+export const DEFAULT_APPEARANCE = Object.freeze({ theme: "classic", wallpaper: DEFAULT_WALLPAPER });
 
 export const THEME_PRESETS = [
   { id: "classic", name: "经典", description: "深色搜索，浅色面板" },
@@ -9,7 +10,18 @@ export const THEME_PRESETS = [
 ];
 
 export function normalizeAppearance(value) {
-  return { theme: [...THEME_PRESETS.map(preset => preset.id), "system"].includes(value?.theme) ? value.theme : "classic" };
+  const wallpaper = value?.wallpaper;
+  const number = (key, min, max) => Number.isFinite(wallpaper?.[key])
+    ? Math.round(Math.min(max, Math.max(min, wallpaper[key]))) : DEFAULT_WALLPAPER[key];
+  return {
+    theme: [...THEME_PRESETS.map(preset => preset.id), "system"].includes(value?.theme) ? value.theme : "classic",
+    wallpaper: {
+      path: typeof wallpaper?.path === "string" ? wallpaper.path : "",
+      enabled: wallpaper?.enabled === true,
+      scale: number("scale", 100, 300), x: number("x", 0, 100), y: number("y", 0, 100),
+      opacity: number("opacity", 0, 100),
+    },
+  };
 }
 
 export function resolveTheme(appearance, systemDark) {

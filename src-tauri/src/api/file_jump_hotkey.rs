@@ -52,27 +52,13 @@ impl KeyboardState {
         }
         #[cfg(target_os = "windows")]
         {
-            use crate::api::dialog_probe::{probe_foreground_dialog, DialogConfidence};
             use tauri::Manager;
-            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
-            // Hook 回调只做轻量匹配；控件探测和导航放在后台执行。
-            let hwnd = unsafe { GetForegroundWindow() }.0 as isize;
+            // Hook 回调只做轻量匹配；路径缓存、文件框探测和导航统一由
+            // navigator 处理，避免在按键线程里做两次探测导致切换瞬间丢按键。
             let app = app.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let jump = app.state::<crate::api::listary_jump::ListaryJumpHandle>();
-                if !matches!(jump.latest_explorer_path(), Ok(Some(_))) {
-                    return;
-                }
-                let Ok(probe) = probe_foreground_dialog() else {
-                    return;
-                };
-                if probe.hwnd != hwnd || probe.confidence != DialogConfidence::Confirmed {
-                    return;
-                }
-                if unsafe { GetForegroundWindow() }.0 as isize != hwnd {
-                    return;
-                }
                 if let Err(error) = jump.trigger_ctrl_g() {
                     eprintln!("[ListaryJump] 快捷键触发失败：{error}");
                 }

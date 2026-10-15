@@ -1,15 +1,15 @@
+pub mod admin_launch;
 pub mod clipboard;
 pub mod dialog_navigator;
 pub mod dialog_probe;
 pub mod explorer;
 pub mod explorer_listener;
-mod pulse_path;
 pub mod file_jump_hotkey;
 pub mod file_watcher;
 pub mod listary_jump;
 pub mod proxy_pool;
+mod pulse_path;
 pub mod shell;
-pub mod admin_launch;
 pub mod snippets;
 #[cfg(target_os = "windows")]
 pub mod windows_app_watcher;

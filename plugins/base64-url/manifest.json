@@ -1,0 +1,12 @@
+{
+  "id": "base64-url",
+  "name": "Base64 / URL 编解码",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "在 Base64、URL 编码和原文之间快速转换",
+  "entry": { "type": "js", "path": "main.js" },
+  "icon": "./assets/icon.svg",
+  "workflows": [
+    { "id": "convert", "title": "Base64 / URL 编解码", "description": "输入文本，同时尝试 Base64 和 URL 编解码", "keywords": ["base64", "base64编码", "base64decode", "base64解码", "urlencode", "url编码", "urldecode", "url解码", "编码", "解码", "percent"], "type": "action", "interactive": true, "handler": "convert", "icon": "./assets/icon.svg" }
+  ]
+}

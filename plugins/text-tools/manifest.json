@@ -1,0 +1,10 @@
+{
+  "id": "text-tools",
+  "name": "文本处理工具",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "去重、排序、大小写和命名风格转换",
+  "entry": { "type": "js", "path": "main.js" },
+  "icon": "./assets/icon.svg",
+  "workflows": [{ "id": "open", "title": "文本处理", "description": "清理和转换多行文本", "keywords": ["文本处理", "去重", "排序", "大小写", "驼峰"], "type": "panel", "handler": "open", "windowMode": "expanded", "icon": "./assets/icon.svg" }]
+}

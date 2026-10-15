@@ -3,7 +3,7 @@
   "version": "0.1.13",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build:desktop",
     "devUrl": "http://localhost:1421",
     "frontendDist": "../dist"
   },
@@ -34,8 +34,7 @@
         "enable": true,
         "scope": [
           "$APPDATA/**",
-          "$RESOURCE/**",
-          "D:/Project/Lark/plugins/**"
+          "$RESOURCE/**"
         ]
       },
       "capabilities": [
@@ -90,6 +89,9 @@
       "icons/icon-512x512.png"
     ],
     "externalBin": [],
+    "resources": {
+      "../plugins/": "resources/plugins/"
+    },
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico"

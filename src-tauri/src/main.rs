@@ -297,6 +297,11 @@ fn ensure_notification_window(app: &AppHandle) -> Result<(), String> {
         println!("[notification] building notification window");
         let url = WebviewUrl::App("index.html?window=notification".into());
         WebviewWindowBuilder::new(app, "notification", url)
+            .data_directory(
+                crate::utils::dirs::app_data_dir()
+                    .map_err(|e| e.to_string())?
+                    .join("webview"),
+            )
             .title("Lark Notification")
             .inner_size(380.0, 120.0)
             .min_inner_size(320.0, 60.0)
@@ -377,6 +382,11 @@ fn ensure_onboarding_window(app: &AppHandle, focus: bool) -> Result<(), String> 
         WebviewUrl::App("onboarding.html".into()),
     )
     .title("Lark 新手向导")
+    .data_directory(
+        crate::utils::dirs::app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("webview"),
+    )
     .inner_size(width, height)
     .center()
     .decorations(false)
@@ -1535,6 +1545,18 @@ fn get_plugin_settings_status(app: AppHandle) -> Result<serde_json::Value, Strin
 }
 
 fn main() {
+    let mut context = tauri::generate_context!();
+    #[cfg(windows)]
+    {
+        let legacy_webview = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .map(|root| root.join(&context.config().identifier));
+        let webview_data = utils::dirs::webview_data_dir(legacy_webview.as_deref())
+            .expect("无法初始化 resources/data/webview，请确认安装目录可写且旧版 Lark 已退出");
+        for window in &mut context.config_mut().app.windows {
+            window.data_directory = Some(webview_data.clone());
+        }
+    }
     ClipboardWatcher::start();
     let index_db = IndexSQL::new();
     RecordSQL::new();
@@ -1699,6 +1721,8 @@ fn main() {
             let plugins_dir = crate::utils::dirs::app_plugins_dir()?;
             app.asset_protocol_scope()
                 .allow_directory(plugins_dir, true)?;
+            app.asset_protocol_scope()
+                .allow_directory(crate::utils::dirs::app_data_dir()?, true)?;
             let failed_hotkeys = shortcut(
                 app,
                 &hotkey_awaken,
@@ -1894,6 +1918,7 @@ fn main() {
             save_setting,
             config::appearance::get_appearance,
             config::appearance::save_appearance,
+            config::appearance::import_wallpaper,
             config::appearance::set_frosted_effect,
             set_hotkey_capture_active,
             reserve_hotkey_capture,
@@ -1914,7 +1939,7 @@ fn main() {
             get_custom_app_indexes,
             delete_custom_app_index,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 

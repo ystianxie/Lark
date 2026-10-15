@@ -575,11 +575,13 @@ pub fn load_plugins(app: AppHandle) -> Vec<PluginRecord> {
     if cfg!(debug_assertions) {
         dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins"));
     }
-    if let Ok(dir) = app.path().resource_dir() {
-        dirs.push(dir.join("plugins"));
-    }
     let mut result = Vec::new();
     for dir in dirs {
+        // Plugin assets are loaded through Tauri's asset protocol.  The
+        // repository plugin directory is machine-specific in development, so
+        // authorize the path discovered at runtime instead of relying on a
+        // drive-letter-specific entry in tauri.conf.json.
+        let _ = app.asset_protocol_scope().allow_directory(&dir, true);
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
         };

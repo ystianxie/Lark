@@ -1,0 +1,11 @@
+{
+  "id": "regex-tester",
+  "name": "正则表达式测试器",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "实时测试正则表达式并查看匹配结果和捕获组",
+  "entry": { "type": "js", "path": "main.js" },
+  "icon": "./assets/icon.svg",
+  "workflows": [{ "id": "open", "title": "正则测试器", "description": "测试 JavaScript RegExp 或 Python re", "keywords": ["正则", "regex", "regexp", "匹配", "python re"], "type": "panel", "handler": "open", "windowMode": "expanded", "icon": "./assets/icon.svg" }],
+  "permissions": ["python.execute"]
+}

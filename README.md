@@ -112,6 +112,8 @@ pnpm tauri dev
 
 完整体验请使用 `pnpm tauri dev`，因为应用启动、本地索引和剪贴板等系统功能依赖 Tauri。当前打包配置为 Windows NSIS 安装包，其他平台需按需调整构建配置。
 
+配置、数据和插件统一放在 `Lark.exe` 同级的 `resources/`：`config.json` 保存配置，`data/` 保存数据库、日志、剪贴板图片和 WebView2 数据，`plugins/` 同时存放附带插件与用户插件。附带插件可在组件库关闭，升级保留关闭状态。安装目录需要可写；旧 `config/lark/` 首次启动时自动迁移，原文件保留为备份。开发运行的数据位于调试 exe 同级目录，与正式安装版分开。
+
 ### 项目结构
 
 ```text

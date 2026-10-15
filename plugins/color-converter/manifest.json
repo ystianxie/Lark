@@ -1,0 +1,11 @@
+{
+  "id": "color-converter",
+  "name": "颜色转换器",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "HEX、RGB、HSL 颜色互转和预览",
+  "entry": { "type": "js", "path": "main.js" },
+  "icon": "./assets/icon.svg",
+  "workflows": [{ "id": "open", "title": "颜色转换器", "description": "选择颜色并转换 HEX、RGB、HSL", "keywords": ["颜色", "hex", "rgb", "hsl", "color"], "type": "panel", "handler": "open", "windowMode": "expanded", "icon": "./assets/icon.svg" }],
+  "permissions": ["clipboard.write"]
+}

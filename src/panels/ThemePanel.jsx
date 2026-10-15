@@ -2,11 +2,12 @@ import React from "react";
 import { Button, Switch } from "antd";
 import { CheckOutlined, DesktopOutlined } from "@ant-design/icons";
 import { useTheme } from "../theme/ThemeContext";
-import { THEME_PRESETS } from "../theme/presets";
+import { DEFAULT_APPEARANCE, THEME_PRESETS } from "../theme/presets";
 import "./themePanel.css";
+import WallpaperEditor from "./WallpaperEditor";
 
 export default function ThemePanel() {
-  const { appearance, resolvedTheme, systemDark, changeTheme, ready, saving, error } = useTheme();
+  const { appearance, resolvedTheme, systemDark, changeTheme, changeAppearance, ready, saving, error } = useTheme();
   const followsSystem = appearance.theme === "system";
   const disabled = !ready || saving;
 
@@ -36,6 +37,7 @@ export default function ThemePanel() {
           </button>
         ))}
       </div>
+      <WallpaperEditor/>
       <section className="themeSystemRow">
         <span className="themeSystemIcon"><DesktopOutlined/></span>
         <div><h3>跟随系统</h3><p>自动切换浅色与深色。系统当前为{systemDark ? "深色" : "浅色"}。</p></div>
@@ -44,7 +46,7 @@ export default function ThemePanel() {
       </section>
       <footer className="themePanelFooter">
         <span role="status" aria-live="polite">{!ready ? "正在读取外观…" : saving ? "正在保存…" : "即时生效，自动保存"}</span>
-        <Button disabled={disabled || appearance.theme === "classic"} onClick={() => changeTheme("classic")}>恢复默认</Button>
+        <Button disabled={disabled || (appearance.theme === "classic" && !appearance.wallpaper.path)} onClick={() => changeAppearance(DEFAULT_APPEARANCE)}>恢复默认</Button>
       </footer>
       {error && <div className="themePanelError" role="alert">{error}</div>}
     </div>

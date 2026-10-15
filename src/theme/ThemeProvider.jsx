@@ -6,6 +6,7 @@ import { applyAppearance, normalizeAppearance, readCachedAppearance, resolveThem
 import { ThemeContext } from "./ThemeContext";
 import { syncNativeAppearanceEffect } from "./nativeEffect";
 import "./tokens.css";
+import Wallpaper from "./Wallpaper";
 
 const systemQuery = window.matchMedia("(prefers-color-scheme: dark)");
 // Apply the cache before React's first render. Native config is the source of truth.
@@ -64,10 +65,10 @@ export default function ThemeProvider({ children }) {
     return () => { disposed = true; off?.(); window.removeEventListener("storage", storageChanged); };
   }, []);
 
-  const changeTheme = async (theme) => {
+  const changeAppearance = async (patch) => {
     if (busy.current || !ready) return;
     const previous = current.current;
-    const next = normalizeAppearance({ theme });
+    const next = normalizeAppearance({ ...previous, ...patch });
     busy.current = true;
     setSaving(true);
     setError("");
@@ -76,15 +77,17 @@ export default function ThemeProvider({ children }) {
       if (isTauri()) await invoke("save_appearance", { appearance: next });
     } catch (cause) {
       acceptAppearance(previous);
-      setError(`保存外观失败，已恢复原皮肤：${String(cause)}`);
+      setError(`保存外观失败，已恢复原设置：${String(cause)}`);
     } finally {
       busy.current = false;
       setSaving(false);
     }
+    return current.current;
   };
+  const changeTheme = (theme) => changeAppearance({ theme });
 
   return (
-    <ThemeContext.Provider value={{ appearance, resolvedTheme, systemDark, changeTheme, ready, saving, error }}>
+    <ThemeContext.Provider value={{ appearance, resolvedTheme, systemDark, changeTheme, changeAppearance, ready, saving, error }}>
       <ConfigProvider theme={{
         algorithm: resolvedTheme === "dark" ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: {
@@ -97,7 +100,7 @@ export default function ThemeProvider({ children }) {
           colorTextLightSolid: resolvedTheme === "dark" ? "#172238" : "#ffffff",
           colorBorder: resolvedTheme === "dark" ? "#414a59" : "#dce1e9",
         },
-      }}>{children}</ConfigProvider>
+      }}><Wallpaper wallpaper={appearance.wallpaper}/>{children}</ConfigProvider>
     </ThemeContext.Provider>
   );
 }

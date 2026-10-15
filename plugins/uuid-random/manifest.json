@@ -1,0 +1,13 @@
+{
+  "id": "uuid-random",
+  "name": "UUID / 随机字符串",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "生成 UUID、随机字符串和验证码",
+  "entry": { "type": "js", "path": "main.js" },
+  "icon": "./assets/icon.svg",
+  "workflows": [
+    { "id": "uuid-v4", "title": "生成 UUID v4", "description": "生成一个随机 UUID v4", "keywords": ["uuid", "uuid4", "随机id"], "type": "action", "handler": "uuid", "icon": "./assets/icon.svg" },
+    { "id": "random-string", "title": "生成随机字符串", "description": "按长度生成安全随机字符串", "keywords": ["random", "随机字符串", "密码"], "type": "action", "interactive": true, "handler": "random", "icon": "./assets/icon.svg" }
+  ]
+}

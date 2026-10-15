@@ -7,8 +7,8 @@ pub mod file_factory;
 pub mod icons;
 pub mod img_factory;
 pub mod json_factory;
-pub mod string_factory;
 pub mod ocr;
+pub mod string_factory;
 
 #[cfg(windows)]
 pub mod background;

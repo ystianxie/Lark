@@ -1,5 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { actions, createNotification, notify } from "./utils/notify";
+import { mountPluginControl } from "./pluginControls";
 
 const runtimes = new Map();
 
@@ -65,6 +66,7 @@ export function createPluginContext(manifest, state = {}) {
     input: { text: state.text || "", file: state.file || null, selection: state.selection || null },
     ui: {
       ...(state.ui || {}),
+      mountControl: mountPluginControl,
       ...((manifest.permissions || []).includes("notification.send") ? { notify, actions } : {}),
     },
     api,

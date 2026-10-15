@@ -819,7 +819,11 @@ pub fn open_explorer_result(path: &str) -> Result<(), String> {
     // AppsFolder entries are Shell namespace paths rather than filesystem
     // paths, so Path::exists() cannot be used to validate them.
     #[cfg(target_os = "windows")]
-    if path.trim().to_ascii_lowercase().starts_with(r"shell:appsfolder\") {
+    if path
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with(r"shell:appsfolder\")
+    {
         Command::new("explorer")
             .arg(path)
             .spawn()
@@ -1481,7 +1485,7 @@ fn app_entry_key(path: &str, target_path: &str, arguments: Option<&str>) -> Stri
 /// The original argument string remains unchanged for launching and persistence.
 #[cfg(target_os = "windows")]
 fn normalize_arguments_for_identity(arguments: &str) -> String {
-    const SOURCE_ARGUMENT_KEYS: &[&str] = &["/from","-StartType","--launch-from"];
+    const SOURCE_ARGUMENT_KEYS: &[&str] = &["/from", "-StartType", "--launch-from"];
 
     tokenize_windows_arguments(arguments)
         .into_iter()
@@ -1662,10 +1666,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                     arguments.is_some()
                 );
             }
-            if is_batch_script_launcher(
-                &app.executable,
-                arguments.as_deref().unwrap_or_default(),
-            ) {
+            if is_batch_script_launcher(&app.executable, arguments.as_deref().unwrap_or_default()) {
                 println!(
                     "[AppIndexTrace] 跳过批处理启动入口: source=AppsFolder, title={}, target={}, arguments={}",
                     title,

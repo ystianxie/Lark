@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "apiVersion": 1,
   "description": "将 curl 命令转换为 Python requests 代码",
-  "entry": { "type": "js", "path": "dist/main.js" },
+  "entry": { "type": "js", "path": "main.js" },
   "workflows": [
     {
       "id": "open-curl-to-requests",

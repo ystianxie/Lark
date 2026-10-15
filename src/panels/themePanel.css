@@ -1,3 +1,20 @@
+.wallpaperEditor { margin-top: 18px; padding: 16px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--panel-surface); }
+.wallpaperHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.wallpaperHeader h3 { margin: 0 0 5px; font-size: 15px; }
+.wallpaperHeader p, .wallpaperHint { color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.wallpaperLayout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(190px, 1fr); gap: 20px; align-items: start; }
+.wallpaperPreview { position: relative; display: grid; place-items: center; aspect-ratio: 1.5; overflow: hidden; border: 1px solid var(--border-color); border-radius: 10px; background: var(--launcher-bg); color: var(--launcher-muted); touch-action: none; user-select: none; }
+.wallpaperPreview.has-image { cursor: grab; }
+.wallpaperPreview.has-image:active { cursor: grabbing; }
+.wallpaperImage { position: absolute; inset: 0; background-size: cover; pointer-events: none; }
+.wallpaperPreviewContent { position: relative; display: flex; flex-direction: column; gap: 65px; width: 85%; pointer-events: none; }
+.wallpaperPreviewContent > span { padding: 10px; border-radius: 6px; background: color-mix(in srgb, var(--launcher-input-bg) 65%, transparent); color: var(--launcher-text); }
+.wallpaperPreviewContent small { align-self: center; padding: 4px 8px; border-radius: 6px; background: var(--panel-surface); color: var(--text-secondary); }
+.wallpaperActions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.wallpaperControls label { display: flex; justify-content: space-between; color: var(--text-secondary); font-size: 12px; }
+.wallpaperControls .ant-slider { margin: 9px 6px 15px; }
+.wallpaperHint { margin: 12px 0 0; }
+@media (max-width: 620px) { .wallpaperLayout { grid-template-columns: 1fr; } }
 .themePanel { padding: 14px 22px 24px; max-width: 960px; margin: 0 auto; color: var(--text-primary); font-size: 13px; }
 .themePanelHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .themePanelHeader h2 { font-size: 21px; font-weight: 650; margin: 0 0 7px; }
