@@ -53,6 +53,9 @@ pub struct FileIndex {
     pub pinyin: String,
     pub abb: String,
     pub file_type: String,
+    /// 应用索引的发现来源；普通文件索引为空。
+    #[serde(default)]
+    pub source: String,
     pub md5: String,
     pub create_time: u64,
 }
@@ -418,6 +421,24 @@ fn ensure_app_index_arguments_column(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_app_index_source_column(conn: &Connection) -> Result<()> {
+    let has_source = {
+        let mut stmt = conn.prepare("PRAGMA table_info(app_index)")?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let found = columns
+            .filter_map(std::result::Result::ok)
+            .any(|column| column == "source");
+        found
+    };
+    if !has_source {
+        conn.execute(
+            "ALTER TABLE app_index ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn ensure_app_index_target_path_column(conn: &Connection) -> Result<()> {
     let has_column = {
         let mut stmt = conn.prepare("PRAGMA table_info(app_index)")?;
@@ -517,6 +538,7 @@ impl IndexSQL {
             type        TEXT DEFAULT 'app',
             md5         TEXT NOT NULL,
             is_custom   INTEGER NOT NULL DEFAULT 0,
+            source      TEXT NOT NULL DEFAULT '',
             create_time INTEGER DEFAULT (strftime('%s', 'now'))
         );
         CREATE INDEX IF NOT EXISTS idx_md5 ON app_index (md5);
@@ -526,6 +548,7 @@ impl IndexSQL {
         ensure_app_index_custom_column(&c).unwrap();
         ensure_app_index_arguments_column(&c).unwrap();
         ensure_app_index_target_path_column(&c).unwrap();
+        ensure_app_index_source_column(&c).unwrap();
         let sql = r#"
         CREATE TABLE IF NOT EXISTS file_index
         (
@@ -694,7 +717,7 @@ impl IndexSQL {
     }
 
     pub fn insert_app_index(&self, r: &FileIndex) -> Result<i64> {
-        let sql = "insert into app_index (title,path,desc,arguments,icon,pinyin,abb,md5,target_path) values (?1,?2,?3,?4,?5,?6,?7,?8,?9)";
+        let sql = "insert into app_index (title,path,desc,arguments,icon,pinyin,abb,md5,target_path,source) values (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)";
         let md5 = string_factory::md5(r.path.as_str());
         let res = self.conn.execute(
             sql,
@@ -708,6 +731,7 @@ impl IndexSQL {
                 &r.abb,
                 &md5,
                 &r.target_path,
+                &r.source,
             ],
         );
         match res {
@@ -725,8 +749,8 @@ impl IndexSQL {
         {
             let mut stmt = tx.prepare(
                 r#"
-                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, md5, target_path)
-                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, md5, target_path, source)
+                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
                 WHERE NOT EXISTS (
                     SELECT 1 FROM app_index
                     WHERE replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
@@ -745,6 +769,7 @@ impl IndexSQL {
                     &r.abb,
                     &md5,
                     &r.target_path,
+                    &r.source,
                 ];
                 let res = stmt.execute(params);
                 match res {
@@ -780,8 +805,8 @@ impl IndexSQL {
         let inserted = {
             let mut stmt = tx.prepare(
                 r#"
-                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, type, md5, is_custom, target_path)
-                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'app', ?8, 0, ?9
+                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, type, md5, is_custom, target_path, source)
+                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'app', ?8, 0, ?9, ?10
                 WHERE NOT EXISTS (
                     SELECT 1 FROM app_index
                     WHERE replace(lower(path), '/', '\') = replace(lower(?2), '/', '\')
@@ -807,6 +832,7 @@ impl IndexSQL {
                     app.abb,
                     md5,
                     app.target_path,
+                    app.source,
                 ])?;
             }
             inserted
@@ -845,7 +871,7 @@ impl IndexSQL {
                 r#"
                 UPDATE app_index SET
                     title = ?1, path = ?2, desc = ?3, arguments = ?4, icon = ?5, pinyin = ?6,
-                    abb = ?7, type = 'app', md5 = ?8, is_custom = 1, target_path = ?10
+                    abb = ?7, type = 'app', md5 = ?8, is_custom = 1, source = ?10, target_path = ?11
                 WHERE id = ?9
                 "#,
                 rusqlite::params![
@@ -858,6 +884,7 @@ impl IndexSQL {
                     &app.abb,
                     &md5,
                     id,
+                    &app.source,
                     &app.target_path,
                 ],
             )?;
@@ -867,8 +894,8 @@ impl IndexSQL {
         } else {
             tx.execute(
                 r#"
-                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, type, md5, is_custom, target_path)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'app', ?8, 1, ?9)
+                INSERT INTO app_index (title, path, desc, arguments, icon, pinyin, abb, type, md5, is_custom, target_path, source)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'app', ?8, 1, ?9, ?10)
                 "#,
                 rusqlite::params![
                     &app.title,
@@ -880,6 +907,7 @@ impl IndexSQL {
                     &app.abb,
                     md5,
                     &app.target_path,
+                    &app.source,
                 ],
             )?;
         }
@@ -889,7 +917,7 @@ impl IndexSQL {
 
     pub fn list_custom_app_indexes(&self) -> Result<Vec<FileIndex>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, path, desc, arguments, icon, target_path FROM app_index WHERE is_custom = 1 ORDER BY title COLLATE NOCASE",
+            "SELECT id, title, path, desc, arguments, icon, target_path, source FROM app_index WHERE is_custom = 1 ORDER BY title COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(FileIndex {
@@ -900,6 +928,7 @@ impl IndexSQL {
                 arguments: row.get(4)?,
                 icon: row.get(5)?,
                 target_path: row.get(6)?,
+                source: row.get(7)?,
                 file_type: "app".to_string(),
                 ..Default::default()
             })
@@ -937,7 +966,8 @@ impl IndexSQL {
         let contains = format!("%{}%", escaped);
         let offset = offset.max(0) as i64;
 
-        let sql = "SELECT id, title, path, desc, arguments, icon, target_path FROM app_index
+        let sql =
+            "SELECT id, title, path, desc, arguments, icon, target_path, source FROM app_index
              WHERE title COLLATE NOCASE LIKE ?2 ESCAPE '\\'
                 OR pinyin COLLATE NOCASE LIKE ?2 ESCAPE '\\'
                 OR abb COLLATE NOCASE LIKE ?2 ESCAPE '\\'
@@ -969,6 +999,7 @@ impl IndexSQL {
                 arguments: row.get(4)?,
                 icon: row.get(5)?,
                 target_path: row.get(6)?,
+                source: row.get(7)?,
                 file_type: "app".to_string(),
                 ..Default::default()
             };
@@ -1479,6 +1510,7 @@ mod app_index_tests {
                 icon TEXT DEFAULT '', pinyin TEXT DEFAULT '', abb TEXT DEFAULT '',
                 type TEXT DEFAULT 'app', md5 TEXT NOT NULL,
                 is_custom INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT '',
                 create_time INTEGER DEFAULT (strftime('%s', 'now'))
             );
             "#,
@@ -1573,6 +1605,22 @@ mod app_index_tests {
 
         assert!(db.find_app("   ", 0).unwrap().is_empty());
         assert_eq!(db.find_app("code", -10).unwrap()[0].title, "Code");
+    }
+
+    #[test]
+    fn discovered_app_source_round_trips_through_rebuild_and_search() {
+        let mut db = test_index();
+        db.replace_discovered_app_indexes(vec![FileIndex {
+            title: "Portable app".to_string(),
+            path: r"D:\Apps\Portable.exe".to_string(),
+            source: "便携应用".to_string(),
+            ..Default::default()
+        }])
+        .unwrap();
+
+        let result = db.find_app("Portable", 0).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].source, "便携应用");
     }
 
     #[test]
@@ -1794,13 +1842,16 @@ mod app_index_tests {
         .unwrap();
 
         ensure_app_index_custom_column(&conn).unwrap();
+        ensure_app_index_source_column(&conn).unwrap();
 
-        let row: (String, i64) = conn
-            .query_row("SELECT title, is_custom FROM app_index", [], |row| {
-                Ok((row.get(0)?, row.get(1)?))
-            })
+        let row: (String, i64, String) = conn
+            .query_row(
+                "SELECT title, is_custom, source FROM app_index",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
             .unwrap();
-        assert_eq!(row, ("Existing".to_string(), 0));
+        assert_eq!(row, ("Existing".to_string(), 0, "".to_string()));
     }
 
     #[test]

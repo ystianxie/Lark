@@ -70,7 +70,7 @@ export function activate(context) {
       const hueDot = document.createElement("div");
       hueDot.style.cssText = "position:absolute;width:12px;height:12px;box-sizing:border-box;border:2px solid white;border-radius:50%;box-shadow:0 0 0 1px #0008;pointer-events:none;transform:translate(-50%,-50%)";
       const square = document.createElement("div");
-      square.style.cssText = "position:absolute;left:45px;top:45px;width:130px;height:130px;border-radius:4px;touch-action:none;cursor:crosshair";
+      square.style.cssText = "position:absolute;left:50px;top:50px;width:120px;height:120px;border-radius:4px;touch-action:none;cursor:crosshair";
       square.setAttribute("aria-label", "饱和度和明度");
       const squareDot = hueDot.cloneNode();
       square.append(squareDot);

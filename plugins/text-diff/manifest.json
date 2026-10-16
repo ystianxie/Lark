@@ -1,0 +1,34 @@
+{
+  "id": "text-diff",
+  "name": "文本差异比较",
+  "version": "1.1.0",
+  "apiVersion": 1,
+  "description": "基于 Monaco Editor 比较文本和代码差异，支持语法高亮与差异导航",
+  "entry": {
+    "type": "js",
+    "path": "main.js"
+  },
+  "icon": "./assets/icon.svg",
+  "workflows": [
+    {
+      "id": "open",
+      "title": "文本差异比较",
+      "description": "Monaco 代码差异比较、并排编辑、语法高亮",
+      "keywords": [
+        "文本差异",
+        "diff",
+        "compare",
+        "对比",
+        "比较",
+        "代码对比"
+      ],
+      "type": "panel",
+      "handler": "open",
+      "windowMode": "expanded",
+      "icon": "./assets/icon.svg"
+    }
+  ],
+  "permissions": [
+    "clipboard.write"
+  ]
+}

@@ -47,6 +47,173 @@ use winapi::um::winuser::{
     ShowWindow, SW_RESTORE,
 };
 
+const APP_SOURCE_APPS_FOLDER: &str = "AppsFolder";
+const APP_SOURCE_START_MENU: &str = "开始菜单";
+const APP_SOURCE_DESKTOP: &str = "桌面";
+const APP_SOURCE_PORTABLE: &str = "便携应用";
+const APP_SOURCE_CUSTOM: &str = "手动添加";
+const APP_SOURCE_MACOS_APPLICATIONS: &str = "macOS Applications";
+
+#[cfg(target_os = "windows")]
+const SOURCE_ARGUMENT_KEYS: &[&str] = &["/from", "-StartType", "--launch-from", "--scene"];
+
+#[cfg(target_os = "windows")]
+const COMMON_APP_EXCLUDED_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    ".idea",
+    ".vscode",
+    "node_modules",
+    "target",
+    "build",
+    "dist",
+    "out",
+    "vendor",
+    "coverage",
+    ".cache",
+    ".turbo",
+    ".next",
+    ".nuxt",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+    "config",
+    "cache",
+    "caches",
+    "temp",
+    "tmp",
+    "log",
+    "logs",
+    "download",
+    "downloads",
+    "xwechat_files",
+    "runtime",
+    "resources",
+    "redist",
+    "components",
+    "common7",
+    "msbuild",
+    "vc",
+    "buildtools",
+    "setup",
+    "installer",
+    "lib",
+    "libs",
+    "docs",
+    "examples",
+    "samples",
+    "sogouinput",
+    "iflyime",
+    "plugins",
+];
+
+#[cfg(target_os = "windows")]
+const AUXILIARY_APP_TOKENS: &[&str] = &[
+    "agent",
+    "external",
+    "service",
+    "svr",
+    "helper",
+    "launcher",
+    "swap",
+    "crashpad",
+    "updater",
+    "uninstaller",
+    "uninstall",
+    "uninst",
+    "unins",
+    "readme",
+    "old",
+    "runtime",
+    "worker",
+    "bootstrap",
+];
+
+#[cfg(target_os = "windows")]
+const KNOWN_AUXILIARY_APP_NAMES: &[&str] = &[
+    "qqmusicup",
+    "qmdriverhelperx64",
+    "startdesktopprojection32",
+    "startdesktopprojectionforxp",
+    "qmbrowser",
+    "qmweiyun",
+    "desktopdynamiclyric",
+    "qmdesktopanimation",
+];
+
+#[cfg(target_os = "windows")]
+const AUXILIARY_APP_SUFFIXES: &[&str] = &[
+    "agent",
+    "external",
+    "service",
+    "svr",
+    "helper",
+    "launcher",
+    "updater",
+    "swap",
+    "uninst",
+    "unins",
+    "musicup",
+    "driverhelper",
+    "desktopdynamiclyric",
+    "desktopanimation",
+    "projection",
+    "qmbrowser",
+    "qmweiyun",
+];
+
+#[cfg(target_os = "windows")]
+const STRONG_AUXILIARY_KEYWORDS: &[&str] = &[
+    "卸载",
+    "说明书",
+    "解除安装",
+    "uninstall",
+    "uninstaller",
+    "unins",
+];
+
+#[cfg(target_os = "windows")]
+const INSTALLER_EXACT_STEMS: &[&str] = &["setup", "installer", "rsetup"];
+
+#[cfg(target_os = "windows")]
+const INSTALLER_STEM_SUFFIXES: &[&str] = &["setup", "-setup", "_setup", "-installer", "_installer"];
+
+#[cfg(target_os = "windows")]
+const INSTALLER_STEM_CONTAINS: &[&str] = &["_setup_"];
+
+#[cfg(target_os = "windows")]
+const INSTALLER_STEM_PREFIXES: &[&str] = &["vc_redist"];
+
+#[cfg(target_os = "windows")]
+const INSTALLER_STEM_CONTAINS_ANYWHERE: &[&str] = &["_redist"];
+
+#[cfg(target_os = "windows")]
+const USER_VISIBLE_AUXILIARY_KEYWORDS: &[&str] = &[
+    "网站",
+    "主页",
+    "设置",
+    "配置",
+    "使用说明",
+    "帮助",
+    "意见反馈",
+    "打字入门",
+    "皮肤下载",
+    "细胞词库",
+    "检查更新",
+    "release notes",
+    "manual",
+    "documentation",
+    "help",
+    "installer",
+    "install",
+];
+
 pub fn to_pinyin(hans: &str) -> Vec<String> {
     let mut ret = Vec::new();
     for pinyin in hans.to_pinyin() {
@@ -112,13 +279,10 @@ pub fn search_files(keyword: &str) -> Vec<HashMap<String, String>> {
 
 pub fn search_file_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
     let db = IndexSQL::new();
-    match db.find_by_keyword("file", keyword, offset) {
-        Ok(result) => result,
-        Err(error) => {
-            eprintln!("file search failed: {error:#}");
-            Vec::new()
-        }
-    }
+    db.find_by_keyword("file", keyword, offset).unwrap_or_else(|error| {
+        eprintln!("file search failed: {error:#}");
+        Vec::new()
+    })
 }
 
 /// 将文件系统路径转换为增量索引记录。路径不存在或无法读取元数据时返回 None。
@@ -275,49 +439,25 @@ fn is_app_scan_path_excluded(path: &str, excluded_paths: &[String]) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+fn is_common_app_excluded_path(path: &str) -> bool {
+    let normalized = path.replace('/', "\\").to_ascii_lowercase();
+    let components = normalized
+        .split('\\')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
+    components.iter().any(|component| {
+        COMMON_APP_EXCLUDED_DIRS
+            .iter()
+            .any(|excluded| component == excluded)
+            || component.starts_with("developer_")
+    }) || components
+        .windows(2)
+        .any(|pair| pair[0] == "jbr" && pair[1] == "bin")
+}
+
+#[cfg(target_os = "windows")]
 fn is_common_app_excluded_dir(entry: &fs::DirEntry) -> bool {
-    const EXCLUDED: &[&str] = &[
-        ".git",
-        ".hg",
-        ".svn",
-        ".idea",
-        ".vscode",
-        "node_modules",
-        "target",
-        "build",
-        "dist",
-        "out",
-        "vendor",
-        "coverage",
-        ".cache",
-        ".turbo",
-        ".next",
-        ".nuxt",
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        "venv",
-        ".venv",
-        "env",
-        ".env",
-        "runtime",
-        "resources",
-        "lib",
-        "libs",
-        "docs",
-        "examples",
-        "samples",
-    ];
-    entry
-        .file_name()
-        .to_str()
-        .map(|name| {
-            EXCLUDED
-                .iter()
-                .any(|excluded| name.eq_ignore_ascii_case(excluded))
-        })
-        .unwrap_or(false)
+    is_common_app_excluded_path(&entry.path().to_string_lossy())
 }
 
 #[cfg(target_os = "windows")]
@@ -514,6 +654,13 @@ fn get_apps_with_depth(
         // TODO Windows下检查目录程序
         #[cfg(target_os = "windows")]
         {
+            if exclude_common_dirs && is_common_app_excluded_path(&entry.path().to_string_lossy()) {
+                println!(
+                    "[AppIndexTrace] 跳过通用排除目录中的应用入口: path={}",
+                    entry.path().display()
+                );
+                continue;
+            }
             if entry.path().is_dir() {
                 if !recursive {
                     continue;
@@ -1146,15 +1293,20 @@ fn associated_shortcut_arguments(
         return None;
     }
     let target = normalize_app_launch_key(target);
+    let title = title.trim().to_lowercase();
     let mut found: Option<&str> = None;
     for candidate in start_menu.iter().chain(desktop) {
-        // A namespace GUID identifies the same target across localized names
-        // (e.g. Run / 运行). EXE associations still require matching titles.
+        // A namespace GUID identifies the same target across localized names.
+        // File targets also require matching titles, allowing the launch suffix
+        // already stripped from AppsFolder names (e.g. RPA-2.rdp -> RPA-2).
         if !candidate.get("data").is_some_and(|path| is_lnk_name(path))
             || !(target.starts_with("::{")
-                || candidate
-                    .get("title")
-                    .is_some_and(|name| name.trim().to_lowercase() == title.trim().to_lowercase()))
+                || candidate.get("title").is_some_and(|name| {
+                    name.trim().to_lowercase() == title
+                        || crate::api::windows_apps::normalize_registered_app_title(name)
+                            .to_lowercase()
+                            == title
+                }))
             || !candidate.get("target_path").is_some_and(|path| {
                 !path.trim().is_empty() && normalize_app_launch_key(path) == target
             })
@@ -1408,6 +1560,7 @@ fn append_secondary_apps(
                 source, title, path, target_path
             );
         }
+
         if is_auxiliary_app_entry(title, target_path) {
             println!(
                 "[AppIndexTrace] 跳过快捷方式（标题或目标命中辅助入口）: source={}, title={}, path={}, target={}",
@@ -1443,13 +1596,14 @@ fn append_secondary_apps(
         items.push(FileIndex {
             title: title.clone(),
             path: path.clone(),
-            desc: app_display_desc(target_path, source != "开始菜单"),
+            desc: app_display_desc(target_path, source != APP_SOURCE_START_MENU),
             target_path: target_path.to_string(),
             arguments,
             icon: read_icon_to_base64(path.clone()),
             pinyin,
             abb,
             file_type: "app".to_string(),
+            source: source.to_string(),
             ..Default::default()
         });
     }
@@ -1485,8 +1639,6 @@ fn app_entry_key(path: &str, target_path: &str, arguments: Option<&str>) -> Stri
 /// The original argument string remains unchanged for launching and persistence.
 #[cfg(target_os = "windows")]
 fn normalize_arguments_for_identity(arguments: &str) -> String {
-    const SOURCE_ARGUMENT_KEYS: &[&str] = &["/from", "-StartType", "--launch-from"];
-
     tokenize_windows_arguments(arguments)
         .into_iter()
         .map(|token| {
@@ -1605,8 +1757,8 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
         let mut path_checks = AppPathChecks::default();
         // Remove stale links before they can supply arguments to AppsFolder.
         for (apps, source) in [
-            (&mut start_menu_apps, "开始菜单"),
-            (&mut desktop_apps, "桌面"),
+            (&mut start_menu_apps, APP_SOURCE_START_MENU),
+            (&mut desktop_apps, APP_SOURCE_DESKTOP),
         ] {
             apps.retain(|app| {
                 !path_checks.should_skip(
@@ -1647,6 +1799,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
             } else {
                 app.executable.as_str()
             };
+
             if is_auxiliary_app_entry(title, auxiliary_target) {
                 continue;
             }
@@ -1729,6 +1882,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                 pinyin,
                 abb,
                 file_type: "app".to_string(),
+                source: APP_SOURCE_APPS_FOLDER.to_string(),
                 ..Default::default()
             });
         }
@@ -1737,14 +1891,14 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
             &mut items,
             &mut seen,
             &start_menu_apps,
-            "开始菜单",
+            APP_SOURCE_START_MENU,
             &mut path_checks,
         );
         append_secondary_apps(
             &mut items,
             &mut seen,
             &desktop_apps,
-            "桌面",
+            APP_SOURCE_DESKTOP,
             &mut path_checks,
         );
 
@@ -1766,10 +1920,16 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                     continue;
                 };
                 let path_obj = Path::new(path);
-                if !path_obj
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+                if is_common_app_excluded_path(path)
+                    || is_common_app_excluded_path(
+                        app.get("target_path")
+                            .map(String::as_str)
+                            .unwrap_or_default(),
+                    )
+                    || !path_obj
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
                     || is_portable_auxiliary_app(title, path)
                     || is_filtered_app(path, title)
                     || is_under_registered_app_dir(path, &registered_app_dirs)
@@ -1806,7 +1966,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                 || family_key.is_empty()
                 || seen.contains(&key)
                 || seen_app_names.contains(&product_key)
-                || path_checks.should_skip(&title, &path, &target_path, false, "便携应用")
+                || path_checks.should_skip(&title, &path, &target_path, false, APP_SOURCE_PORTABLE)
                 || !portable_names.insert(family_key)
             {
                 continue;
@@ -1823,6 +1983,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                 pinyin,
                 abb,
                 file_type: "app".to_string(),
+                source: APP_SOURCE_PORTABLE.to_string(),
                 ..Default::default()
             });
         }
@@ -1855,6 +2016,7 @@ pub fn create_app_index_to_sql(app_handle: AppHandle) -> Result<(), String> {
                 icon,
                 pinyin,
                 abb,
+                source: APP_SOURCE_MACOS_APPLICATIONS.to_string(),
                 ..Default::default()
             }
         })
@@ -1959,78 +2121,30 @@ fn registered_app_directory(executable: &str) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn is_auxiliary_app_value(value: &str) -> bool {
-    const AUXILIARY: &[&str] = &[
-        "agent",
-        "external",
-        "service",
-        "svr",
-        "helper",
-        "launcher",
-        "swap",
-        "crashpad",
-        "updater",
-        "uninstaller",
-        "uninstall",
-        "uninst",
-        "unins",
-        "readme",
-        "old",
-        "runtime",
-        "worker",
-        "bootstrap",
-    ];
     let lower = value.to_ascii_lowercase();
-    if [
-        "qqmusicup",
-        "qmdriverhelperx64",
-        "startdesktopprojection32",
-        "startdesktopprojectionforxp",
-        "qmbrowser",
-        "qmweiyun",
-        "desktopdynamiclyric",
-        "qmdesktopanimation",
-    ]
-    .contains(&lower.as_str())
-    {
+    if KNOWN_AUXILIARY_APP_NAMES.contains(&lower.as_str()) {
         return true;
     }
     let tokens = lower.split(|c: char| !c.is_ascii_alphanumeric());
-    if tokens.clone().any(|token| AUXILIARY.contains(&token)) {
+    if tokens
+        .clone()
+        .any(|token| AUXILIARY_APP_TOKENS.contains(&token))
+    {
         return true;
     }
     // Also catch vendor naming such as QQMusicUp or ProductAgent without
     // treating an unrelated product like ServerManager as auxiliary.
-    [
-        "agent",
-        "external",
-        "service",
-        "svr",
-        "helper",
-        "launcher",
-        "updater",
-        "swap",
-        "uninst",
-        "unins",
-        "musicup",
-        "driverhelper",
-        "desktopdynamiclyric",
-        "desktopanimation",
-        "projection",
-        "qmbrowser",
-        "qmweiyun",
-    ]
-    .iter()
-    .any(|suffix| lower.len() > suffix.len() + 3 && lower.ends_with(suffix))
+    AUXILIARY_APP_SUFFIXES
+        .iter()
+        .any(|suffix| lower.len() > suffix.len() + 3 && lower.ends_with(suffix))
 }
 
 #[cfg(target_os = "windows")]
 fn contains_strong_auxiliary_word(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
-    lower.contains("卸载")
-        || lower.contains("解除安装")
-        || lower.contains("uninstall")
-        || lower.contains("uninstaller")
-        || lower.contains("unins")
+    STRONG_AUXILIARY_KEYWORDS
+        .iter()
+        .any(|keyword| lower.contains(keyword))
 }
 
 #[cfg(target_os = "windows")]
@@ -2038,27 +2152,9 @@ fn is_user_visible_auxiliary_app(title: &str) -> bool {
     let lower = title.to_ascii_lowercase();
     is_auxiliary_app_value(title)
         || contains_strong_auxiliary_word(title)
-        || [
-            "网站",
-            "主页",
-            "设置",
-            "配置",
-            "使用说明",
-            "帮助",
-            "意见反馈",
-            "打字入门",
-            "皮肤下载",
-            "细胞词库",
-            "检查更新",
-            "release notes",
-            "manual",
-            "documentation",
-            "help",
-            "installer",
-            "install",
-        ]
-        .iter()
-        .any(|word| lower.contains(word))
+        || USER_VISIBLE_AUXILIARY_KEYWORDS
+            .iter()
+            .any(|word| lower.contains(word))
 }
 
 #[cfg(target_os = "windows")]
@@ -2171,8 +2267,40 @@ fn is_auxiliary_shortcut(title: &str, target: &str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+fn is_installer_filename(path: &str) -> bool {
+    let stem = Path::new(path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let uninstaller_suffix = stem.strip_prefix("unins").is_some_and(|suffix| {
+        suffix.is_empty() || suffix.chars().all(|value| value.is_ascii_digit())
+    });
+    let install_suffix = stem.strip_prefix("install").is_some_and(|suffix| {
+        suffix.is_empty() || suffix.chars().all(|value| value.is_ascii_digit())
+    });
+    INSTALLER_EXACT_STEMS.contains(&stem.as_str())
+        || uninstaller_suffix
+        || install_suffix
+        || INSTALLER_STEM_SUFFIXES
+            .iter()
+            .any(|suffix| stem.ends_with(suffix))
+        || INSTALLER_STEM_CONTAINS
+            .iter()
+            .any(|fragment| stem.contains(fragment))
+        || INSTALLER_STEM_PREFIXES
+            .iter()
+            .any(|prefix| stem.starts_with(prefix))
+        || INSTALLER_STEM_CONTAINS_ANYWHERE
+            .iter()
+            .any(|fragment| stem.contains(fragment))
+}
+
+#[cfg(target_os = "windows")]
 fn is_portable_auxiliary_app(title: &str, path: &str) -> bool {
     is_auxiliary_app_value(title)
+        || contains_strong_auxiliary_word(title)
+        || is_installer_filename(path)
         || Path::new(path)
             .file_stem()
             .and_then(|value| value.to_str())
@@ -2182,15 +2310,91 @@ fn is_portable_auxiliary_app(title: &str, path: &str) -> bool {
 #[cfg(all(test, target_os = "windows"))]
 mod app_scan_tests {
     use super::{
-        app_display_desc, is_auxiliary_app_entry, is_launchable_shortcut_target,
-        is_portable_auxiliary_app, is_under_registered_app_dir, is_user_visible_auxiliary_app,
-        is_web_launcher_entry, is_windows_installer_cache_path, local_app_file_path,
+        app_display_desc, is_auxiliary_app_entry, is_common_app_excluded_path,
+        is_installer_filename, is_launchable_shortcut_target, is_portable_auxiliary_app,
+        is_under_registered_app_dir, is_user_visible_auxiliary_app, is_web_launcher_entry,
+        is_windows_installer_cache_path, local_app_file_path,
         matching_working_directory_executable, normalize_app_product_key, portable_family_key,
         registered_app_directory, AppPathChecks,
     };
     use super::{app_entry_key, append_secondary_apps, associated_shortcut_arguments, AppMetadata};
     use crate::utils::database::FileIndex;
     use std::collections::HashSet;
+
+    #[test]
+    fn common_app_excluded_directories_match_case_insensitively_by_component() {
+        assert!(is_common_app_excluded_path(
+            r"D:\App\SogouInput\15.5.0.2004\crashrpt.exe"
+        ));
+        assert!(is_common_app_excluded_path(
+            r"D:\App\iFlytek\iFlyIME\3.0.1750\iFlyIMEConfig.exe"
+        ));
+        assert!(!is_common_app_excluded_path(
+            r"D:\App\SogouInputTools\app.exe"
+        ));
+    }
+    #[test]
+    fn rdp_shortcut_arguments_match_titles_with_launch_extensions() {
+        for (title, filename) in [
+            ("RPA-DZ", "158.rdp"),
+            ("RPA-3", "191.rdp"),
+            ("RPA-2", "229.rdp"),
+        ] {
+            let target = format!(r"C:\Users\admin\Desktop\{filename}");
+            let start_menu = [shortcut(&format!("{title}.rdp"), &target, Some(""))];
+            let arguments = associated_shortcut_arguments(title, &target, &start_menu, &[]);
+            assert_eq!(arguments.as_deref(), Some(""), "{title}");
+            assert_eq!(
+                app_entry_key(
+                    &format!(r"shell:AppsFolder\{target}"),
+                    &target,
+                    arguments.as_deref(),
+                ),
+                app_entry_key(&start_menu[0]["data"], &target, Some("")),
+            );
+        }
+        let target = r"C:\Desktop\229.rdp";
+        let desktop = [shortcut(" rpa-2.RDP ", target, Some("/admin"))];
+        assert_eq!(
+            associated_shortcut_arguments("RPA-2", target, &[], &desktop).as_deref(),
+            Some("/admin"),
+        );
+    }
+
+    #[test]
+    fn normalized_shortcut_titles_still_require_same_target_and_known_arguments() {
+        let target = r"C:\Desktop\229.rdp";
+        let different_target = [shortcut("RPA-2.rdp", r"C:\Desktop\191.rdp", Some(""))];
+        assert_eq!(
+            associated_shortcut_arguments("RPA-2", target, &different_target, &[]),
+            None,
+        );
+        let unknown = [shortcut("RPA-2.rdp", target, None)];
+        assert_eq!(
+            associated_shortcut_arguments("RPA-2", target, &unknown, &[]),
+            None,
+        );
+        let different_title = [shortcut("RPA-3.rdp", target, Some(""))];
+        assert_eq!(
+            associated_shortcut_arguments("RPA-2", target, &different_title, &[]),
+            None,
+        );
+    }
+
+    #[test]
+    fn normalized_shortcut_titles_preserve_conflicting_launch_arguments() {
+        let target = r"C:\Desktop\229.rdp";
+        let start_menu = [shortcut("RPA-2.rdp", target, Some(""))];
+        let desktop = [shortcut("RPA-2", target, Some("/admin"))];
+        assert_eq!(
+            associated_shortcut_arguments("RPA-2", target, &start_menu, &desktop),
+            None,
+        );
+        assert_ne!(
+            app_entry_key(&start_menu[0]["data"], target, Some("")),
+            app_entry_key(&desktop[0]["data"], target, Some("/admin")),
+        );
+    }
 
     fn shortcut(title: &str, target: &str, arguments: Option<&str>) -> AppMetadata {
         AppMetadata::from([
@@ -2206,673 +2410,6 @@ mod app_scan_tests {
                 arguments.is_some().to_string(),
             ),
         ])
-    }
-
-    #[test]
-    fn all_sources_share_the_same_key_including_empty_arguments() {
-        let target = r"E:\Games\WeGame\wegame.exe";
-        assert_eq!(
-            app_entry_key(&format!(r"shell:AppsFolder\{target}"), target, Some("")),
-            app_entry_key(
-                r"C:\Start Menu\WeGame.lnk",
-                "e:/games/wegame/WEGAME.EXE",
-                Some("")
-            ),
-        );
-        assert_eq!(
-            app_entry_key(target, "", Some("")),
-            app_entry_key(target, target, Some(""))
-        );
-    }
-
-    #[test]
-    fn source_arguments_are_ignored_only_in_the_deduplication_key() {
-        let target = r"C:\Program Files\WPS\wps.exe";
-        assert_eq!(
-            app_entry_key(target, target, Some(r"/w /from=startmenu")),
-            app_entry_key(target, target, Some(r"/w /from=desktop_shortcut")),
-        );
-        assert_ne!(
-            app_entry_key(target, target, Some(r"/w /mode=editor")),
-            app_entry_key(target, target, Some(r"/w /mode=viewer")),
-        );
-    }
-
-    #[test]
-    fn argument_tokenizer_keeps_quoted_spaces_and_normalizes_source_key() {
-        assert_eq!(
-            super::normalize_arguments_for_identity(
-                r#"/w /from=desktop_shortcut /file="C:\Users\A User\book.xlsx""#
-            ),
-            r#"/w /from /file="C:\Users\A User\book.xlsx""#
-        );
-        assert_eq!(
-            super::normalize_arguments_for_identity(r"/FROM=STARTMENU /x:y"),
-            "/from /x:y"
-        );
-    }
-
-    #[test]
-    fn rundll32_browser_entries_are_filtered_by_module_export_and_web_destination() {
-        let target = r"C:\WINDOWS\system32\rundll32.exe";
-        for arguments in [
-            r#"url,OpenURL "https://terra.im/gl/?cid=19339&oid=24765&v=3&utm_source=376&utm_medium=cpi&utm_campaign=The-Wandering-Village-v0.11.11a&date=20250614&z=1""#,
-            r#"url,OpenURL "https://terra.im/gl/?cid=19339&oid=19705&v=3&utm_source=376&utm_medium=cpi&utm_campaign=The-Wandering-Village-v0.11.11a&date=20250614&z=1""#,
-            r#"URL.DLL,OpenURL https://example.com"#,
-            r#" "C:\Windows\System32\url.dll" , FileProtocolHandler "http://example.com/""#,
-            "url.dll,OpenURLW\thttps://example.com/",
-        ] {
-            assert!(
-                is_web_launcher_entry("shell:AppsFolder\\AutoGenerated", target, Some(arguments)),
-                "{arguments}"
-            );
-            assert!(
-                is_web_launcher_entry("rundll32.exe", "", Some(arguments)),
-                "{arguments}"
-            );
-            assert!(
-                is_web_launcher_entry(&format!("shell:AppsFolder\\{target}"), "", Some(arguments)),
-                "{arguments}"
-            );
-            assert!(
-                is_web_launcher_entry("", r#""%windir%\System32\rundll32.exe""#, Some(arguments)),
-                "{arguments}"
-            );
-        }
-        assert!(!is_web_launcher_entry("", target, None));
-        for arguments in [
-            "",
-            "shell32.dll,Control_RunDLL appwiz.cpl",
-            "shell32.dll,Control_RunDLL https://example.com",
-            "other.dll,OpenURL https://example.com",
-            "url.dll,Other https://example.com",
-            "url.dll,OpenURLHelper https://example.com",
-            "url.dll,OpenURL",
-            "url.dll,OpenURL file:///C:/Tool.exe",
-            "url.dll,OpenURL C:\\Apps\\Tool.exe",
-            "url.dll,OpenURL not-http://example.com",
-        ] {
-            assert!(
-                !is_web_launcher_entry("", target, Some(arguments)),
-                "{arguments}"
-            );
-        }
-        assert!(!is_web_launcher_entry(
-            "",
-            r"C:\Apps\GameLauncher.exe",
-            Some("url,OpenURL https://example.com")
-        ));
-        assert!(!is_web_launcher_entry(
-            "",
-            target,
-            Some("custom.dll,Launch --homepage https://example.com")
-        ));
-    }
-
-    #[test]
-    fn webpage_shortcuts_are_skipped_before_dedup_and_icon_reads() {
-        let target = r"C:\Windows\System32\rundll32.exe";
-        let arguments = "url,OpenURL https://example.com";
-        for source in ["开始菜单", "桌面"] {
-            let mut items = Vec::new();
-            let mut seen = HashSet::new();
-            let mut checks = AppPathChecks::default();
-            append_secondary_apps(
-                &mut items,
-                &mut seen,
-                &[
-                    shortcut("World of Warships", target, Some(arguments)),
-                    shortcut("World of Tanks", target, Some(arguments)),
-                ],
-                source,
-                &mut checks,
-            );
-            assert!(items.is_empty());
-            assert!(seen.is_empty());
-            assert!(checks.missing.is_empty());
-        }
-    }
-
-    #[test]
-    fn application_description_only_displays_ordinary_paths_for_visible_sources() {
-        let target = r"D:\Apps\工具 with spaces\Tool.exe";
-        assert_eq!(app_display_desc(target, true), target);
-        assert!(app_display_desc(target, false).is_empty());
-        for value in [
-            "",
-            "::{2559A1F3-21D7-11D4-BDAF-00C04F60B9F0}",
-            r"shell:AppsFolder\Tool",
-            r"shell:AppsFolder\C:\Apps\Tool.exe",
-            r"C:\Installer\Tool.ico",
-        ] {
-            assert!(app_display_desc(value, true).is_empty(), "{value}");
-        }
-    }
-
-    #[test]
-    fn start_menu_and_desktop_keep_same_target_but_different_descriptions() {
-        let directory = std::env::temp_dir().join(format!(
-            "lark-source-description-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&directory).unwrap();
-        let link = directory.join("Tool.lnk");
-        let target = directory.join("Tool.exe");
-        std::fs::write(&link, []).unwrap();
-        std::fs::write(&target, []).unwrap();
-        let target = target.to_string_lossy().into_owned();
-        let mut app = shortcut("Tool", &target, Some(""));
-        app.insert("data".to_string(), link.to_string_lossy().into_owned());
-        app.insert("desc".to_string(), "display-only".to_string());
-        for (source, desc) in [("开始菜单", ""), ("桌面", target.as_str())] {
-            let mut items = Vec::new();
-            append_secondary_apps(
-                &mut items,
-                &mut HashSet::new(),
-                &[app.clone()],
-                source,
-                &mut AppPathChecks::default(),
-            );
-            assert_eq!(items.len(), 1);
-            assert_eq!(items[0].target_path, target);
-            assert_eq!(items[0].desc, desc);
-        }
-        std::fs::remove_file(link).unwrap();
-        std::fs::remove_file(target).unwrap();
-        std::fs::remove_dir(directory).unwrap();
-    }
-
-    #[test]
-    fn launch_keys_preserve_argument_case_quotes_and_spaces() {
-        let path = r"C:\Windows\System32\cmd.exe";
-        let keys: HashSet<_> = [
-            "",
-            "/K nodevars.bat",
-            "/k nodevars.bat",
-            "/K  nodevars.bat",
-            "/K \"nodevars.bat\"",
-        ]
-        .iter()
-        .map(|args| app_entry_key(path, path, Some(args)))
-        .collect();
-        assert_eq!(keys.len(), 5);
-    }
-
-    #[test]
-    fn unknown_arguments_and_shell_only_entries_use_their_own_path() {
-        let target = r"C:\Windows\System32\cmd.exe";
-        assert_ne!(
-            app_entry_key("shell:AppsFolder\\cmd", target, None),
-            app_entry_key(target, target, Some(""))
-        );
-        assert_ne!(
-            app_entry_key(r"C:\Menu\Run.lnk", "", Some("")),
-            app_entry_key(r"D:\Menu\Run.lnk", "", Some(""))
-        );
-    }
-
-    #[test]
-    fn shortcut_association_requires_matching_title_target_and_consistent_known_arguments() {
-        let target = r"E:\Games\WeGame\wegame.exe";
-        let matching = shortcut("WeGame", target, Some(""));
-        assert_eq!(
-            associated_shortcut_arguments("wegame", target, &[matching.clone()], &[]),
-            Some(String::new())
-        );
-        assert_eq!(
-            associated_shortcut_arguments("Other", target, &[matching.clone()], &[]),
-            None
-        );
-        assert_eq!(
-            associated_shortcut_arguments("WeGame", r"D:\other.exe", &[matching.clone()], &[]),
-            None
-        );
-        assert_eq!(
-            associated_shortcut_arguments(
-                "WeGame",
-                target,
-                &[matching.clone()],
-                &[shortcut("WeGame", target, Some("/alternate"))]
-            ),
-            None
-        );
-        assert_eq!(
-            associated_shortcut_arguments(
-                "WeGame",
-                target,
-                &[matching],
-                &[shortcut("WeGame", target, None)]
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn registered_duplicate_keeps_appsfolder_path_and_icon() {
-        let target = r"E:\Games\WeGame\wegame.exe";
-        let path = format!(r"shell:AppsFolder\{target}");
-        let mut seen = HashSet::from([app_entry_key(&path, target, Some(""))]);
-        let mut items = vec![FileIndex {
-            path: path.clone(),
-            icon: "registered-icon".to_string(),
-            ..Default::default()
-        }];
-        append_secondary_apps(
-            &mut items,
-            &mut seen,
-            &[shortcut("WeGame", target, Some(""))],
-            "开始菜单",
-            &mut AppPathChecks::default(),
-        );
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].path, path);
-        assert_eq!(items[0].icon, "registered-icon");
-    }
-
-    #[test]
-    fn virtual_shell_entries_deduplicate_across_localized_titles() {
-        let target = "::{2559A1F3-21D7-11D4-BDAF-00C04F60B9F0}";
-        let shortcut = shortcut("Run", target, Some(""));
-        let arguments = associated_shortcut_arguments("运行", target, &[shortcut.clone()], &[]);
-        assert_eq!(arguments.as_deref(), Some(""));
-        let path = r"shell:AppsFolder\Microsoft.Windows.Shell.RunDialog";
-        let mut seen = HashSet::from([app_entry_key(path, target, arguments.as_deref())]);
-        let mut items = vec![FileIndex {
-            path: path.to_string(),
-            ..Default::default()
-        }];
-        append_secondary_apps(
-            &mut items,
-            &mut seen,
-            &[shortcut],
-            "开始菜单",
-            &mut AppPathChecks::default(),
-        );
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].path, path);
-    }
-
-    #[test]
-    fn environment_targets_match_expanded_paths() {
-        let windows_dir = std::env::var("WINDIR").unwrap();
-        assert_eq!(
-            app_entry_key("cmd", r"%windir%\System32\cmd.exe", Some("")),
-            app_entry_key("cmd", &format!(r"{windows_dir}\System32\cmd.exe"), Some(""))
-        );
-    }
-
-    #[test]
-    fn product_keys_keep_jetbrains_series_separate() {
-        assert_eq!(normalize_app_product_key("PyCharm 2026.1"), "pycharm");
-        assert_eq!(normalize_app_product_key("RustRover2026.1"), "rustrover");
-        assert_ne!(
-            normalize_app_product_key("PyCharm 2026.1"),
-            normalize_app_product_key("RustRover2026.1")
-        );
-    }
-
-    #[test]
-    fn family_keys_collapse_version_directories_but_keep_jetbrains_products_separate() {
-        assert_eq!(
-            portable_family_key(r"D:\App\Quark\quark.exe", "quark"),
-            portable_family_key(r"D:\App\Quark\7.1.7.975\quark.exe", "quark")
-        );
-        assert_ne!(
-            portable_family_key(
-                r"D:\App\JetBrains\PyCharm 2026.1\pycharm.exe",
-                "PyCharm 2026.1"
-            ),
-            portable_family_key(
-                r"D:\App\JetBrains\RustRover2026.1\rustrover.exe",
-                "RustRover2026.1"
-            )
-        );
-    }
-
-    #[test]
-    fn registered_app_directory_suppresses_internal_executables_but_not_siblings() {
-        let registered_dirs = vec![r"d:\app\qqmusic".to_string()];
-        assert!(is_under_registered_app_dir(
-            r"D:\App\QQMusic\QQMusicUp.exe",
-            &registered_dirs
-        ));
-        assert!(is_under_registered_app_dir(
-            r"D:\App\QQMusic\qmbrowser\qmbrowser.exe",
-            &registered_dirs
-        ));
-        assert!(!is_under_registered_app_dir(
-            r"D:\App\JetBrains\RustRover2026.1\rustrover.exe",
-            &registered_dirs
-        ));
-        assert!(!is_under_registered_app_dir(
-            r"D:\App\QQMusic2\player.exe",
-            &registered_dirs
-        ));
-    }
-
-    #[test]
-    fn user_visible_entries_ignore_auxiliary_words_in_the_target_filename() {
-        assert!(!is_user_visible_auxiliary_app("Reasonix"));
-        assert!(is_portable_auxiliary_app(
-            "Reasonix",
-            r"D:\App\Reasonix\reasonix-launcher.exe"
-        ));
-        assert!(is_user_visible_auxiliary_app("Reasonix Updater"));
-    }
-
-    #[test]
-    fn shortcut_auxiliary_filter_keeps_real_launchers_and_system_entries() {
-        assert!(is_auxiliary_app_entry(
-            "WeGame卸载",
-            r"E:\Games\WeGame\uninstall_complete.exe"
-        ));
-        assert!(is_auxiliary_app_entry(
-            "WeGame主页",
-            r"E:\Games\WeGame\WeGame.exe"
-        ));
-        assert!(!is_auxiliary_app_entry(
-            "WeGame",
-            r"E:\Games\WeGame\WeGameLauncher.exe"
-        ));
-        assert!(!is_auxiliary_app_entry(
-            "Windows 设置",
-            r"shell:AppsFolder\windows.immersivecontrolpanel"
-        ));
-        assert!(!is_auxiliary_app_entry(
-            "系统配置",
-            r"C:\Windows\System32\msconfig.exe"
-        ));
-    }
-
-    #[test]
-    fn advertised_shortcut_with_non_executable_target_is_kept() {
-        let target = r"C:\Users\ystia\AppData\Roaming\Microsoft\Installer\{id}\Charles.ico";
-        let mut advertised = shortcut("Charles", target, Some(""));
-        let link_path = std::env::temp_dir().join(format!(
-            "lark-advertised-path-check-{}.lnk",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::write(&link_path, []).unwrap();
-        advertised.insert("data".to_string(), link_path.to_string_lossy().into_owned());
-        advertised.insert("advertised_shortcut".to_string(), "true".to_string());
-        let mut items = Vec::new();
-        let mut seen = HashSet::new();
-        append_secondary_apps(
-            &mut items,
-            &mut seen,
-            &[advertised],
-            "开始菜单",
-            &mut AppPathChecks::default(),
-        );
-        std::fs::remove_file(link_path).unwrap();
-        assert_eq!(items.len(), 1);
-
-        let mut ordinary = shortcut("Charles", target, Some(""));
-        ordinary.insert("advertised_shortcut".to_string(), "false".to_string());
-        let mut ordinary_items = Vec::new();
-        let mut ordinary_seen = HashSet::new();
-        append_secondary_apps(
-            &mut ordinary_items,
-            &mut ordinary_seen,
-            &[ordinary],
-            "开始菜单",
-            &mut AppPathChecks::default(),
-        );
-        assert!(ordinary_items.is_empty());
-    }
-
-    #[test]
-    fn local_file_checks_recognize_drive_paths_and_skip_shell_and_network_ids() {
-        for value in [
-            r"C:\Apps\Tool.exe",
-            " c:/Apps/Tool.exe ",
-            r#""C:\Apps\Tool.exe""#,
-            r"\\?\C:\Apps\Tool.exe",
-            r"shell:AppsFolder\C:\Apps\Tool.exe",
-        ] {
-            assert_eq!(
-                local_app_file_path(value).map(|path| path.to_lowercase()),
-                Some(r"c:\apps\tool.exe".to_string()),
-                "{value}"
-            );
-        }
-        assert_eq!(
-            local_app_file_path(r"%windir%\System32\cmd.exe"),
-            Some(format!(
-                r"{}\System32\cmd.exe",
-                std::env::var("WINDIR").unwrap()
-            ))
-        );
-        for value in [
-            "",
-            r"C:Tool.exe",
-            r"Tools\Tool.exe",
-            "http://example.com",
-            r"shell:AppsFolder\Microsoft.Windows.Shell.RunDialog",
-            "::{2559A1F3-21D7-11D4-BDAF-00C04F60B9F0}",
-            r"\\server\share\Tool.exe",
-            r"\\?\UNC\server\share\Tool.exe",
-            r"C:\%LARK_UNRESOLVED_PATH_TEST%\Tool.exe",
-        ] {
-            assert_eq!(local_app_file_path(value), None, "{value}");
-        }
-        let mut checks = AppPathChecks::default();
-        // A cached mapped-drive classification must bypass filesystem access.
-        checks.remote_drives.insert(b'Z', true);
-        assert!(checks
-            .missing_file(r"Z:\unavailable-share\Tool.exe")
-            .is_none());
-    }
-
-    #[test]
-    fn file_existence_cache_is_shared_within_scan_and_refreshed_next_scan() {
-        let path = std::env::temp_dir().join(format!(
-            "lark-existing-path-{}.exe",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::write(&path, []).unwrap();
-        let path = path.to_string_lossy().into_owned();
-        let mut checks = AppPathChecks::default();
-        assert!(!checks.should_skip("Tool", &path, &path, false, "test"));
-        assert_eq!(checks.missing.len(), 1);
-        assert_eq!(checks.cache_hits, 1);
-        std::fs::remove_file(&path).unwrap();
-        // This scan reuses the snapshot; the next rebuild checks the file again.
-        assert!(checks
-            .missing_file(&path.to_uppercase().replace('\\', "/"))
-            .is_none());
-        assert_eq!(checks.cache_hits, 2);
-        assert!(AppPathChecks::default().should_skip("Tool", &path, &path, false, "test"));
-    }
-
-    #[test]
-    fn stale_shortcuts_and_appsfolder_targets_are_rejected_without_claiming_dedup_key() {
-        let path = std::env::temp_dir().join(format!(
-            "lark-stale-path-{}.lnk",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::write(&path, []).unwrap();
-        let path = path.to_string_lossy().into_owned();
-        let missing_target = format!("{path}.exe");
-        let mut app = shortcut("Tool", &missing_target, Some(""));
-        app.insert("data".to_string(), path.clone());
-        let mut checks = AppPathChecks::default();
-        let mut items = Vec::new();
-        let mut seen = HashSet::new();
-        append_secondary_apps(&mut items, &mut seen, &[app], "test", &mut checks);
-        assert!(items.is_empty());
-        assert!(seen.is_empty());
-        assert!(checks.should_skip(
-            "Tool",
-            "shell:AppsFolder\\Tool",
-            &missing_target,
-            false,
-            "test"
-        ));
-        assert!(checks.should_skip(
-            "Tool",
-            &format!("shell:AppsFolder\\{missing_target}"),
-            "",
-            false,
-            "test"
-        ));
-        assert!(!checks.should_skip("Charles", &path, &missing_target, true, "test"));
-        assert!(!checks.should_skip(
-            "运行",
-            &path,
-            "::{2559A1F3-21D7-11D4-BDAF-00C04F60B9F0}",
-            false,
-            "test"
-        ));
-        std::fs::remove_file(&path).unwrap();
-        assert!(AppPathChecks::default().should_skip(
-            "Charles",
-            &path,
-            &missing_target,
-            true,
-            "test"
-        ));
-    }
-
-    #[test]
-    fn working_directory_recovery_requires_one_title_matching_executable() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!("lark-shortcut-dir-{unique}"));
-        std::fs::create_dir_all(&directory).unwrap();
-        let executable = directory.join("AMDPrivacyView.exe");
-        std::fs::write(&executable, []).unwrap();
-        assert_eq!(
-            matching_working_directory_executable("AMD Privacy View", &directory.to_string_lossy()),
-            Some(executable.to_string_lossy().into_owned())
-        );
-        std::fs::write(directory.join("Other.exe"), []).unwrap();
-        assert_eq!(
-            matching_working_directory_executable("AMD Privacy View", &directory.to_string_lossy()),
-            Some(executable.to_string_lossy().into_owned())
-        );
-        std::fs::write(directory.join("AMDPrivacyView2.exe"), []).unwrap();
-        assert_eq!(
-            matching_working_directory_executable("AMD Privacy View", &directory.to_string_lossy()),
-            Some(executable.to_string_lossy().into_owned())
-        );
-        std::fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn shortcut_target_filter_rejects_documents_links_and_icon_files() {
-        for target in [
-            r"D:\APP\Pure Codec\PureSet.htm",
-            r"C:\Program Files\Git\ReleaseNotes.html",
-            r"D:\APP\SogouInput\Sogou Helper.url",
-            r"C:\Windows\System32\appverif.chm",
-            r"C:\Users\ystia\AppData\Roaming\Microsoft\Installer\{id}\Charles.ico",
-            "http://support.steampowered.com/",
-        ] {
-            assert!(!is_launchable_shortcut_target(target), "{target}");
-        }
-        for target in [
-            r"C:\Windows\System32\cmd.exe",
-            r"C:\Windows\System32\control.exe",
-            r"C:\Windows\System32\compmgmt.msc",
-            r"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
-            "",
-        ] {
-            assert!(is_launchable_shortcut_target(target), "{target}");
-        }
-    }
-
-    #[test]
-    fn windows_installer_cache_targets_are_filtered_without_prefix_collisions() {
-        assert!(is_windows_installer_cache_path(
-            r#"C:/WINDOWS/Installer/{89EB7BF6}/NewShortcut11.exe"#
-        ));
-        assert!(is_windows_installer_cache_path(
-            r#"\\?\C:\Windows\Installer\{89EB7BF6}\NewShortcut11.exe"#
-        ));
-        assert!(!is_windows_installer_cache_path(
-            r"C:\Windows\InstallerBackup\NewShortcut11.exe"
-        ));
-        assert!(!is_windows_installer_cache_path(
-            r"D:\Windows\Installer\NewShortcut11.exe"
-        ));
-    }
-
-    #[test]
-    fn shortcut_titles_filter_small_help_and_installation_entries() {
-        for (title, target) in [
-            ("使用说明", r"D:\APP\Pure Codec\PureSet.htm"),
-            (
-                "Application Verifier Help",
-                r"C:\Windows\System32\appverif.chm",
-            ),
-            ("GPUView Help", r"C:\Program Files\GPUView.chm"),
-            (
-                "Visual Studio Installer",
-                r"C:\Program Files\Installer\setup.exe",
-            ),
-            ("检查更新", r"C:\Program Files\CheckForUpdates.exe"),
-        ] {
-            assert!(is_auxiliary_app_entry(title, target), "{title}");
-        }
-        assert!(!is_auxiliary_app_entry(
-            "Visual Studio",
-            r"C:\Program Files\Microsoft Visual Studio\Common7\IDE\devenv.exe"
-        ));
-    }
-
-    #[test]
-    fn registered_directory_normalizes_the_accepted_executable_parent() {
-        assert_eq!(
-            registered_app_directory(r"D:\App\Reasonix\reasonix-launcher.exe"),
-            Some(r"d:\app\reasonix".to_string())
-        );
-        assert_eq!(registered_app_directory(""), None);
-    }
-
-    #[test]
-    fn auxiliary_rules_cover_known_background_processes_without_server_manager_false_positive() {
-        assert!(is_portable_auxiliary_app(
-            "QQMusicUp",
-            r"C:\Apps\QQMusicUp.exe"
-        ));
-        for name in [
-            "DesktopDynamicLyric",
-            "QMDesktopAnimation",
-            "QMDriverHelperx64",
-            "QMWeiyun",
-            "QQMusicUninst",
-            "StartDesktopProjection32",
-            "StartDesktopProjectionForXP",
-            "qmbrowser",
-        ] {
-            assert!(is_portable_auxiliary_app(
-                name,
-                &format!(r"C:\Apps\{name}.exe")
-            ));
-        }
-        assert!(is_portable_auxiliary_app(
-            "Quark PWA Launcher",
-            r"C:\Apps\quark_pwa_launcher.exe"
-        ));
-        assert!(!is_portable_auxiliary_app(
-            "ServerManager",
-            r"C:\Apps\ServerManager.exe"
-        ));
     }
 }
 
@@ -2947,6 +2484,7 @@ pub fn add_custom_app_index(
         pinyin,
         abb,
         file_type: "app".to_string(),
+        source: APP_SOURCE_CUSTOM.to_string(),
         ..Default::default()
     };
     let mut index = IndexSQL::new();
@@ -3183,75 +2721,4 @@ pub(crate) fn find_windows_with_partial_title(partial_title: &str) {
             wide_partial_title.as_ptr() as LPARAM,
         );
     }
-}
-
-#[test]
-#[cfg(target_os = "windows")]
-fn app_launch_keys_normalize_case_slashes_and_quotes() {
-    assert_eq!(
-        normalize_app_launch_key(r#""C:/Apps/Tool.exe""#),
-        r"c:\apps\tool.exe"
-    );
-    assert_eq!(
-        normalize_app_launch_key(r"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"),
-        r"shell:appsfolder\microsoft.windowscalculator_8wekyb3d8bbwe!app"
-    );
-}
-
-#[test]
-#[cfg(target_os = "windows")]
-fn app_scan_exclusions_match_only_the_selected_subtree() {
-    let excluded = vec![r"D:\Apps\SDK".to_string()];
-    assert!(is_app_scan_path_excluded(r"d:/apps/sdk", &excluded));
-    assert!(is_app_scan_path_excluded(
-        r"D:\Apps\SDK\tools\bin",
-        &excluded
-    ));
-    assert!(!is_app_scan_path_excluded(r"D:\Apps\SDK2", &excluded));
-    assert!(!is_app_scan_path_excluded(r"D:\Apps\Other", &excluded));
-}
-
-#[test]
-#[allow(unused)]
-fn test1() {
-    // use chrono::Duration;
-    // use std::thread;
-
-    // let process_name = r"C:\windows\system32\notepad.exe";
-    // open_or_activate_app(process_name, "记事本");
-
-    let link = lnk::ShellLink::open(
-        r"C:\Users\admin\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\百度翻译.lnk",
-    )
-    .expect("无法打开链接");
-    // 获取目标路径
-    println!("{}", link.working_dir().clone().unwrap_or("aa".to_string()));
-    println!(
-        "{}",
-        link.relative_path().clone().unwrap_or("bb".to_string())
-    );
-    println!(
-        "{}",
-        link.link_info()
-            .clone()
-            .unwrap()
-            .local_base_path()
-            .clone()
-            .unwrap()
-    );
-    println!(
-        "{}",
-        read_icon_to_base64(
-            r"C:\Users\admin\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\百度翻译.lnk"
-                .to_string()
-        )
-    );
-    use std::env;
-    let home_drive = env::var("HOMEDRIVE").unwrap_or_else(|_| String::from(""));
-    let home_path = env::var("HOMEPATH").unwrap_or_else(|_| String::from(""));
-
-    // 组合两个变量
-    let home_directory = format!("{}{}", home_drive, home_path);
-
-    println!("用户主目录: {}", home_directory);
 }

@@ -391,7 +391,7 @@ fn resolve_package_icon(requested: &Path) -> String {
         .unwrap_or_default()
 }
 
-fn normalize_registered_app_title(title: &str) -> String {
+pub(super) fn normalize_registered_app_title(title: &str) -> String {
     let title = title.trim();
     const LAUNCH_SUFFIXES: &[&str] = &["exe", "com", "msc", "bat", "cmd", "lnk", "rdp"];
     let path = Path::new(title);

@@ -52,28 +52,53 @@ select {
     /*display: none; !* Chrome, Safari, and Opera *!*/
 }
 
-/* Panel 默认滚动条；result/input-panel 继续使用原来的深色样式。 */
-.panelSubPage * {
+/* 插件 Panel 使用宿主主题变量；插件 DOM 不需要自行读取主题或注入样式。 */
+:is(.panelSubPage .larkPluginPanelRoot, .pluginViewRoot .larkPluginPanelRoot) {
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
     scrollbar-width: thin;
 }
 
-.panelSubPage *::-webkit-scrollbar {
+:is(.panelSubPage .larkPluginPanelRoot, .pluginViewRoot .larkPluginPanelRoot)::-webkit-scrollbar {
     width: 9px;
     height: 9px;
 }
 
-.panelSubPage *::-webkit-scrollbar-track {
+:is(.panelSubPage .larkPluginPanelRoot, .pluginViewRoot .larkPluginPanelRoot)::-webkit-scrollbar-track {
     background: var(--scrollbar-track);
     border-radius: 8px;
 }
 
-.panelSubPage *::-webkit-scrollbar-thumb {
+:is(.panelSubPage .larkPluginPanelRoot, .pluginViewRoot .larkPluginPanelRoot)::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
     border-radius: 8px;
 }
 
-.panelSubPage *::-webkit-scrollbar-thumb:hover {
+:is(.panelSubPage .larkPluginPanelRoot, .pluginViewRoot .larkPluginPanelRoot)::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-hover);
+}
+
+/* Panel 默认滚动条；result/input-panel 继续使用原来的深色样式。 */
+:is(.panelSubPage *, .pluginViewRoot, .pluginViewRoot *) {
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    scrollbar-width: thin;
+}
+
+:is(.panelSubPage *, .pluginViewRoot, .pluginViewRoot *)::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+}
+
+:is(.panelSubPage *, .pluginViewRoot, .pluginViewRoot *)::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+    border-radius: 8px;
+}
+
+:is(.panelSubPage *, .pluginViewRoot, .pluginViewRoot *)::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 8px;
+}
+
+:is(.panelSubPage *, .pluginViewRoot, .pluginViewRoot *)::-webkit-scrollbar-thumb:hover {
     background: var(--scrollbar-hover);
 }
 /* 滚动条样式 */

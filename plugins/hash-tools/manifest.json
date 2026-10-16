@@ -1,0 +1,40 @@
+{
+  "id": "hash-tools",
+  "name": "Hash / 加密工具",
+  "version": "1.1.0",
+  "apiVersion": 1,
+  "description": "SHA 摘要校验、HMAC 生成验证与 AES-GCM 加密解密",
+  "entry": {
+    "type": "js",
+    "path": "main.js"
+  },
+  "icon": "./assets/icon.svg",
+  "workflows": [
+    {
+      "id": "open",
+      "title": "Hash / 加密工具",
+      "description": "SHA 摘要校验、HMAC 生成验证与 AES-GCM 加密解密",
+      "keywords": [
+        "hash",
+        "sha256",
+        "sha512",
+        "hmac",
+        "摘要",
+        "签名",
+        "哈希",
+        "aes",
+        "加密",
+        "解密",
+        "校验",
+        "验证"
+      ],
+      "type": "panel",
+      "handler": "open",
+      "windowMode": "expanded",
+      "icon": "./assets/icon.svg"
+    }
+  ],
+  "permissions": [
+    "clipboard.write"
+  ]
+}

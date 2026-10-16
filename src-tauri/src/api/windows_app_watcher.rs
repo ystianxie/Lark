@@ -156,7 +156,7 @@ fn run_refresh_loop(app_handle: AppHandle, receiver: mpsc::Receiver<RefreshReque
         }
 
         println!("[AppIndexWatcher] 开始刷新应用索引");
-        if let Err(error) = crate::api::explorer::create_app_index_to_sql(app_handle.clone()) {
+        if let Err(error) = crate::rebuild_app_index_blocking(app_handle.clone()) {
             eprintln!("[AppIndexWatcher] 应用索引刷新失败，保留原有索引: {error}");
         }
     }

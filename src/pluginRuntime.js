@@ -67,6 +67,13 @@ export function createPluginContext(manifest, state = {}) {
     ui: {
       ...(state.ui || {}),
       mountControl: mountPluginControl,
+      // Load the editor and its workers only when a plugin requests it.
+      mountDiffEditor: async (container, options = {}) => {
+        options.signal?.throwIfAborted();
+        const {mountPluginDiffEditor} = await import("./pluginDiffEditor");
+        options.signal?.throwIfAborted();
+        return mountPluginDiffEditor(container, options);
+      },
       ...((manifest.permissions || []).includes("notification.send") ? { notify, actions } : {}),
     },
     api,

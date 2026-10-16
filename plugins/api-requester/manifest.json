@@ -1,0 +1,44 @@
+{
+  "id": "api-requester",
+  "name": "接口请求器",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "轻量 HTTP 接口请求、响应查看与请求保存",
+  "entry": {
+    "type": "js",
+    "path": "main.js"
+  },
+  "icon": "./assets/icon.svg",
+  "config": {
+    "schemaVersion": 1,
+    "fields": [
+      {
+        "key": "savedRequests",
+        "label": "已保存接口",
+        "type": "json",
+        "default": []
+      }
+    ]
+  },
+  "permissions": ["python.execute"],
+  "workflows": [
+    {
+      "id": "open",
+      "title": "接口请求器",
+      "description": "发送 HTTP 请求并保存常用接口",
+      "keywords": [
+        "http",
+        "api",
+        "request",
+        "postman",
+        "接口",
+        "请求"
+      ],
+      "type": "panel",
+      "handler": "open",
+      "windowMode": "expanded",
+      "icon": "./assets/icon.svg"
+    }
+  ]
+}
+

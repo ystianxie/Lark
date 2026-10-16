@@ -28,6 +28,7 @@
     "file-extension-icon-js": "^1.1.6",
     "lodash": "^4.17.21",
     "mathjs": "^14.0.1",
+    "monaco-editor": "^0.57.0",
     "pinyin-pro": "^3.26.0",
     "react": "^19.0.0",
     "react-device-detect": "^2.2.3",

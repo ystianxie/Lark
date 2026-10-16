@@ -108,9 +108,81 @@ mod file_index_refresh_tests {
     }
 }
 
+// Report persisted results through the same notification manager as plugins and UI actions.
+fn index_scan_notification(label: &str, result: Result<i64, String>) -> NotificationInput {
+    let (level, title, message) = match result {
+        Ok(count) => (
+            NotificationLevel::Success,
+            format!("{label}扫描完成"),
+            format!("当前{label}索引共 {count} 条。"),
+        ),
+        Err(error) => (NotificationLevel::Error, format!("{label}扫描失败"), error),
+    };
+    NotificationInput {
+        level,
+        title,
+        message: Some(message.chars().take(4_000).collect()),
+        actions: Vec::new(),
+        duration_ms: None,
+    }
+}
+
+fn notify_index_scan_result(app: &AppHandle, label: &str, result: Result<i64, String>) {
+    if let Err(error) = notify(app.clone(), index_scan_notification(label, result)) {
+        eprintln!("发送{label}扫描结果通知失败: {error}");
+    }
+}
+
+fn rebuild_app_index_blocking(app: AppHandle) -> Result<(), String> {
+    let result = create_app_index_to_sql(app.clone());
+    let summary = match &result {
+        Ok(()) => IndexSQL::new()
+            .app_index_count()
+            .map_err(|error| format!("扫描已完成，但读取应用索引数量失败: {error}")),
+        Err(error) => Err(error.clone()),
+    };
+    notify_index_scan_result(&app, "应用", summary);
+    result
+}
+
+#[cfg(test)]
+mod index_scan_notification_tests {
+    use super::*;
+
+    #[test]
+    fn success_reports_persisted_count_including_empty_indexes() {
+        for count in [0, 1234] {
+            let input = index_scan_notification("文件", Ok(count));
+            assert_eq!(input.level, NotificationLevel::Success);
+            assert_eq!(input.title, "文件扫描完成");
+            assert_eq!(input.message, Some(format!("当前文件索引共 {count} 条。")));
+            assert!(input.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn failure_preserves_reason_and_requires_manual_dismissal() {
+        let input = index_scan_notification("应用", Err("读取应用目录失败".into()));
+        assert_eq!(input.level, NotificationLevel::Error);
+        assert_eq!(input.title, "应用扫描失败");
+        assert_eq!(input.message.as_deref(), Some("读取应用目录失败"));
+        assert_eq!(input.duration_ms, None);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn long_error_stays_within_notification_limit() {
+        let input = index_scan_notification("文件", Err("错".repeat(5000)));
+        assert_eq!(input.message.as_ref().unwrap().chars().count(), 4000);
+        assert!(input.validate().is_ok());
+    }
+}
+
 fn rebuild_file_index_blocking(app: AppHandle) -> Result<(), String> {
     if FILE_INDEX_RUNNING.swap(true, Ordering::AcqRel) {
-        return Err("文件索引任务已在运行".to_string());
+        let error = "文件索引任务已在运行".to_string();
+        notify_index_scan_result(&app, "文件", Err(error.clone()));
+        return Err(error);
     }
 
     let result = (|| {
@@ -130,7 +202,14 @@ fn rebuild_file_index_blocking(app: AppHandle) -> Result<(), String> {
             .map_err(|error| format!("保存文件索引重建时间失败: {error}"))
     })();
 
+    let summary = match &result {
+        Ok(()) => IndexSQL::new()
+            .file_index_count()
+            .map_err(|error| format!("扫描已完成，但读取文件索引数量失败: {error}")),
+        Err(error) => Err(error.clone()),
+    };
     FILE_INDEX_RUNNING.store(false, Ordering::Release);
+    notify_index_scan_result(&app, "文件", summary);
     result
 }
 
@@ -574,7 +653,7 @@ fn create_app_index(app: AppHandle) {
         if !submitted {
             let app_handle = app.app_handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
-                if let Err(error) = create_app_index_to_sql(app_handle) {
+                if let Err(error) = rebuild_app_index_blocking(app_handle) {
                     eprintln!("应用索引重建失败: {error}");
                 }
             });
@@ -584,7 +663,7 @@ fn create_app_index(app: AppHandle) {
     {
         let app_handle = app.app_handle().clone();
         tauri::async_runtime::spawn_blocking(move || {
-            if let Err(error) = create_app_index_to_sql(app_handle) {
+            if let Err(error) = rebuild_app_index_blocking(app_handle) {
                 eprintln!("应用索引重建失败: {error}");
             }
         });
@@ -1664,7 +1743,7 @@ fn main() {
             let bootstrap_config = config.clone();
             tauri::async_runtime::spawn_blocking(move || {
                 if !bootstrap_config.base.app_index_initialized {
-                    match create_app_index_to_sql(bootstrap_app.clone()) {
+                    match rebuild_app_index_blocking(bootstrap_app.clone()) {
                         Ok(()) => {}
                         Err(error) => eprintln!("首次应用索引扫描失败: {error}"),
                     }
