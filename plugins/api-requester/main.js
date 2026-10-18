@@ -40,6 +40,9 @@ function normalizeRequest(value) {
 function esc(value) {
   return String(value ?? "");
 }
+function selectValue(value) {
+  return typeof value === "string" ? value : value?.target?.value ?? value?.value ?? "";
+}
 function setText(node, value) {
   node.textContent = esc(value);
 }
@@ -63,40 +66,114 @@ function fieldLabel(text) {
   label.textContent = text;
   return label;
 }
+function importedSource(value) {
+  if (Array.isArray(value)) {
+    const request = value.find(item => item && typeof item === "object" && (item.request || item.url || item.method));
+    return request ? importedSource(request) : value;
+  }
+  if (!value || typeof value !== "object") return {};
+  if (value.request && typeof value.request === "object") return importedSource(value.request);
+  if (value.data && typeof value.data === "object") return importedSource(value.data);
+  if (Array.isArray(value.item)) {
+    const nested = value.item.flatMap(item => Array.isArray(item?.item) ? item.item : [item]).find(item => item?.request);
+    if (nested?.request) return importedSource(nested.request);
+  }
+  return value;
+}
 function parseImportedRequest(value) {
-  const source = value?.request || value;
-  const postmanUrl = typeof source?.url === "object" ? source.url.raw || "" : source?.url;
+  const source = importedSource(value);
+  const rawUrl = typeof source?.url === "object" ? source.url.raw || "" : source?.url;
+  let url = String(rawUrl || "");
+  const queryFromUrl = (() => {
+    try {
+      const parsed = new URL(url);
+      const pairs = [...parsed.searchParams.entries()].map(([key, value]) => ({ key, value, enabled: true }));
+      parsed.search = "";
+      url = parsed.toString();
+      return pairs;
+    }
+    catch { return []; }
+  })();
+  const toRows = value => {
+    if (typeof value === "string") return value.split(/[\r\n;]+/).map(item => {
+      const splitAt = item.indexOf(":") >= 0 ? item.indexOf(":") : item.indexOf("=");
+      return splitAt > 0 ? { key: item.slice(0, splitAt).trim(), value: item.slice(splitAt + 1).trim(), enabled: true } : null;
+    }).filter(Boolean);
+    if (Array.isArray(value)) return value.map(item => typeof item === "string"
+      ? toRows(item)[0] || { key: item, value: "", enabled: true }
+      : ({ key: item?.key ?? item?.name ?? "", value: item?.value ?? "", enabled: !item?.disabled && item?.enabled !== false }));
+    if (value && typeof value === "object") return Object.entries(value).map(([key, item]) => ({ key, value: String(item ?? ""), enabled: true }));
+    return [];
+  };
+  const hasRequestFields = source?.url || source?.method || source?.headers || source?.header || source?.params || source?.query || source?.cookies || source?.cookie || source?.body || source?.bodyType;
+  const explicitParams = toRows(source?.params || source?.query || source?.queryParams || source?.requestParams || source?.url?.query || (!hasRequestFields ? source : null));
+  const headers = toRows(source?.headers || source?.header || source?.requestHeaders);
+  const cookieHeader = headers.find(item => item.key.toLowerCase() === "cookie");
+  let cookies = toRows(source?.cookies || source?.cookie || source?.requestCookies);
+  if (!cookies.length && cookieHeader) {
+    cookies = cookieHeader.value.split(";").map(part => { const splitAt = part.indexOf("="); return splitAt > 0 ? { key: part.slice(0, splitAt).trim(), value: part.slice(splitAt + 1).trim(), enabled: true } : null; }).filter(Boolean);
+  }
+  const bodySource = source?.body;
+  const bodyRaw = bodySource?.raw ?? source?.bodyText ?? (typeof bodySource === "string" ? bodySource : "");
+  const mode = bodySource?.mode;
   return normalizeRequest({
     ...source,
-    url: postmanUrl || "",
+    url,
     method: source?.method || "GET",
-    headers: Array.isArray(source?.header) ? source.header.map(item => ({ key: item.key, value: item.value, enabled: !item.disabled })) : source?.headers,
-    params: Array.isArray(source?.url?.query) ? source.url.query.map(item => ({ key: item.key, value: item.value, enabled: !item.disabled })) : source?.params,
-    bodyType: source?.body?.mode === "raw" ? "json" : source?.body?.mode === "urlencoded" ? "form" : source?.bodyType,
-    body: source?.body?.raw || source?.bodyText || source?.body || "",
-    bodyParams: source?.body?.urlencoded,
+    headers: headers.filter(item => item !== cookieHeader),
+    cookies,
+    params: explicitParams.length ? explicitParams : queryFromUrl,
+    bodyType: source?.bodyType || (mode === "urlencoded" ? "form" : mode === "raw" && /json/i.test(headers.find(item => item.key.toLowerCase() === "content-type")?.value || bodyRaw) ? "json" : bodyRaw ? "text" : "none"),
+    body: bodyRaw,
+    bodyParams: toRows(bodySource?.urlencoded || source?.bodyParams),
   });
 }
 function parseCurl(command) {
-  const tokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-  const unquote = value => value?.replace(/^(['"])(.*)\1$/, "$2") || "";
-  const request = draft();
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (token === "-X" || token === "--request") request.method = String(unquote(tokens[++index] || "GET")).toUpperCase();
-    else if (token === "-H" || token === "--header") { const [key, ...rest] = unquote(tokens[++index] || "").split(":"); if (key) request.headers.push(row(key.trim(), rest.join(":").trim())); }
-    else if (["-b", "--cookie"].includes(token)) { unquote(tokens[++index] || "").split(";").forEach(pair => { const [key, ...rest] = pair.split("="); if (key?.trim()) request.cookies.push(row(key.trim(), rest.join("=").trim())); }); }
-    else if (["-d", "--data", "--data-raw", "--data-binary"].includes(token)) { request.body = unquote(tokens[++index] || ""); request.bodyType = request.body.trim().startsWith("{") ? "json" : "text"; if (request.method === "GET") request.method = "POST"; }
-    else if (!token.startsWith("-") && /^https?:\/\//i.test(unquote(token))) request.url = unquote(token);
+  const tokens = [];
+  let token = "", quote = "", escaped = false;
+  for (const char of String(command)) {
+    if (escaped) { token += char; escaped = false; }
+    else if (char === "\\" && quote !== "'") escaped = true;
+    else if (quote) { if (char === quote) quote = ""; else token += char; }
+    else if (char === "'" || char === '"') quote = char;
+    else if (/\s/.test(char)) { if (token) { tokens.push(token); token = ""; } }
+    else token += char;
   }
+  if (escaped) token += "\\";
+  if (token) tokens.push(token);
+  if (quote) throw new Error("cURL 引号未闭合");
+  const request = draft();
+  request.params = []; request.headers = []; request.cookies = [];
+  const take = index => tokens[index + 1] || "";
+  for (let index = 0; index < tokens.length; index += 1) {
+    const current = tokens[index];
+    if (["-X", "--request"].includes(current)) request.method = take(index++).toUpperCase();
+    else if (["-H", "--header"].includes(current)) { const raw = take(index++); const splitAt = raw.indexOf(":"); if (splitAt > 0) request.headers.push(row(raw.slice(0, splitAt).trim(), raw.slice(splitAt + 1).trim())); }
+    else if (["-b", "--cookie"].includes(current)) { take(index++).split(";").forEach(pair => { const splitAt = pair.indexOf("="); if (splitAt > 0) request.cookies.push(row(pair.slice(0, splitAt).trim(), pair.slice(splitAt + 1).trim())); }); }
+    else if (["-d", "--data", "--data-raw", "--data-binary", "--data-urlencode"].includes(current)) { request.body = take(index++); request.bodyType = request.body.trim().startsWith("{") ? "json" : "text"; if (request.method === "GET") request.method = "POST"; }
+    else if (current === "--url") request.url = take(index++);
+    else if (current.startsWith("--url=")) request.url = current.slice(6);
+    else if (!current.startsWith("-") && /^https?:\/\//i.test(current)) request.url = current;
+  }
+  const contentType = request.headers.find(item => item.key.toLowerCase() === "content-type")?.value || "";
+  if (request.body && /application\/x-www-form-urlencoded/i.test(contentType)) { request.bodyType = "form"; request.bodyParams = [...new URLSearchParams(request.body).entries()].map(([key, value]) => row(key, value)); }
+  const cookieHeader = request.headers.find(item => item.key.toLowerCase() === "cookie");
+  if (cookieHeader) { request.cookies.push(...cookieHeader.value.split(";").map(part => { const splitAt = part.indexOf("="); return splitAt > 0 ? row(part.slice(0, splitAt).trim(), part.slice(splitAt + 1).trim()) : null; }).filter(Boolean)); request.headers = request.headers.filter(item => item !== cookieHeader); }
+  const parsed = parseImportedRequest({url: request.url});
+  request.params = parsed.params;
+  if (!request.params.length) request.params = [row()];
+  if (!request.headers.length) request.headers = [row()];
+  if (!request.cookies.length) request.cookies = [row()];
   return request;
 }function section(title, description) {
   const element = document.createElement("section");
   element.className = "apiRequesterSection";
-  const heading = document.createElement("div");
-  heading.className = "apiRequesterSectionHeading";
-  heading.textContent = title;
-  element.append(heading);
+  if (title) {
+    const heading = document.createElement("div");
+    heading.className = "apiRequesterSectionHeading";
+    heading.textContent = title;
+    element.append(heading);
+  }
   if (description) {
     const hint = document.createElement("div");
     hint.className = "apiRequesterHint";
@@ -123,9 +200,9 @@ export function activate(context) {
         <style>
           .apiRequesterRoot { box-sizing:border-box; height:100%; overflow:auto; padding:16px; color:var(--text-primary); font-size:13px; }
           .apiRequesterRoot * { box-sizing:border-box; }
-          .apiRequesterTop { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
-          .apiRequesterTop > .apiRequesterField { min-width:160px; }
-          .apiRequesterTop > .apiRequesterUrl { flex:1 1 360px; min-width:260px; }
+          .apiRequesterTop { display:grid; grid-template-columns:88px minmax(180px,420px) auto; gap:8px; align-items:end; }
+          .apiRequesterTop > .apiRequesterField { min-width:0; }
+          .apiRequesterTop > .apiRequesterUrl { min-width:0; }
           .apiRequesterField { display:flex; flex-direction:column; gap:5px; }
           .apiRequesterLabel,.apiRequesterSectionHeading { color:var(--text-primary); font-weight:600; }
           .apiRequesterSection { margin-top:14px; }
@@ -139,11 +216,20 @@ export function activate(context) {
           .apiRequesterControl { min-width:0; }
           .apiRequesterRow .apiRequesterControl:first-of-type { width:100%; }
           .apiRequesterActions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
-          .apiRequesterSection > .apiRequesterControl { display:inline-flex; width:auto; margin-top:8px; }
-          .apiRequesterImport { display:flex; gap:8px; align-items:center; margin-top:10px; }
+          .apiRequesterTopActions { display:flex; gap:6px; align-items:center; }
+          .apiRequesterTopActions .apiRequesterControl { display:inline-flex; }
+          .apiRequesterTopActions .apiRequesterControl .ant-btn { width:32px; height:32px; padding:0; }
+          .apiRequesterSectionTools { display:flex; gap:6px; align-items:center; margin-top:8px; }
+          .apiRequesterSectionTools .apiRequesterControl { display:inline-flex; }
           .apiRequesterBodyText { min-height:150px; }
           .apiRequesterResponse { margin-top:16px; border-top:1px solid var(--launcher-border); padding-top:14px; }
+          .apiRequesterResponseUrl { margin:0 0 10px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
           .apiRequesterResponseMeta { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:8px; }
+          .apiRequesterResponseTabs { display:flex; gap:4px; border-bottom:1px solid var(--launcher-border); }
+          .apiRequesterResponseTab { padding:7px 12px; color:var(--text-secondary); cursor:pointer; border-bottom:2px solid transparent; }
+          .apiRequesterResponseTab.active { color:var(--text-primary); border-bottom-color:var(--color-primary, #4f7df3); font-weight:600; }
+          .apiRequesterResponsePanel { margin-top:10px; }
+          .apiRequesterResponsePairs { margin:0; padding:10px 12px; min-height:72px; max-height:260px; overflow:auto; white-space:pre-wrap; word-break:break-word; border:1px solid var(--launcher-border); border-radius:6px; background:var(--surface-muted); color:var(--text-primary); font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
           .apiRequesterStatus { font-weight:700; }
           .apiRequesterResponseBody { margin:0; padding:12px; min-height:100px; max-height:360px; overflow:auto; white-space:pre-wrap; word-break:break-word; border:1px solid var(--launcher-border); border-radius:6px; background:var(--surface-muted); color:var(--text-primary); font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
           .apiRequesterSaved { margin-top:16px; border-top:1px solid var(--launcher-border); padding-top:14px; }
@@ -158,68 +244,95 @@ export function activate(context) {
       top.className = "apiRequesterTop";
       root.append(top);
       const methodField = document.createElement("div"); methodField.className = "apiRequesterField"; methodField.append(fieldLabel("Method")); top.append(methodField);
-      const method = mount(context, methodField, "Select", { value: state.request.method, options: METHODS.map(value => ({ value, label: value })), onChange: value => { state.request.method = value; } }, disposers);
+      const method = mount(context, methodField, "Select", { value: state.request.method, options: METHODS.map(value => ({ value, label: value })), onChange: value => { state.request.method = selectValue(value); } }, disposers);
       const urlField = document.createElement("div"); urlField.className = "apiRequesterField apiRequesterUrl"; urlField.append(fieldLabel("URL")); top.append(urlField);
       const url = mount(context, urlField, "Input", { value: state.request.url, placeholder: "https://api.example.com/users", onChange: event => { state.request.url = event?.target?.value ?? ""; } }, disposers);
-      const nameField = document.createElement("div"); nameField.className = "apiRequesterField"; nameField.append(fieldLabel("接口名称（保存时使用）")); top.append(nameField);
-      const name = mount(context, nameField, "Input", { value: state.request.name, placeholder: "例如：获取用户", onChange: event => { state.request.name = event?.target?.value ?? ""; } }, disposers);
-      const topActions = document.createElement("div"); topActions.className = "apiRequesterActions"; root.append(topActions);
-      const status = document.createElement("span"); status.className = "apiRequesterMuted"; topActions.append(status);      const importBar = document.createElement("div"); importBar.className = "apiRequesterImport"; root.append(importBar);
-      const jsonInput = document.createElement("input"); jsonInput.type = "file"; jsonInput.accept = ".json,application/json"; jsonInput.hidden = true; root.append(jsonInput);
-      button(context, importBar, null, () => jsonInput.click(), disposers, { icon: "upload", title: "导入 JSON", "aria-label": "导入 JSON" });
-      button(context, importBar, null, () => {
+      const topActions = document.createElement("div"); topActions.className = "apiRequesterTopActions"; top.append(topActions);
+      const status = document.createElement("span"); status.className = "apiRequesterMuted"; root.append(status);
+      const sendButton = button(context, topActions, null, send, disposers, { icon: "send", title: "发送请求", "aria-label": "发送请求", type: "primary" });
+      button(context, topActions, null, () => {
         const curl = window.prompt("粘贴 cURL 命令");
         if (!curl) return;
-        try { state.request = parseCurl(curl); method.dispose.update({ value: state.request.method }); url.dispose.update({ value: state.request.url }); name.dispose.update({ value: state.request.name }); Object.values(rowRenders).forEach(render => render()); bodyType.dispose.update({ value: state.request.bodyType }); bodyRender(); updateStatus("已导入 cURL"); }
+        try { applyImportedRequest(parseCurl(curl)); updateStatus("已导入 cURL"); }
         catch (error) { updateStatus(`cURL 导入失败：${error.message || error}`, true); }
       }, disposers, { icon: "code", title: "导入 cURL", "aria-label": "导入 cURL" });
-      jsonInput.addEventListener("change", async event => {
-        const file = event.target.files?.[0]; if (!file) return;
-        try { state.request = parseImportedRequest(JSON.parse(await file.text())); method.dispose.update({ value: state.request.method }); url.dispose.update({ value: state.request.url }); name.dispose.update({ value: state.request.name }); Object.values(rowRenders).forEach(render => render()); bodyType.dispose.update({ value: state.request.bodyType }); bodyRender(); updateStatus("已导入 JSON"); }
-        catch (error) { updateStatus(`JSON 导入失败：${error.message || error}`, true); }
-        finally { jsonInput.value = ""; }
-      });
+      button(context, topActions, null, saveRequest, disposers, { icon: "save", title: "保存接口", "aria-label": "保存接口" });
+      function applyImportedRequest(next) {
+        state.request = normalizeRequest(next);
+        method.dispose.update({ value: state.request.method });
+        url.dispose.update({ value: state.request.url });
+        bodyType.dispose.update({ value: state.request.bodyType });
+        Object.values(rowRenders).forEach(render => render());
+        bodyRender();
+      }
 
       function updateStatus(text, error = false) { status.textContent = text; status.style.color = error ? "var(--color-error, #ff4d4f)" : ""; }
-      function renderKV(parent, title, key, addLabel, allowEnabled = true) {
-        const block = section(title, addLabel);
+      function renderKV(parent, title, key, allowEnabled = true) {
+        const block = section("");
         const rowsHost = document.createElement("div"); rowsHost.className = "apiRequesterRows"; block.append(rowsHost);
+        const renderDisposers = [];
+        disposers.push(() => renderDisposers.splice(0).forEach(dispose => dispose?.()));
         const render = () => {
+          renderDisposers.splice(0).forEach(dispose => dispose?.());
           rowsHost.replaceChildren();
           state.request[key].forEach(item => {
             const line = document.createElement("div"); line.className = "apiRequesterRow"; rowsHost.append(line);
-            if (allowEnabled) mount(context, line, "Checkbox", { checked: item.enabled, "aria-label": "启用", onChange: event => { item.enabled = event?.target?.checked ?? false; } }, disposers);
+            if (allowEnabled) mount(context, line, "Checkbox", { checked: item.enabled, "aria-label": "启用", onChange: event => { item.enabled = event?.target?.checked ?? false; } }, renderDisposers);
             else line.append(document.createElement("span"));
-            mount(context, line, "Input", { value: item.key, placeholder: "键", onChange: event => { item.key = event?.target?.value ?? ""; } }, disposers);
-            mount(context, line, "Input", { value: item.value, placeholder: "值", onChange: event => { item.value = event?.target?.value ?? ""; } }, disposers);
-            button(context, line, null, () => { state.request[key] = state.request[key].filter(rowItem => rowItem.id !== item.id); if (!state.request[key].length) state.request[key].push(row()); render(); }, disposers, { icon: "delete", title: "删除", "aria-label": "删除", danger: true, size: "small" });
+            mount(context, line, "Input", { value: item.key, placeholder: "键", onChange: event => { item.key = event?.target?.value ?? ""; } }, renderDisposers);
+            mount(context, line, "Input", { value: item.value, placeholder: "值", onChange: event => { item.value = event?.target?.value ?? ""; } }, renderDisposers);
+            button(context, line, null, () => { state.request[key] = state.request[key].filter(rowItem => rowItem.id !== item.id); if (!state.request[key].length) state.request[key].push(row()); render(); }, renderDisposers, { icon: "delete", title: "删除", "aria-label": "删除", danger: true, size: "small" });
           });
-          button(context, block, null, () => { state.request[key].push(row()); render(); }, disposers, { icon: "plus", title: "添加一行", "aria-label": "添加一行", size: "small" });
         };
-        render(); rowRenders[key] = render; root.append(block); return block;
+        const tools = document.createElement("div"); tools.className = "apiRequesterSectionTools"; block.append(tools);
+        button(context, tools, null, () => { state.request[key].push(row()); render(); }, disposers, { icon: "plus", title: "添加一行", "aria-label": "添加一行", size: "small" });
+        button(context, tools, null, () => {
+          const text = window.prompt("粘贴 JSON 文本（可包含 params、headers、cookies）");
+          if (!text) return;
+          try {
+            const raw = JSON.parse(text);
+            const parsed = parseImportedRequest(raw);
+            const candidate = raw?.[key] ?? raw;
+            const direct = Array.isArray(candidate)
+              ? candidate.map(item => typeof item === "string" ? {key: item, value: "", enabled: true} : ({key: item?.key ?? item?.name ?? "", value: item?.value ?? "", enabled: !item?.disabled && item?.enabled !== false}))
+              : candidate && typeof candidate === "object" && !candidate.url && !candidate.request
+                ? Object.entries(candidate).map(([name, value]) => ({key: name, value: String(value ?? ""), enabled: true}))
+                : [];
+            const imported = direct.length ? direct.map(item => row(item.key, item.value, item.enabled)) : parsed[key];
+            if (!Array.isArray(imported) || !imported.length) throw new Error(`JSON 中没有可导入的 ${title} 数据`);
+            state.request[key] = imported;
+            render();
+            updateStatus(`已导入 ${title}`);
+          }
+          catch (error) { updateStatus(`JSON 导入失败：${error.message || error}`, true); }
+        }, disposers, { icon: "upload", title: `导入${title} JSON`, "aria-label": `导入${title} JSON`, size: "small" });
+        render(); rowRenders[key] = render; parent.append(block); return block;
       }
 
       const requestTabs = document.createElement("div"); requestTabs.className = "apiRequesterTabs";
       const requestTabContent = document.createElement("div"); requestTabContent.className = "apiRequesterTabContent";
       const tabDefinitions = [
-        ["params", "Params", "URL 查询参数会追加到地址后。"],
-        ["headers", "Headers", "空键会被忽略。"],
-        ["cookies", "Cookies", "会尝试转换为 Cookie 请求头。"],
+        ["params", "Params"],
+        ["headers", "Headers"],
+        ["cookies", "Cookies"],
       ];
       const tabBlocks = {};
-      tabDefinitions.forEach(([key, title, hint], index) => {
+      tabDefinitions.forEach(([key, title], index) => {
         const tab = document.createElement("span"); tab.className = `apiRequesterTab${index === 0 ? " active" : ""}`; tab.textContent = title; tab.setAttribute("role", "tab"); tab.onclick = () => { Object.keys(tabBlocks).forEach(name => { tabBlocks[name].style.display = name === key ? "block" : "none"; }); requestTabs.querySelectorAll(".apiRequesterTab").forEach(node => node.classList.toggle("active", node === tab)); };
         requestTabs.append(tab);
-        tabBlocks[key] = renderKV(requestTabContent, title, key, hint, true);
+        tabBlocks[key] = renderKV(requestTabContent, title, key, true);
         tabBlocks[key].style.display = index === 0 ? "block" : "none";
       });
       root.append(requestTabs, requestTabContent);
 
       const bodyBlock = section("Body", "GET / HEAD 通常不应携带请求体；JSON 会先校验格式。");
-      const bodyType = mount(context, bodyBlock, "Select", { value: state.request.bodyType, options: BODY_TYPES, onChange: value => { state.request.bodyType = value; bodyRender(); } }, disposers);
+      const bodyType = mount(context, bodyBlock, "Select", { value: state.request.bodyType, options: BODY_TYPES, onChange: value => { state.request.bodyType = selectValue(value); bodyRender(); } }, disposers);
       const bodyHost = document.createElement("div"); bodyHost.className = "apiRequesterBodyHost"; bodyBlock.append(bodyHost); root.append(bodyBlock);
       let bodyDispose = null;
+      const bodyDisposers = [];
+      disposers.push(() => bodyDisposers.splice(0).forEach(dispose => dispose?.()));
       bodyRender = () => {
+        bodyDisposers.splice(0).forEach(dispose => dispose?.());
         bodyDispose?.(); bodyDispose = null; bodyHost.replaceChildren();
         if (state.request.bodyType === "form") {
           const rowsHost = document.createElement("div"); rowsHost.className = "apiRequesterRows"; bodyHost.append(rowsHost);
@@ -228,30 +341,45 @@ export function activate(context) {
             state.request.bodyParams.forEach(item => {
               const line = document.createElement("div"); line.className = "apiRequesterRow"; rowsHost.append(line);
               line.append(document.createElement("span"));
-              mount(context, line, "Input", { value: item.key, placeholder: "字段名", onChange: event => { item.key = event?.target?.value ?? ""; } }, disposers);
-              mount(context, line, "Input", { value: item.value, placeholder: "字段值", onChange: event => { item.value = event?.target?.value ?? ""; } }, disposers);
-              button(context, line, null, () => { state.request.bodyParams = state.request.bodyParams.filter(x => x.id !== item.id); if (!state.request.bodyParams.length) state.request.bodyParams.push(row()); render(); }, disposers, { icon: "delete", title: "删除", "aria-label": "删除", danger: true, size: "small" });
+              mount(context, line, "Input", { value: item.key, placeholder: "字段名", onChange: event => { item.key = event?.target?.value ?? ""; } }, bodyDisposers);
+              mount(context, line, "Input", { value: item.value, placeholder: "字段值", onChange: event => { item.value = event?.target?.value ?? ""; } }, bodyDisposers);
+              button(context, line, null, () => { state.request.bodyParams = state.request.bodyParams.filter(x => x.id !== item.id); if (!state.request.bodyParams.length) state.request.bodyParams.push(row()); render(); }, bodyDisposers, { icon: "delete", title: "删除", "aria-label": "删除", danger: true, size: "small" });
             });
-            button(context, bodyHost, null, () => { state.request.bodyParams.push(row()); render(); }, disposers, { icon: "plus", title: "添加一行", "aria-label": "添加一行", size: "small" });
           }; render(); bodyDispose = () => rowsHost.replaceChildren();
+          button(context, bodyHost, null, () => { state.request.bodyParams.push(row()); render(); }, bodyDisposers, { icon: "plus", title: "添加一行", "aria-label": "添加一行", size: "small" });
         } else if (state.request.bodyType !== "none") {
-          const mounted = mount(context, bodyHost, "TextArea", { value: state.request.body, rows: 7, className: "apiRequesterBodyText", placeholder: state.request.bodyType === "json" ? '{\n  "name": "Lark"\n}' : "请输入请求体", onChange: event => { state.request.body = event?.target?.value ?? ""; } }, disposers);
+          const mounted = mount(context, bodyHost, "TextArea", { value: state.request.body, rows: 7, className: "apiRequesterBodyText", placeholder: state.request.bodyType === "json" ? '{\n  "name": "Lark"\n}' : "请输入请求体", onChange: event => { state.request.body = event?.target?.value ?? ""; } }, bodyDisposers);
           bodyDispose = () => mounted.dispose?.();
         }
       };
       bodyRender();
 
-      const actions = document.createElement("div"); actions.className = "apiRequesterActions"; root.append(actions);
       const responseBlock = section("Response"); responseBlock.classList.add("apiRequesterResponse"); root.append(responseBlock);
+      const responseUrl = document.createElement("div"); responseUrl.className = "apiRequesterResponseUrl"; responseUrl.textContent = "请求完成后显示 URL"; responseBlock.append(responseUrl);
       const responseMeta = document.createElement("div"); responseMeta.className = "apiRequesterResponseMeta"; responseBlock.append(responseMeta);
-      const responseBody = document.createElement("pre"); responseBody.className = "apiRequesterResponseBody"; responseBody.textContent = "发送请求后显示响应"; responseBlock.append(responseBody);
+      const responseTabs = document.createElement("div"); responseTabs.className = "apiRequesterResponseTabs"; responseBlock.append(responseTabs);
+      const responsePanelsHost = document.createElement("div"); responseBlock.append(responsePanelsHost);
+      const responsePanels = {};
+      ["body", "params", "headers", "cookies"].forEach((key, index) => {
+        const tab = document.createElement("span"); tab.className = `apiRequesterResponseTab${index === 0 ? " active" : ""}`; tab.textContent = key[0].toUpperCase() + key.slice(1); tab.onclick = () => {
+          Object.entries(responsePanels).forEach(([name, panel]) => { panel.style.display = name === key ? "block" : "none"; });
+          responseTabs.querySelectorAll(".apiRequesterResponseTab").forEach(node => node.classList.toggle("active", node === tab));
+        }; responseTabs.append(tab);
+        const panel = document.createElement(key === "body" ? "pre" : "pre"); panel.className = key === "body" ? "apiRequesterResponseBody apiRequesterResponsePanel" : "apiRequesterResponsePairs apiRequesterResponsePanel"; panel.textContent = key === "body" ? "发送请求后显示响应" : "暂无数据"; panel.style.display = index === 0 ? "block" : "none"; responsePanelsHost.append(panel); responsePanels[key] = panel;
+      });
       function renderResponse() {
         responseMeta.replaceChildren();
-        if (!state.response) return;
+        if (!state.response) { responseUrl.textContent = "请求完成后显示 URL"; return; }
         const statusNode = document.createElement("span"); statusNode.className = "apiRequesterStatus"; statusNode.textContent = `${state.response.status} ${state.response.statusText}`; responseMeta.append(statusNode);
         const timeNode = document.createElement("span"); timeNode.className = "apiRequesterMuted"; timeNode.textContent = `${state.response.elapsed} ms`; responseMeta.append(timeNode);
         const headersNode = document.createElement("span"); headersNode.className = "apiRequesterMuted"; headersNode.textContent = `${state.response.headers.length} 个响应头`; responseMeta.append(headersNode);
-        responseBody.textContent = state.response.body;
+        const displayUrl = new URL(state.response.url);
+        enabledRows(state.response.params).forEach(item => displayUrl.searchParams.append(item.key.trim(), item.value));
+        responseUrl.textContent = displayUrl.toString(); responseUrl.title = responseUrl.textContent;
+        responsePanels.body.textContent = state.response.body;
+        responsePanels.params.textContent = state.response.params.filter(item => item.key.trim()).map(item => `${item.key}: ${item.value}`).join("\n") || "暂无查询参数";
+        responsePanels.headers.textContent = state.response.headers.filter(([key]) => key.toLowerCase() !== "set-cookie").map(([key, value]) => `${key}: ${value}`).join("\n") || "暂无响应头";
+        responsePanels.cookies.textContent = state.response.cookies.map(item => `${item.key}: ${item.value}`).join("\n") || "暂无 Set-Cookie";
       }
       async function send() {
         if (state.loading) return;
@@ -277,26 +405,26 @@ export function activate(context) {
           if (!result?.ok) throw new Error(result?.error || "Python 请求失败");
           const data = result.result || {};
           state.response = {
+            url: state.request.url,
+            params: state.request.params,
             status: data.status,
             statusText: data.statusText || "",
             elapsed: data.elapsedMs ?? 0,
             headers: Array.isArray(data.headers) ? data.headers : [],
+            cookies: (Array.isArray(data.headers) ? data.headers : []).filter(([key]) => String(key).toLowerCase() === "set-cookie").map(([, value]) => { const splitAt = String(value).indexOf("="); return splitAt > 0 ? {key: String(value).slice(0, splitAt), value: String(value).slice(splitAt + 1).split(";")[0]} : null; }).filter(Boolean),
             body: data.body ?? "（空响应）",
           };
           renderResponse(); updateStatus("请求完成");
         } catch (error) {
           if (disposed) return;
-          state.response = null; responseMeta.replaceChildren();
-          responseBody.textContent = `请求失败：${error?.message || error}`;
+          state.response = null; responseMeta.replaceChildren(); responseUrl.textContent = "请求失败";
+          responsePanels.body.textContent = `请求失败：${error?.message || error}`;
           updateStatus("请求失败", true);
         } finally {
           state.loading = false;
           if (!disposed) sendButton.dispose.update({ loading: false, disabled: false });
         }
       }
-      const sendButton = button(context, actions, null, send, disposers, { icon: "send", title: "发送请求", "aria-label": "发送请求", type: "primary" });
-      button(context, actions, null, saveRequest, disposers, { icon: "save", title: "保存接口", "aria-label": "保存接口" });
-
       const savedBlock = section("已保存接口", "保存数据使用插件配置存储，仅保存在本机。"); savedBlock.classList.add("apiRequesterSaved"); const savedList = document.createElement("div"); savedBlock.append(savedList); root.append(savedBlock);
       function renderSaved() {
         savedList.replaceChildren();
@@ -304,14 +432,17 @@ export function activate(context) {
         state.saved.forEach(item => {
           const line = document.createElement("div"); line.className = "apiRequesterSavedItem"; savedList.append(line);
           const title = document.createElement("span"); title.textContent = `${item.name} · ${item.method} ${item.url}`; title.title = title.textContent; line.append(title);
-          button(context, line, null, () => { state.request = normalizeRequest(item); method.dispose.update({ value: state.request.method }); url.dispose.update({ value: state.request.url }); name.dispose.update({ value: state.request.name }); bodyType.dispose.update({ value: state.request.bodyType }); updateStatus(`已加载：${item.name}`); }, disposers, { icon: "load", title: "加载", "aria-label": "加载", size: "small" });
+          button(context, line, null, () => { applyImportedRequest(item); updateStatus(`已加载：${item.name}`); }, disposers, { icon: "load", title: "加载", "aria-label": "加载", size: "small" });
           button(context, line, null, async () => { state.saved = state.saved.filter(x => x.id !== item.id); await context.api.setConfig({ savedRequests: state.saved }); renderSaved(); }, disposers, { icon: "delete", title: "删除", "aria-label": "删除", danger: true, size: "small" });
         });
       }
       async function saveRequest() {
         const request = normalizeRequest(state.request);
-        if (!request.name.trim()) { updateStatus("请先填写接口名称", true); return; }
         if (!request.url.trim()) { updateStatus("请先填写 URL", true); return; }
+        const name = window.prompt("请输入接口名称", request.name.trim());
+        if (name === null) return;
+        request.name = name.trim();
+        if (!request.name) { updateStatus("接口名称不能为空", true); return; }
         const saved = { ...request, id: state.request.id || `request-${Date.now()}` };
         const index = state.saved.findIndex(item => item.id === saved.id);
         if (index >= 0) state.saved[index] = saved; else state.saved.unshift(saved);
@@ -325,6 +456,7 @@ export function activate(context) {
     unmount() { cleanup(); cleanup = () => {}; },
   };
 }
+
 
 
 

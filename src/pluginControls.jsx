@@ -13,7 +13,19 @@ export function mountPluginControl(container, type, props = {}) {
   const root = createRoot(container);
   const render = () => {
     const dark = document.documentElement.dataset.theme === "dark";
-    const {label, icon, ...options} = currentProps;
+    const {label, icon, onChange, ...options} = currentProps;
+    const handleChange = (valueOrEvent) => {
+      let nextValue = valueOrEvent;
+      if (["Input", "TextArea"].includes(type)) nextValue = valueOrEvent?.target?.value ?? "";
+      else if (type === "Checkbox") nextValue = typeof valueOrEvent === "boolean" ? valueOrEvent : Boolean(valueOrEvent?.target?.checked);
+      if (["Input", "TextArea", "Select"].includes(type)) currentProps = {...currentProps, value: nextValue};
+      if (type === "Checkbox") currentProps = {...currentProps, checked: nextValue};
+      // These controls are intentionally controlled so plugin state and the
+      // visible value cannot drift apart. Update the host-side prop before
+      // notifying the plugin, then let the plugin persist its own state.
+      render();
+      onChange?.(valueOrEvent);
+    };
     const iconNode = {
       copy: <CopyOutlined />,
       delete: <DeleteOutlined />,
@@ -44,7 +56,7 @@ export function mountPluginControl(container, type, props = {}) {
           colorTextPlaceholder: "var(--text-muted)",
         },
       }}>
-        <Component {...(type === "Select" ? {getPopupContainer: () => container} : {})} {...options} {...(type === "Button" && iconNode ? {icon: iconNode} : {})}>
+        <Component {...(type === "Select" ? {getPopupContainer: () => container} : {})} {...options} {...(onChange ? {onChange: handleChange} : {})} {...(type === "Button" && iconNode ? {icon: iconNode} : {})}>
           {["Button", "Checkbox"].includes(type) ? label : undefined}
         </Component>
       </ConfigProvider>
