@@ -433,6 +433,168 @@ pub fn create_plugin(
     Ok(normalize_asset_path(&destination.to_string_lossy()))
 }
 
+const JSX_TEMPLATE_FILES: &[&str] = &[
+    "package.json",
+    "manifest.json",
+    "vite.config.js",
+    "index.html",
+    "README.md",
+    ".gitignore",
+    "src/App.jsx",
+    "src/main.jsx",
+    "src/dev.jsx",
+    "src/style.css",
+    "assets/icon.svg",
+    "dist/main.js",
+];
+
+fn write_jsx_plugin(
+    root: &Path,
+    sdk_root: &Path,
+    plugin_id: &str,
+    name: &str,
+    description: &str,
+) -> Result<PathBuf, String> {
+    if !valid_plugin_id(plugin_id)
+        || name.trim().is_empty()
+        || name.len() > 200
+        || description.len() > 4000
+    {
+        return Err("插件 ID 无效、名称为空或内容过长".into());
+    }
+    let template = sdk_root.join("template");
+    let mut files = BTreeMap::new();
+    for file in JSX_TEMPLATE_FILES {
+        let bytes = fs::read(template.join(file)).map_err(|error| {
+            format!("无法读取 JSX 模板 {file}，请确认 SDK 随 Lark 正确安装：{error}")
+        })?;
+        files.insert(*file, bytes);
+    }
+    let mut package: Value =
+        serde_json::from_slice(&files["package.json"]).map_err(|e| e.to_string())?;
+    let dependency = package["dependencies"]["@lark/plugin-sdk"]
+        .as_str()
+        .ok_or("模板缺少 SDK 依赖")?;
+    let archive = dependency
+        .strip_prefix("file:../_sdk/")
+        .filter(|value| {
+            !value.contains(['/', '\\'])
+                && value.starts_with("lark-plugin-sdk-")
+                && value.ends_with(".tgz")
+        })
+        .ok_or("模板 SDK 依赖路径无效")?;
+    if !root.join("_sdk").join(archive).is_file() {
+        return Err(
+            "插件目录缺少 SDK 安装包，请重新安装 Lark 或在开发环境运行 pnpm sdk:prepare".into(),
+        );
+    }
+    if !package.is_object() {
+        return Err("JSX 模板 package.json 必须是对象".into());
+    }
+    package["name"] = Value::String(plugin_id.into());
+    files.insert(
+        "package.json",
+        serde_json::to_vec_pretty(&package).map_err(|e| e.to_string())?,
+    );
+    let mut manifest: Value =
+        serde_json::from_slice(&files["manifest.json"]).map_err(|e| e.to_string())?;
+    if !manifest.is_object()
+        || !manifest["workflows"].as_array().is_some_and(|workflows| {
+            workflows.len() == 1 && workflows[0].is_object() && workflows[0]["type"] == "panel"
+        })
+    {
+        return Err("JSX 模板必须包含一个界面入口".into());
+    }
+    manifest["id"] = Value::String(plugin_id.into());
+    manifest["name"] = Value::String(name.trim().into());
+    manifest["description"] = Value::String(
+        if description.trim().is_empty() {
+            "使用 JSX 开发的 Lark 界面插件"
+        } else {
+            description.trim()
+        }
+        .into(),
+    );
+    manifest["workflows"][0]["title"] = Value::String(name.trim().into());
+    manifest["workflows"][0]["keywords"] = serde_json::json!([plugin_id, name.trim()]);
+    files.insert(
+        "manifest.json",
+        serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
+    );
+    let destination = root.join(plugin_id);
+    fs::create_dir(&destination)
+        .map_err(|e| format!("无法创建插件目录（不会覆盖已有目录）：{e}"))?;
+    let write = || -> std::io::Result<()> {
+        for (file, bytes) in files.iter().filter(|(file, _)| **file != "manifest.json") {
+            let target = destination.join(file);
+            fs::create_dir_all(target.parent().unwrap())?;
+            fs::write(target, bytes)?;
+        }
+        let temporary = destination.join("manifest.json.tmp");
+        fs::write(&temporary, &files["manifest.json"])?;
+        fs::rename(temporary, destination.join("manifest.json"))?;
+        Ok(())
+    };
+    if let Err(error) = write() {
+        return match fs::remove_dir_all(&destination) {
+            Ok(()) => Err(format!("写入 JSX 插件失败，已清理本次创建内容：{error}")),
+            Err(cleanup) => Err(format!(
+                "写入 JSX 插件失败：{error}；清理 {} 失败：{cleanup}",
+                destination.display()
+            )),
+        };
+    }
+    Ok(destination)
+}
+
+#[tauri::command]
+pub fn create_jsx_plugin(
+    app: AppHandle,
+    plugin_id: String,
+    name: String,
+    description: String,
+) -> Result<String, String> {
+    let _guard = CREATE_PLUGIN_LOCK
+        .lock()
+        .map_err(|_| "插件创建服务不可用")?;
+    if !valid_plugin_id(&plugin_id) {
+        return Err("插件 ID 无效".into());
+    }
+    if load_plugins(app.clone())
+        .iter()
+        .any(|plugin| plugin.id.eq_ignore_ascii_case(&plugin_id))
+    {
+        return Err("插件 ID 已存在，请更换 ID".into());
+    }
+    let root = app_plugins_dir().map_err(|error| error.to_string())?;
+    let mut sdk_root = root.join("_sdk");
+    // 开发构建从仓库读取模板，并仅复制 SDK 包到实际插件目录。
+    if cfg!(debug_assertions) && !sdk_root.join("template/manifest.json").is_file() {
+        sdk_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins/_sdk");
+        let package: Value = serde_json::from_slice(
+            &fs::read(sdk_root.join("template/package.json"))
+                .map_err(|_| "请先运行 pnpm sdk:prepare 生成 SDK 和模板")?,
+        )
+        .map_err(|e| e.to_string())?;
+        let dependency = package["dependencies"]["@lark/plugin-sdk"]
+            .as_str()
+            .ok_or("模板缺少 SDK 依赖")?;
+        let filename = Path::new(dependency)
+            .file_name()
+            .ok_or("SDK 安装包名称无效")?;
+        fs::create_dir_all(root.join("_sdk")).map_err(|e| e.to_string())?;
+        fs::copy(sdk_root.join(filename), root.join("_sdk").join(filename))
+            .map_err(|e| e.to_string())?;
+        fs::copy(sdk_root.join("README.md"), root.join("_sdk/README.md"))
+            .map_err(|e| e.to_string())?;
+    }
+    app.asset_protocol_scope()
+        .allow_directory(&root, true)
+        .map_err(|e| e.to_string())?;
+    let destination = write_jsx_plugin(&root, &sdk_root, &plugin_id, &name, &description)?;
+    Ok(normalize_asset_path(&destination.to_string_lossy()))
+}
+
 #[tauri::command]
 pub fn load_plugin_editor(plugin_id: String) -> Result<Value, String> {
     if !valid_plugin_id(&plugin_id) {
@@ -906,6 +1068,68 @@ mod creation_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn jsx_fixture(root: &Path) -> PathBuf {
+        let sdk = root.join("_sdk");
+        let template = sdk.join("template");
+        for file in JSX_TEMPLATE_FILES {
+            let target = template.join(file);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(target, "initial source").unwrap();
+        }
+        fs::write(sdk.join("lark-plugin-sdk-0.1.0.tgz"), b"sdk archive").unwrap();
+        fs::write(template.join("package.json"), serde_json::json!({
+            "name": "template", "dependencies": {"@lark/plugin-sdk": "file:../_sdk/lark-plugin-sdk-0.1.0.tgz"}
+        }).to_string()).unwrap();
+        fs::write(template.join("manifest.json"), serde_json::json!({
+            "id": "template", "name": "template", "workflows": [{"id": "open", "type": "panel", "handler": "open"}]
+        }).to_string()).unwrap();
+        sdk
+    }
+
+    #[test]
+    fn jsx_creation_copies_project_and_preserves_existing_edits() {
+        let root = TestDirectory::new();
+        let sdk = jsx_fixture(&root.0);
+        let destination =
+            write_jsx_plugin(&root.0, &sdk, "my-jsx", "名字 \"引号\"", "描述").unwrap();
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(destination.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(manifest["id"], "my-jsx");
+        assert_eq!(manifest["name"], "名字 \"引号\"");
+        assert_eq!(
+            manifest["workflows"][0]["keywords"],
+            serde_json::json!(["my-jsx", "名字 \"引号\""])
+        );
+        let package: Value =
+            serde_json::from_slice(&fs::read(destination.join("package.json")).unwrap()).unwrap();
+        assert_eq!(package["name"], "my-jsx");
+        assert_eq!(
+            package["dependencies"]["@lark/plugin-sdk"],
+            "file:../_sdk/lark-plugin-sdk-0.1.0.tgz"
+        );
+        assert!(destination.join("dist/main.js").is_file());
+        fs::write(destination.join("src/App.jsx"), "user changes").unwrap();
+        assert!(write_jsx_plugin(&root.0, &sdk, "my-jsx", "新名字", "").is_err());
+        assert_eq!(
+            fs::read_to_string(destination.join("src/App.jsx")).unwrap(),
+            "user changes"
+        );
+        assert!(!destination.join("scaffold.json").exists());
+    }
+
+    #[test]
+    fn jsx_creation_rejects_invalid_id_and_missing_sdk_before_writing() {
+        let root = TestDirectory::new();
+        let sdk = jsx_fixture(&root.0);
+        assert!(write_jsx_plugin(&root.0, &sdk, "../outside", "名字", "").is_err());
+        fs::write(sdk.join("template/manifest.json"), "{}").unwrap();
+        assert!(write_jsx_plugin(&root.0, &sdk, "my-jsx", "名字", "").is_err());
+        assert!(!root.0.join("my-jsx").exists());
+        fs::remove_file(sdk.join("lark-plugin-sdk-0.1.0.tgz")).unwrap();
+        assert!(write_jsx_plugin(&root.0, &sdk, "my-jsx", "名字", "").is_err());
+        assert!(!root.0.join("my-jsx").exists());
     }
 
     #[test]

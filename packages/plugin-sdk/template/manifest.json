@@ -1,0 +1,26 @@
+{
+  "id": "jsx-template",
+  "name": "JSX 插件",
+  "description": "使用 JSX 开发的 Lark 界面插件",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "icon": "./assets/icon.svg",
+  "entry": {
+    "type": "js",
+    "path": "dist/main.js"
+  },
+  "permissions": [],
+  "workflows": [
+    {
+      "id": "open",
+      "title": "打开界面",
+      "type": "panel",
+      "handler": "open",
+      "keywords": [
+        "jsx-template"
+      ],
+      "windowMode": "expanded",
+      "icon": "./assets/icon.svg"
+    }
+  ]
+}

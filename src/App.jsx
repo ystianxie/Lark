@@ -15,7 +15,7 @@ import {suspendNativeAppearanceEffect} from "./theme/nativeEffect";
 import webImg from "./assets/web.svg";
 import baseComponent from "./baseComponent";
 import {habitRank, normalizeHabitState, updateHabitState} from "./appHabit";
-import {executePluginWorkflow, normalizePluginPath} from "./pluginRuntime";
+import {executePluginWorkflow, invalidateAllPluginRuntimes, normalizePluginPath} from "./pluginRuntime";
 import {normalizePluginResults} from "./pluginScaffold";
 import {schedulePluginExecution} from "./pluginExecution";
 import {getAppLocationPath} from "./utils/appLocation";
@@ -155,6 +155,7 @@ const App = () => {
         setPluginsLoading(true);
         setPluginsError("");
         try {
+            await invalidateAllPluginRuntimes();
             const result = await loadCustomComponent();
             if (requestId === pluginRefreshId.current) {
                 setPluginList(result);

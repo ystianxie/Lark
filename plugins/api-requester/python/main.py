@@ -39,6 +39,7 @@ def build_request(args):
     if extra_query:
         query = f"{query}&{extra_query}" if query else extra_query
     path = urlunsplit(("", "", parts.path or "/", query, ""))
+    response_url = urlunsplit((parts.scheme, parts.netloc, parts.path or "/", query, ""))
 
     headers = {}
     for key, value in enabled_pairs(args.get("headers")):
@@ -76,11 +77,11 @@ def build_request(args):
             raise ValueError("不支持的 Body 类型")
     if body is not None and len(body) > MAX_BODY_BYTES:
         raise ValueError("请求体超过 8 MiB 限制")
-    return method, parts, path, headers, body
+    return method, parts, path, headers, body, response_url
 
 
 def request(args):
-    method, parts, path, headers, body = build_request(args)
+    method, parts, path, headers, body, response_url = build_request(args)
     port = parts.port or (443 if parts.scheme == "https" else 80)
     connection_type = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
     connection = connection_type(parts.hostname, port, timeout=TIMEOUT_SECONDS, **({"context": ssl.create_default_context()} if parts.scheme == "https" else {}))
@@ -111,6 +112,7 @@ def request(args):
         except LookupError:
             text = raw_body.decode("utf-8", errors="replace")
         return {
+            "responseUrl": response_url,
             "status": response.status,
             "statusText": response.reason or "",
             "elapsedMs": round((time.perf_counter() - started) * 1000),

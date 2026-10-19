@@ -16,6 +16,12 @@ export async function invalidatePluginRuntime(pluginId) {
   }
 }
 
+export async function invalidateAllPluginRuntimes() {
+  for (const pluginId of [...runtimes.keys()]) {
+    await invalidatePluginRuntime(pluginId);
+  }
+}
+
 const permissions = {
   "url.open": (url) => invoke("open_url", { url }),
   "file.open": (path) => invoke("open_file", { filePath: path }),

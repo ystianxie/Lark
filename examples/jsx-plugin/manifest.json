@@ -1,0 +1,45 @@
+{
+  "id": "jsx-demo",
+  "name": "JSX SDK 示例",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "使用 Lark SDK 编写 JSX 页面",
+  "entry": {
+    "type": "js",
+    "path": "dist/main.js"
+  },
+  "icon": "./assets/icon.svg",
+  "permissions": [],
+  "workflows": [
+    {
+      "id": "open",
+      "title": "JSX SDK 示例",
+      "description": "输入文字并操作 SDK 控件",
+      "keywords": [
+        "jsx",
+        "sdk"
+      ],
+      "type": "panel",
+      "handler": "open",
+      "windowMode": "expanded",
+      "icon": "./assets/icon.svg"
+    }
+  ],
+  "config": {
+    "schemaVersion": 1,
+    "fields": [
+      {
+        "key": "name",
+        "label": "名字",
+        "type": "text",
+        "default": ""
+      },
+      {
+        "key": "notes",
+        "label": "备注",
+        "type": "textarea",
+        "default": ""
+      }
+    ]
+  }
+}

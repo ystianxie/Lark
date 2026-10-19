@@ -34,3 +34,6 @@ test.*
 /.reasonix/
 /aimisi-v2-run/
 /.pnpm-store/
+
+# Generated SDK archive and prebuilt template, bundled from plugins.
+/plugins/_sdk/

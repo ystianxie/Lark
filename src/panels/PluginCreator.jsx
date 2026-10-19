@@ -148,7 +148,7 @@ export default function PluginCreator({existingIds, onRegistered, onClose, editP
                 <Alert type={registered ? "success" : "info"} showIcon
                     message={registered ? (editPlugin ? "已保存并更新组件库" : "已开启并更新组件库") : "文件已保存，请重试开启及刷新"}
                     description={<div className="creator-path">{createdPath}</div>}/>
-                <p>使用功能关键词搜索此插件。后续可直接修改生成的文件；修改已加载的 JS 后请重启应用。</p>
+                <p>使用功能关键词搜索此插件。后续可直接修改生成的文件；修改文件后请在组件库点击“刷新”。</p>
             </> : files ? <>
                 <Alert type="info" message="仅预览生成文件，创建时不会运行你的代码。"/>
                 <Select aria-label="预览文件" value={previewFile} onChange={setPreviewFile}

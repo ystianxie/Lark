@@ -1,8 +1,9 @@
 import React, {useEffect, useRef, useState} from "react";
-import {Alert, Button, Empty, Input, Switch, Tag} from "antd";
+import {Alert, Button, Dropdown, Empty, Input, Switch, Tag} from "antd";
 import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import "./showComponent.css";
 import PluginCreator from "./PluginCreator";
+import JsxPluginCreator from "./JsxPluginCreator";
 import PluginSettings from "./PluginSettings";
 import {modifyWindowSize} from "../template.jsx";
 
@@ -51,6 +52,13 @@ export default function Component({plugins = {}, pluginStatus, loading, error, o
     if (configuring) return <PluginSettings plugin={configuring} onClose={() => setConfiguring(null)}
         onSaved={onRefresh}/>;
 
+    if (creating === "jsx") return <JsxPluginCreator existingIds={Object.keys(plugins)}
+        onClose={() => setCreating(false)} onRegistered={async pluginId => {
+            onToggle(pluginId, true);
+            const result = await onRefresh();
+            if (!result?.ok) throw new Error(result?.error || "刷新失败");
+        }}/>;
+
     if (creating || editing) return <PluginCreator editPlugin={editing} existingIds={Object.keys(plugins)}
         panelDropHandlerRef={panelDropHandlerRef} onClose={() => {setCreating(false); setEditing(null);}}
         onRegistered={async pluginId => {
@@ -65,7 +73,12 @@ export default function Component({plugins = {}, pluginStatus, loading, error, o
         <header className="library-toolbar">
             <div><h2>组件库</h2><p>共 {entries.length} 个插件 · 已开启 {enabledCount} 个</p></div>
             <div className="library-actions">
-                <Button type="primary" onClick={() => setCreating(true)}>新增插件</Button>
+                <Dropdown menu={{items: [
+                    {key: "script", label: "脚本插件 · JavaScript / Python"},
+                    {key: "jsx", label: "JSX 界面插件 · SDK"},
+                ], onClick: ({key}) => setCreating(key)}} trigger={["click"]}>
+                    <Button type="primary">新增插件</Button>
+                </Dropdown>
                 <Button onClick={onRefresh} loading={loading}>刷新</Button>
                 <Button onClick={onClose}>返回</Button>
             </div>

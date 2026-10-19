@@ -1,0 +1,8 @@
+body { margin: 0; }
+.sdk-demo { box-sizing: border-box; padding: 24px; font: 14px/1.6 system-ui, sans-serif; color: var(--text-primary, #202938); }
+.sdk-demo h2 { margin-top: 0; }
+.sdk-demo > label { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+.sdk-demo > label > span { flex: 1; max-width: 420px; }
+.sdk-demo label input, .sdk-demo label textarea { width: 100%; }
+.sdk-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.sdk-demo output { display: block; padding: 12px; border-radius: 8px; background: var(--surface-muted, #edf2fc); }

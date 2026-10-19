@@ -1,8 +1,8 @@
 {
   "productName": "Lark",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm sdk:prepare && pnpm dev",
     "beforeBuildCommand": "pnpm build:desktop",
     "devUrl": "http://localhost:1421",
     "frontendDist": "../dist"

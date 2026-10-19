@@ -1,0 +1,18 @@
+{
+  "name": "lark-jsx-plugin",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@lark/plugin-sdk": "file:../_sdk/__SDK_ARCHIVE__",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "vite": "6.0.7"
+  }
+}

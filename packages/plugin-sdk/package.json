@@ -1,0 +1,35 @@
+{
+  "name": "@lark/plugin-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Lark 插件 JSX 组件、开发预览和构建工具",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.jsx"
+    },
+    "./dev": {
+      "types": "./src/dev.d.ts",
+      "default": "./src/dev.jsx"
+    },
+    "./vite": "./src/vite.js"
+  },
+  "peerDependencies": {
+    "react": ">=18 <20",
+    "react-dom": ">=18 <20",
+    "vite": "^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "antd": "^5.23.0",
+    "@ant-design/icons": "~6.3.4"
+  }
+}

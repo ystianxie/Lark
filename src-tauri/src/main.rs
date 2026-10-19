@@ -37,7 +37,7 @@ use crate::api::shell::{
     open_url, probe_python_interpreter, read_txt, run_python_plugin, run_python_script, write_txt,
 };
 use crate::config::plugins::{
-    create_plugin, load_plugin_editor, load_plugins, update_plugin, valid_plugin_id,
+    create_jsx_plugin, create_plugin, load_plugin_editor, load_plugins, update_plugin, valid_plugin_id,
 };
 use crate::config::{
     app_settings, clear_plugin_settings_data, hotkey_settings, index_initialization_flags_present,
@@ -1991,6 +1991,7 @@ fn main() {
             get_history_search,
             load_plugins,
             create_plugin,
+            create_jsx_plugin,
             load_plugin_editor,
             update_plugin,
             get_app_dir,
