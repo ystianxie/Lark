@@ -20,3 +20,4 @@ pub mod hosts;
 pub mod rclip;
 pub mod screenshot;
 pub mod selection;
+pub mod tray_icons;

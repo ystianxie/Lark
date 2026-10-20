@@ -14,6 +14,7 @@ import {invoke} from "@tauri-apps/api/core";
 import {open} from "@tauri-apps/plugin-dialog";
 import {listen} from "@tauri-apps/api/event";
 import ThemePanel from './ThemePanel';
+import TrayIconsPanel from './TrayIconsPanel';
 
 const Wrapper = createGlobalStyle`
     a {
@@ -1582,12 +1583,14 @@ const Component = () => {
                 <Tabs activeKey={activeTab} onChange={setActiveTab} centered items={[
                     {key: 'app', label: '常规设置'},
                     {key: 'appearance', label: '外观'},
+                    {key: 'tray', label: '托盘图标'},
                     {key: 'translation', label: '翻译服务'},
                     {key: 'index', label: '索引扫描'},
                     {key: 'custom', label: '手动应用'},
                     {key: 'snippets', label: '文本片段'}
                 ]}/>
                 {activeTab === 'appearance' && <ThemePanel/>}
+                {activeTab === 'tray' && <TrayIconsPanel/>}
                 {activeTab === 'translation' && <div style={{padding: '8px 18px 24px'}}>
                     <section className="snippetCard">
                         <h3 className="snippetHeading">翻译方向</h3>

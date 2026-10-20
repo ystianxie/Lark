@@ -1,0 +1,52 @@
+.tray-icons-panel {
+    padding: 8px 18px 24px;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.tray-icons-panel .tray-rules-heading {
+    margin: 6px 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.tray-rules-heading span,
+.tray-list-summary,
+.tray-rule-status,
+.tray-option-count {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.tray-list-summary { margin-top: -8px; }
+.tray-option-count { margin-left: 8px; }
+.tray-software-option { font-size: 13px; line-height: 1.6; }
+.tray-software-path {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tray-rule {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--panel-border, rgba(128, 128, 128, 0.16));
+}
+
+.tray-rule-info { flex: 1; min-width: 0; }
+.tray-rule-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.tray-rule-title .ant-tag { font-size: 11px; line-height: 18px; margin: 0; }

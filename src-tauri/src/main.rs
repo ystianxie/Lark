@@ -37,7 +37,8 @@ use crate::api::shell::{
     open_url, probe_python_interpreter, read_txt, run_python_plugin, run_python_script, write_txt,
 };
 use crate::config::plugins::{
-    create_jsx_plugin, create_plugin, load_plugin_editor, load_plugins, update_plugin, valid_plugin_id,
+    create_jsx_plugin, create_plugin, load_plugin_editor, load_plugins, update_plugin,
+    valid_plugin_id,
 };
 use crate::config::{
     app_settings, clear_plugin_settings_data, hotkey_settings, index_initialization_flags_present,
@@ -1707,6 +1708,7 @@ fn main() {
         .plugin(win_file_drop::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
+            api::tray_icons::start_worker();
             app.manage(Mutex::new(NotificationManager::default()));
             notification::manager::start_expiration_worker(app.handle().clone());
             let index_service = api::file_watcher::FileIndexUpdateService::start();
@@ -1937,6 +1939,10 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            api::tray_icons::list_tray_icons,
+            api::tray_icons::replace_tray_icon,
+            api::tray_icons::get_tray_icon_rules,
+            api::tray_icons::remove_tray_icon_rule,
             notify,
             get_notifications,
             dismiss_notification,
