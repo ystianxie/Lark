@@ -1069,6 +1069,7 @@ const App = () => {
             } else if (!componentInfo && pistol) {
                 searchType = "pistol";
             }
+            const isAppSearch = searchType === "app" || searchType === "pistol";
             console.log("搜索类型", searchType);
             let result = [];
             if (activePluginWorkflow) {
@@ -1106,7 +1107,7 @@ const App = () => {
                     return await invoke("create_app_index", {});
                 }
                 // 计算器组件，在没有选择组件时，尝试计算
-                if (searchType === "app") {
+                if (isAppSearch) {
                     let calc_result = calculator();
                     if (calc_result) {
                         result.push(calc_result);
@@ -1143,7 +1144,7 @@ const App = () => {
                 // const otherMatches = [];
 
                 //* 匹配内部插件
-                if (searchType === "app") {
+                if (isAppSearch) {
                     for (let pluginName in insidePluginList) {
                         let plugin = insidePluginList[pluginName];
                         const keywords = Array.isArray(plugin.keywords) ? plugin.keywords : [];
@@ -1207,7 +1208,7 @@ const App = () => {
                 try {
                     for (let item of query_result) {
                         if (item.title !== "" || item.File !== undefined) {
-                            if (searchType === "app") {
+                            if (isAppSearch) {
                                 item = item.File;
                                 if (typeof item.icon === "string") {
                                     item.icon = (
@@ -1254,12 +1255,12 @@ const App = () => {
                     // 合并结果
                     // result = [...result, ...pinyinMatches.map(match => match.item), ...otherMatches.map(match => match.item)].slice(0, 9);
 
-                    if (result.length === 0 && searchType === "app") {
+                    if (result.length === 0 && isAppSearch) {
                         // 没有结果则进行web搜索
                         result = webSearchComponent(inputValue);
                     } else {
                         // 有结果时按该关键词下的使用积分和最近使用时间进行稳定重排。
-                        if (searchType === "app") {
+                        if (isAppSearch) {
                             const habit = await getAppHabit(inputValue);
                             const habitNow = Date.now();
                             result.sort(

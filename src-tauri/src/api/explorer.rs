@@ -279,10 +279,11 @@ pub fn search_files(keyword: &str) -> Vec<HashMap<String, String>> {
 
 pub fn search_file_index(keyword: &str, offset: i32) -> Vec<FileIndex> {
     let db = IndexSQL::new();
-    db.find_by_keyword("file", keyword, offset).unwrap_or_else(|error| {
-        eprintln!("file search failed: {error:#}");
-        Vec::new()
-    })
+    db.find_by_keyword("file", keyword, offset)
+        .unwrap_or_else(|error| {
+            eprintln!("file search failed: {error:#}");
+            Vec::new()
+        })
 }
 
 /// 将文件系统路径转换为增量索引记录。路径不存在或无法读取元数据时返回 None。

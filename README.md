@@ -62,7 +62,7 @@ Lark 是一款基于 Tauri、Rust 和 React 构建的桌面效率工具。按下
 
 ### 插件与组件库
 
-搜索「组件库」进入插件管理页面，查看工具说明和调用关键词，开启或关闭插件。内置创建向导支持生成 JavaScript / Python 插件，也可以自行编写插件页面和动作。
+搜索「组件库」进入插件管理页面，查看工具说明和调用关键词，开启或关闭插件。内置创建向导支持生成 JavaScript / Python 插件，也支持创建 JSX Panel 界面插件。JSX 插件使用随 Lark 提供的 SDK，在插件目录执行 `npm install` 和 `npm run build` 后，回到组件库刷新即可加载。
 
 仓库中的示例插件见 [`plugins/`](plugins/)，插件格式、配置项和宿主 API 见 [插件开发规范](docs/插件开发规范.md)。Python 插件需要可用的 Python 环境，可在应用设置中指定解释器。
 

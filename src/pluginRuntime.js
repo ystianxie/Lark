@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { actions, createNotification, notify } from "./utils/notify";
+import { actions, createNotification, createPluginNotifier, notify } from "./utils/notify";
 import { mountPluginControl } from "./pluginControls";
 
 const runtimes = new Map();
@@ -43,6 +43,7 @@ export function normalizePluginPath(path) {
 }
 
 export function createPluginContext(manifest, state = {}) {
+  const pluginNotify = createPluginNotifier(manifest);
   const api = {};
   for (const permission of manifest.permissions || []) {
     if (permissions[permission]) api[apiNames[permission] || permission.replace('.', '_')] = permissions[permission];
@@ -80,7 +81,7 @@ export function createPluginContext(manifest, state = {}) {
         options.signal?.throwIfAborted();
         return mountPluginDiffEditor(container, options);
       },
-      ...((manifest.permissions || []).includes("notification.send") ? { notify, actions } : {}),
+      ...((manifest.permissions || []).includes("notification.send") ? { notify: pluginNotify, actions } : {}),
     },
     api,
   };
@@ -111,6 +112,7 @@ export async function loadPluginRuntime(manifest, state = {}) {
 }
 
 export async function executePluginWorkflow(manifest, workflow, state = {}, payload = {}) {
+  const pluginNotify = createPluginNotifier(manifest);
   const runtime = await loadPluginRuntime(manifest, state);
   if (typeof runtime?.execute !== "function") throw new Error(`插件 ${manifest.id} 未提供 execute()`);
   const value = await runtime.execute(workflow.handler || workflow.action || workflow.id, payload);
@@ -125,8 +127,8 @@ export async function executePluginWorkflow(manifest, workflow, state = {}, payl
       throw new TypeError("Python 结果 notification 必须是通知对象");
     }
     const { level, ...options } = notification;
-    const normalized = createNotification(level, options);
-    await notify[level](normalized);
+    createNotification(level, options);
+    await pluginNotify[level](options);
   } else if (payload.allowResultNotification && notification !== undefined) {
     console.warn(`插件 ${manifest.id} 返回了 notification，但未声明 notification.send，已忽略`);
   }

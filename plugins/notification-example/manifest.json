@@ -1,0 +1,83 @@
+{
+  "id": "notification-example",
+  "name": "通知示例",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "description": "演示 JavaScript 和 Python 能力通过返回值唤起通知组件",
+  "icon": "./assets/icon.svg",
+  "entry": {
+    "type": "js",
+    "path": "main.js"
+  },
+  "workflows": [
+    {
+      "id": "javascript-notification",
+      "title": "JavaScript 通知",
+      "description": "执行 JavaScript 能力并返回通知",
+      "keywords": [
+        "通知",
+        "JavaScript",
+        "示例"
+      ],
+      "type": "action",
+      "handler": "javascriptNotification",
+      "icon": "./assets/icon.svg"
+    },
+    {
+      "id": "python-notification",
+      "title": "Python 通知",
+      "description": "执行 Python 能力并返回通知",
+      "keywords": [
+        "通知",
+        "Python",
+        "示例"
+      ],
+      "type": "python",
+      "handler": "pythonNotification",
+      "icon": "./assets/icon.svg"
+    },
+    {
+      "id": "notification-close-action",
+      "title": "通知关闭 Action",
+      "description": "演示点击通知按钮关闭通知",
+      "keywords": [
+        "通知",
+        "Action",
+        "关闭"
+      ],
+      "type": "action",
+      "handler": "closeActionNotification",
+      "icon": "./assets/icon.svg"
+    },
+    {
+      "id": "notification-open-action",
+      "title": "通知打开文件 Action",
+      "description": "选择文件后演示打开文件 Action",
+      "keywords": [
+        "通知",
+        "Action",
+        "打开文件"
+      ],
+      "type": "action",
+      "handler": "openActionNotification",
+      "icon": "./assets/icon.svg"
+    },
+    {
+      "id": "notification-open-dir-action",
+      "title": "通知打开目录 Action",
+      "description": "选择文件后演示打开所在目录 Action",
+      "keywords": [
+        "通知",
+        "Action",
+        "打开目录"
+      ],
+      "type": "action",
+      "handler": "openDirActionNotification",
+      "icon": "./assets/icon.svg"
+    }
+  ],
+  "permissions": [
+    "python.execute",
+    "notification.send"
+  ]
+}

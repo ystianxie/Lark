@@ -14,6 +14,8 @@ pub struct NotificationManager {
     enabled: bool,
     paused: bool,
     deadlines: HashMap<String, Instant>,
+    hovered_since: HashMap<String, Instant>,
+    collapsed_since: HashMap<String, Instant>,
 }
 
 impl Default for NotificationManager {
@@ -23,6 +25,8 @@ impl Default for NotificationManager {
             enabled: true,
             paused: false,
             deadlines: HashMap::new(),
+            hovered_since: HashMap::new(),
+            collapsed_since: HashMap::new(),
         }
     }
 }
@@ -58,6 +62,7 @@ impl NotificationManager {
             ),
             level: input.level,
             title: input.title,
+            source_icon: input.source_icon,
             message: input.message,
             actions: input.actions,
             duration_ms: duration_ms.filter(|duration| *duration > 0),
@@ -84,6 +89,8 @@ impl NotificationManager {
                 .unwrap_or(self.notifications.len() - 1);
             let evicted = self.notifications.remove(victim);
             self.deadlines.remove(&evicted.id);
+            self.hovered_since.remove(&evicted.id);
+            self.collapsed_since.remove(&evicted.id);
         }
         self.notifications.insert(0, notification.clone());
         Some(notification)
@@ -93,6 +100,8 @@ impl NotificationManager {
         let before = self.notifications.len();
         self.notifications.retain(|item| item.id != id);
         self.deadlines.remove(id);
+        self.hovered_since.remove(id);
+        self.collapsed_since.remove(id);
         self.notifications.len() != before
     }
 
@@ -106,6 +115,8 @@ impl NotificationManager {
             .iter()
             .filter(|(id, deadline)| {
                 **deadline <= now
+                    && !self.hovered_since.contains_key(*id)
+                    && !self.collapsed_since.contains_key(*id)
                     && !(self.paused
                         && self.notifications.iter().any(|item| {
                             item.id == **id && item.level == NotificationLevel::Warning
@@ -120,6 +131,8 @@ impl NotificationManager {
             .retain(|item| !expired.iter().any(|id| id == &item.id));
         for id in expired {
             self.deadlines.remove(&id);
+            self.hovered_since.remove(&id);
+            self.collapsed_since.remove(&id);
         }
         true
     }
@@ -138,10 +151,54 @@ impl NotificationManager {
         self.paused = paused;
     }
 
+    pub fn set_notification_hovered(&mut self, id: &str, hovered: bool) {
+        if hovered {
+            if self.deadlines.contains_key(id) {
+                self.hovered_since.entry(id.to_string()).or_insert_with(|| {
+                    self.collapsed_since
+                        .get(id)
+                        .copied()
+                        .unwrap_or_else(Instant::now)
+                });
+            }
+        } else if let Some(started) = self.hovered_since.remove(id) {
+            if !self.collapsed_since.contains_key(id) {
+                if let Some(deadline) = self.deadlines.get_mut(id) {
+                    *deadline += started.elapsed();
+                }
+            }
+        }
+    }
+
+    pub fn set_notification_collapsed(&mut self, id: &str, collapsed: bool) {
+        if collapsed {
+            if self.deadlines.contains_key(id) {
+                self.collapsed_since
+                    .entry(id.to_string())
+                    .or_insert_with(|| {
+                        self.hovered_since
+                            .get(id)
+                            .copied()
+                            .unwrap_or_else(Instant::now)
+                    });
+            }
+        } else if let Some(started) = self.collapsed_since.remove(id) {
+            if !self.hovered_since.contains_key(id) {
+                let elapsed = started.elapsed();
+                if let Some(deadline) = self.deadlines.get_mut(id) {
+                    *deadline += elapsed;
+                }
+                if let Some(notification) = self.notifications.iter_mut().find(|item| item.id == id)
+                {
+                    notification.created_at_ms += elapsed.as_millis() as u64;
+                }
+            }
+        }
+    }
     pub fn reset_warning_durations(&mut self) {
         for notification in &mut self.notifications {
             if notification.level == NotificationLevel::Warning {
-                let duration_ms = notification.duration_ms.unwrap_or(8_000);
+                let duration_ms = notification.duration_ms.unwrap_or(10_000);
                 notification.created_at_ms = now_ms();
                 self.deadlines.insert(
                     notification.id.clone(),
@@ -196,6 +253,7 @@ mod tests {
         NotificationInput {
             level,
             title: title.into(),
+            source_icon: None,
             message: None,
             actions: vec![],
             duration_ms: None,
@@ -228,6 +286,15 @@ mod tests {
     }
 
     #[test]
+    fn error_notifications_ignore_a_custom_duration() {
+        let mut manager = NotificationManager::default();
+        let mut error = input(NotificationLevel::Error, "manual");
+        error.duration_ms = Some(30_000);
+        let notification = manager.enqueue(error).unwrap();
+        assert_eq!(notification.duration_ms, None);
+        assert!(!manager.deadlines.contains_key(&notification.id));
+    }
+    #[test]
     fn disabled_manager_rejects_all_notifications() {
         let mut manager = NotificationManager::default();
         manager.set_enabled(false);
@@ -244,7 +311,7 @@ mod tests {
         let before = manager.notifications()[0].created_at_ms;
         manager.reset_warning_durations();
         let notification = manager.notifications()[0].clone();
-        assert_eq!(notification.duration_ms, Some(8_000));
+        assert_eq!(notification.duration_ms, Some(10_000));
         assert!(notification.created_at_ms >= before);
     }
 
@@ -319,6 +386,35 @@ mod tests {
         assert!(manager.deadlines[&id] > old_deadline);
     }
 
+    #[test]
+    fn hover_pauses_and_then_extends_the_authoritative_deadline() {
+        let mut manager = NotificationManager::default();
+        manager.enqueue(input(NotificationLevel::Info, "hover"));
+        let id = manager.notifications()[0].id.clone();
+        let original_deadline = manager.deadlines[&id];
+        manager.set_notification_hovered(&id, true);
+        assert!(!manager.expire_due_at(original_deadline + Duration::from_secs(1)));
+        manager.set_notification_hovered(&id, false);
+        assert!(manager.deadlines[&id] > original_deadline);
+    }
+
+    #[test]
+    fn collapsed_notifications_do_not_expire_and_resume_with_remaining_time() {
+        let mut manager = NotificationManager::default();
+        manager.enqueue(input(NotificationLevel::Info, "collapsed"));
+        let id = manager.notifications()[0].id.clone();
+        let original_deadline = manager.deadlines[&id];
+        let original_created_at = manager.notifications()[0].created_at_ms;
+        manager.set_notification_collapsed(&id, true);
+        manager
+            .collapsed_since
+            .insert(id.clone(), Instant::now() - Duration::from_secs(3));
+        assert!(!manager.expire_due_at(original_deadline + Duration::from_secs(1)));
+        assert_eq!(manager.notifications().len(), 1);
+        manager.set_notification_collapsed(&id, false);
+        assert!(manager.deadlines[&id] > original_deadline + Duration::from_secs(2));
+        assert!(manager.notifications()[0].created_at_ms > original_created_at);
+    }
     #[test]
     fn generated_ids_are_unique_even_for_same_millisecond() {
         let mut manager = NotificationManager::default();

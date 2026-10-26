@@ -122,6 +122,7 @@ fn index_scan_notification(label: &str, result: Result<i64, String>) -> Notifica
     NotificationInput {
         level,
         title,
+        source_icon: None,
         message: Some(message.chars().take(4_000).collect()),
         actions: Vec::new(),
         duration_ms: None,
@@ -262,6 +263,23 @@ fn get_notifications(state: tauri::State<'_, Mutex<NotificationManager>>) -> ser
     })
 }
 
+#[tauri::command(rename_all = "camelCase")]
+fn set_notification_hovered(app: AppHandle, id: String, hovered: bool) -> Result<(), String> {
+    let state = app.state::<Mutex<NotificationManager>>();
+    state.lock().unwrap().set_notification_hovered(&id, hovered);
+    Ok(())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn set_notification_collapsed(app: AppHandle, id: String, collapsed: bool) -> Result<(), String> {
+    let state = app.state::<Mutex<NotificationManager>>();
+    state
+        .lock()
+        .unwrap()
+        .set_notification_collapsed(&id, collapsed);
+    emit_notification_state(&app, &state);
+    Ok(())
+}
 #[tauri::command(rename_all = "camelCase")]
 fn dismiss_notification(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<Mutex<NotificationManager>>();
@@ -1859,6 +1877,7 @@ fn main() {
                 let input = NotificationInput {
                     level: NotificationLevel::Warning,
                     title: "快捷键注册失败".to_string(),
+                    source_icon: None,
                     message: Some(format!(
                         "快捷键 {shortcut} 无法注册，可能已被其他程序占用。错误：{error}"
                     )),
@@ -1946,6 +1965,8 @@ fn main() {
             notify,
             get_notifications,
             dismiss_notification,
+            set_notification_hovered,
+            set_notification_collapsed,
             invoke_notification_action,
             set_notifications_enabled,
             set_notifications_paused,

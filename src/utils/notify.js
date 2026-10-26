@@ -52,10 +52,7 @@ export function createNotification(level, options) {
   if (options.actions !== undefined && (!Array.isArray(options.actions) || options.actions.length > 3)) {
     throw new TypeError("通知 actions 必须是最多 3 项的数组");
   }
-  if (level === "error" && options.durationMs !== undefined) {
-    throw new TypeError("error 通知必须手动关闭，不能设置 durationMs");
-  }
-  if (options.durationMs !== undefined && (!Number.isInteger(options.durationMs) || options.durationMs < 1000 || options.durationMs > 60_000)) {
+  if (level !== "error" && options.durationMs !== undefined && (!Number.isInteger(options.durationMs) || options.durationMs < 1000 || options.durationMs > 60_000)) {
     throw new TypeError("durationMs 必须是 1000 到 60000 之间的整数毫秒");
   }
 
@@ -64,7 +61,7 @@ export function createNotification(level, options) {
     title: options.title.trim(),
     ...(options.message !== undefined ? { message: options.message } : {}),
     ...(options.actions ? { actions: options.actions.map(normalizeAction) } : {}),
-    ...(options.durationMs !== undefined ? { durationMs: options.durationMs } : {}),
+    ...(level !== "error" && options.durationMs !== undefined ? { durationMs: options.durationMs } : {}),
   };
 }
 
@@ -76,6 +73,20 @@ async function send(level, options) {
     console.warn("发送 Lark 通知失败：", error instanceof Error ? error.message : String(error));
   });
   return { ok: true, id: null, suppressed: false, queued: true };
+}
+
+export function createPluginNotifier(manifest) {
+  const icon = manifest.icon || manifest.workflows?.find((workflow) => typeof workflow?.icon === "string")?.icon;
+  const sourceIcon = typeof icon === "string" && manifest.__root
+    ? `${String(manifest.__root).replaceAll("\\", "/").replace(/\/$/, "")}/${icon.replace(/^\.\//, "")}`
+    : null;
+  const sendFromPlugin = (level) => async (options) => {
+    const notification = createNotification(level, options);
+    notification.sourceIcon = sourceIcon;
+    void invoke("notify", { notification }).catch((error) => console.warn("发送 Lark 通知失败：", error instanceof Error ? error.message : String(error)));
+    return { ok: true, id: null, suppressed: false, queued: true };
+  };
+  return Object.freeze({ success: sendFromPlugin("success"), info: sendFromPlugin("info"), warning: sendFromPlugin("warning"), error: sendFromPlugin("error") });
 }
 
 export const notify = Object.freeze({

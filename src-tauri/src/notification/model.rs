@@ -13,8 +13,8 @@ pub enum NotificationLevel {
 impl NotificationLevel {
     pub fn default_duration_ms(self) -> Option<u64> {
         match self {
-            Self::Success | Self::Info => Some(5_000),
-            Self::Warning => Some(8_000),
+            Self::Success | Self::Info => Some(10_000),
+            Self::Warning => Some(10_000),
             Self::Error => None,
         }
     }
@@ -36,6 +36,8 @@ pub struct Notification {
     pub level: NotificationLevel,
     pub title: String,
     #[serde(default)]
+    pub source_icon: Option<String>,
+    #[serde(default)]
     pub message: Option<String>,
     #[serde(default)]
     pub actions: Vec<NotificationAction>,
@@ -50,6 +52,8 @@ pub struct Notification {
 pub struct NotificationInput {
     pub level: NotificationLevel,
     pub title: String,
+    #[serde(default)]
+    pub source_icon: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
     #[serde(default)]
@@ -85,12 +89,13 @@ impl NotificationInput {
                 NotificationAction::Close { label } => validate_action_label(label.as_deref())?,
             }
         }
-        if let Some(duration) = self.duration_ms {
-            if self.level == NotificationLevel::Error {
-                return Err("error 通知必须手动关闭".into());
-            }
-            if !(1_000..=60_000).contains(&duration) {
-                return Err("通知 durationMs 必须在 1000 到 60000 毫秒之间".into());
+        // Error notifications are always manual-dismiss and ignore durationMs,
+        // including values that would be invalid for timed notifications.
+        if self.level != NotificationLevel::Error {
+            if let Some(duration) = self.duration_ms {
+                if !(1_000..=60_000).contains(&duration) {
+                    return Err("通知 durationMs 必须在 1000 到 60000 毫秒之间".into());
+                }
             }
         }
         Ok(())
@@ -114,6 +119,7 @@ mod tests {
             id: "n1".into(),
             level: NotificationLevel::Warning,
             title: "Heads up".into(),
+            source_icon: None,
             message: Some("Detail".into()),
             actions: vec![NotificationAction::OpenDir {
                 path: "C:/tmp".into(),
@@ -129,15 +135,32 @@ mod tests {
     }
 
     #[test]
+    fn error_duration_is_ignored_but_timed_levels_still_validate_it() {
+        let error = NotificationInput {
+            level: NotificationLevel::Error,
+            title: "manual".into(),
+            source_icon: None,
+            message: None,
+            actions: vec![],
+            duration_ms: Some(u64::MAX),
+        };
+        assert!(error.validate().is_ok());
+
+        let mut info = error;
+        info.level = NotificationLevel::Info;
+        assert!(info.validate().is_err());
+    }
+
+    #[test]
     fn default_durations_match_notification_levels() {
         assert_eq!(
             NotificationLevel::Success.default_duration_ms(),
-            Some(5_000)
+            Some(10_000)
         );
-        assert_eq!(NotificationLevel::Info.default_duration_ms(), Some(5_000));
+        assert_eq!(NotificationLevel::Info.default_duration_ms(), Some(10_000));
         assert_eq!(
             NotificationLevel::Warning.default_duration_ms(),
-            Some(8_000)
+            Some(10_000)
         );
         assert_eq!(NotificationLevel::Error.default_duration_ms(), None);
     }
