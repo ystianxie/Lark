@@ -5,12 +5,69 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Condvar, Mutex, OnceLock};
 
 const RECORD_SQLITE_FILE: &str = "record_data_v1.sqlite";
 const APP_FILE_INDEX_FILE: &str = "index_data_v1.sqlite";
 static RECORD_SCHEMA_READY: OnceLock<()> = OnceLock::new();
 static INDEX_SCHEMA_READY: OnceLock<()> = OnceLock::new();
+// Every connection that writes index_data_v1.sqlite takes a FIFO ticket before
+// its transaction. Reads deliberately do not enter this queue.
+static INDEX_WRITE_SCHEDULER: OnceLock<IndexWriteScheduler> = OnceLock::new();
+
+struct IndexWriteScheduler {
+    queue: Mutex<IndexWriteQueue>,
+    changed: Condvar,
+}
+
+struct IndexWriteQueue {
+    next_ticket: u64,
+    serving: u64,
+}
+
+struct IndexWriteGuard(&'static IndexWriteScheduler);
+
+impl IndexWriteScheduler {
+    fn acquire(&'static self) -> IndexWriteGuard {
+        let mut queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ticket = queue.next_ticket;
+        queue.next_ticket = queue.next_ticket.wrapping_add(1);
+        while queue.serving != ticket {
+            queue = self
+                .changed
+                .wait(queue)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        IndexWriteGuard(self)
+    }
+}
+
+impl Drop for IndexWriteGuard {
+    fn drop(&mut self) {
+        let mut queue = self
+            .0
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        queue.serving = queue.serving.wrapping_add(1);
+        self.0.changed.notify_all();
+    }
+}
+
+fn schedule_index_write() -> IndexWriteGuard {
+    INDEX_WRITE_SCHEDULER
+        .get_or_init(|| IndexWriteScheduler {
+            queue: Mutex::new(IndexWriteQueue {
+                next_ticket: 0,
+                serving: 0,
+            }),
+            changed: Condvar::new(),
+        })
+        .acquire()
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
 pub struct Record {
@@ -488,7 +545,7 @@ impl IndexSQL {
         Self::init();
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
         c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
-        let _ = c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
+        c.execute_batch("PRAGMA synchronous=NORMAL;").unwrap();
         IndexSQL { conn: c }
     }
 
@@ -513,6 +570,7 @@ impl IndexSQL {
     }
 
     pub fn init() {
+        let _write = schedule_index_write();
         INDEX_SCHEMA_READY.get_or_init(|| {
         // 创建数据库文件并连接及创建数据库
         let data_dir = app_data_dir().unwrap().join(APP_FILE_INDEX_FILE);
@@ -522,7 +580,12 @@ impl IndexSQL {
         }
         let c = Connection::open_with_flags(data_dir, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
         c.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
-        let _ = c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
+        c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+            .expect("failed to enable WAL for index database");
+        let journal_mode: String = c
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("failed to read index database journal mode");
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal", "index database must use WAL");
         let sql = r#"
         CREATE TABLE IF NOT EXISTS app_index
         (
@@ -587,6 +650,7 @@ impl IndexSQL {
     }
 
     pub fn insert_file_index(&self, r: &FileIndex) -> Result<i64> {
+        let _write = schedule_index_write();
         let sql = "insert into file_index (title,path,desc,type,md5) values (?1,?2,?3,?4,?5)";
         let md5 = string_factory::md5(r.path.as_str());
         let res = self
@@ -602,6 +666,7 @@ impl IndexSQL {
     }
 
     pub fn insert_file_indexes(&mut self, paths: Vec<FileIndex>) -> Result<()> {
+        let _write = schedule_index_write();
         println!("开始提交索引:{:?}", &paths.len());
         let tx = self.conn.transaction()?;
         {
@@ -632,6 +697,7 @@ impl IndexSQL {
     /// 在一个事务内应用一批增量文件索引变更。
     /// 全量 generation 重建仍使用 staging 接口；两者不应并发调用。
     pub fn apply_file_changes(&mut self, changes: &[FileIndexChange]) -> Result<()> {
+        let _write = schedule_index_write();
         let tx = self.conn.transaction()?;
         for change in changes {
             match change {
@@ -678,6 +744,7 @@ impl IndexSQL {
     }
 
     pub fn begin_file_generation(&self) -> Result<i64> {
+        let _write = schedule_index_write();
         let generation: i64 = self.conn.query_row(
             "SELECT COALESCE(MAX(generation), 0) + 1 FROM file_index",
             [],
@@ -688,6 +755,7 @@ impl IndexSQL {
     }
 
     pub fn insert_file_generation(&mut self, _generation: i64, paths: &[FileIndex]) -> Result<()> {
+        let _write = schedule_index_write();
         let tx = self.conn.transaction()?;
         let mut stmt = tx.prepare("INSERT OR REPLACE INTO file_index_staging (title,path,desc,pinyin,abb,type,md5) VALUES (?1,?2,?3,?4,?5,?6,?7)")?;
         for path in paths {
@@ -708,6 +776,7 @@ impl IndexSQL {
     }
 
     pub fn commit_file_generation(&mut self, generation: i64) -> Result<()> {
+        let _write = schedule_index_write();
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM file_index", [])?;
         tx.execute("INSERT INTO file_index (title,path,desc,pinyin,abb,type,md5,generation) SELECT title,path,desc,pinyin,abb,type,md5,?1 FROM file_index_staging", [generation])?;
@@ -717,6 +786,7 @@ impl IndexSQL {
     }
 
     pub fn insert_app_index(&self, r: &FileIndex) -> Result<i64> {
+        let _write = schedule_index_write();
         let sql = "insert into app_index (title,path,desc,arguments,icon,pinyin,abb,md5,target_path,source) values (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)";
         let md5 = string_factory::md5(r.path.as_str());
         let res = self.conn.execute(
@@ -744,6 +814,7 @@ impl IndexSQL {
     }
 
     pub fn insert_app_indexes(&mut self, paths: Vec<FileIndex>) -> Result<()> {
+        let _write = schedule_index_write();
         println!("开始提交索引:{:?}", &paths.len());
         let tx = self.conn.transaction()?;
         {
@@ -787,6 +858,7 @@ impl IndexSQL {
     }
 
     pub fn replace_discovered_app_indexes(&mut self, paths: Vec<FileIndex>) -> Result<usize> {
+        let _write = schedule_index_write();
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -842,6 +914,7 @@ impl IndexSQL {
     }
 
     pub fn upsert_custom_app_index(&mut self, app: &FileIndex) -> Result<()> {
+        let _write = schedule_index_write();
         let md5 = string_factory::md5(&app.path);
         let tx = self
             .conn
@@ -937,6 +1010,7 @@ impl IndexSQL {
     }
 
     pub fn delete_custom_app_index(&self, id: i64) -> Result<()> {
+        let _write = schedule_index_write();
         self.conn.execute(
             "DELETE FROM app_index WHERE id = ?1 AND is_custom = 1",
             [id],
@@ -945,6 +1019,7 @@ impl IndexSQL {
     }
 
     pub fn clear_discovered_app_indexes(&self) -> Result<()> {
+        let _write = schedule_index_write();
         self.conn
             .execute("DELETE FROM app_index WHERE is_custom = 0", [])?;
         Ok(())
@@ -1205,6 +1280,7 @@ impl IndexSQL {
     }
 
     pub fn delete_by_id(&self, table: &str, id: i64) -> Result<()> {
+        let _write = schedule_index_write();
         let sql = &format!("delete from {}_index where id = ?1", table);
         self.conn.execute(sql, [id.to_string()])?;
         Ok(())
@@ -1232,6 +1308,7 @@ impl IndexSQL {
     }
 
     pub fn clear_data(&self, table: &str) -> Result<()> {
+        let _write = schedule_index_write();
         let sql = &format!("delete from {}_index", table);
         self.conn.execute(sql, ())?;
         Ok(())
@@ -1249,6 +1326,7 @@ impl IndexSQL {
     }
 
     fn update_create_time(&self, table: &str, r: &FileIndex) -> Result<()> {
+        let _write = schedule_index_write();
         let sql = &format!("update {}_index set create_time = ?1 where id = ?2", table);
         // 获取当前毫秒级时间戳
         let now = chrono::Local::now().timestamp_millis() as u64;
@@ -1533,6 +1611,30 @@ mod app_index_tests {
                 rusqlite::params![title, path, pinyin, abb, md5],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn app_queries_continue_while_index_writers_wait_in_the_queue() {
+        let db = test_index();
+        let writer = schedule_index_write();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let _write = schedule_index_write();
+            acquired_tx.send(()).unwrap();
+        });
+
+        started_rx.recv().unwrap();
+        assert!(acquired_rx
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        assert!(db.find_app("missing", 0).unwrap().is_empty());
+        drop(writer);
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        waiter.join().unwrap();
     }
 
     #[test]

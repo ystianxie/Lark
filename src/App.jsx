@@ -1304,6 +1304,7 @@ const App = () => {
             console.log("当前组件的信息", componentInfoRef.current);
             if (event.payload === false && !screenshotCaptureRef.current && componentInfoRef.current?.type !== "panel") {
                 const hideWindow = async () => {
+                    console.info("[wake] hiding window after focus loss");
                     await appWindow.hide();
                     await modifyWindowSize("compact");
                 };
@@ -1347,20 +1348,26 @@ const App = () => {
         // });
 
         const unListenShowRequest = listen("window-show-request", async () => {
-            if (componentInfoRef.current?.type === "panel") {
-                await appWindow.show();
-                await appWindow.setFocus();
-                await focusPanelInputAfterWake();
-            } else {
-                let resizePromise;
-                flushSync(() => {
-                    resizePromise = initStatusRef.current?.();
-                });
-                if (inputBox.current) inputBox.current.value = "";
-                await resizePromise;
-                await appWindow.show();
-                await appWindow.setFocus();
-                await focusInput();
+            console.info("[wake] show request", {panel: componentInfoRef.current?.type === "panel"});
+            try {
+                if (componentInfoRef.current?.type === "panel") {
+                    await appWindow.show();
+                    await appWindow.setFocus();
+                    await focusPanelInputAfterWake();
+                } else {
+                    let resizePromise;
+                    flushSync(() => {
+                        resizePromise = initStatusRef.current?.();
+                    });
+                    if (inputBox.current) inputBox.current.value = "";
+                    await resizePromise;
+                    await appWindow.show();
+                    await appWindow.setFocus();
+                    await focusInput();
+                }
+                console.info("[wake] window shown and focused");
+            } catch (error) {
+                console.error("[wake] show request failed", error);
             }
         });
         const unListenClipboardShowRequest = listen("clipboard-show-request", async () => {

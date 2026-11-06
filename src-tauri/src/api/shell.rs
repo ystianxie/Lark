@@ -129,7 +129,7 @@ fn run_python_plugin_blocking(
     #[cfg(target_os = "windows")]
     command.creation_flags(0x08000000);
     let mut child = command
-        .arg(script_path)
+        .arg(&script_path)
         .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -190,7 +190,15 @@ fn run_python_plugin_blocking(
     };
     let output = output.unwrap().map_err(|error| error.to_string())?;
     let errors = errors.unwrap().map_err(|error| error.to_string())?;
+    if !errors.is_empty() {
+        log::info!(
+            "[python:{} stderr] {}",
+            script_path,
+            String::from_utf8_lossy(&errors)
+        );
+    }
     if !status.success() {
+        log::error!("[python:{}] exited with {}", script_path, status);
         return Err(format!(
             "Python 退出状态 {}：{}",
             status,

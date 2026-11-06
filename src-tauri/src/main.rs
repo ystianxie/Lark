@@ -62,6 +62,19 @@ use tauri_plugin_global_shortcut::{
 };
 use utils::ocr::ocr_image;
 
+#[derive(Deserialize)]
+struct FrontendLogEntry {
+    level: String,
+    message: String,
+}
+
+#[tauri::command]
+fn write_frontend_logs(window: tauri::WebviewWindow, entries: Vec<FrontendLogEntry>) {
+    for entry in entries.into_iter().take(100) {
+        utils::diagnostics::write_frontend_log(window.label(), &entry.level, &entry.message);
+    }
+}
+
 static HOTKEY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HOTKEY_CAPTURE_BINDINGS: OnceLock<Mutex<Option<HotkeyBindings>>> = OnceLock::new();
 static HOTKEY_REGISTRATION_LOCK: Mutex<()> = Mutex::new(());
@@ -819,7 +832,9 @@ fn handle_shortcut(
     }
 
     if Some(*pressed) == bindings.awaken {
-        if window.is_visible().unwrap_or(false) {
+        let visible = window.is_visible().unwrap_or(false);
+        log::info!("[wake] shortcut pressed: visible={visible}");
+        if visible {
             let _ = window.hide();
         } else {
             let _ = window.emit("window-show-request", ());
@@ -1643,6 +1658,13 @@ fn get_plugin_settings_status(app: AppHandle) -> Result<serde_json::Value, Strin
 }
 
 fn main() {
+    #[cfg(windows)]
+    if utils::crash_dump::run_reporter_if_requested() {
+        return;
+    }
+    if let Err(error) = utils::diagnostics::initialize() {
+        eprintln!("Failed to initialize local diagnostics: {error}");
+    }
     let mut context = tauri::generate_context!();
     #[cfg(windows)]
     {
@@ -1914,6 +1936,12 @@ fn main() {
             if let Some(tray) = app.tray_by_id("main") {
                 tray.set_menu(Some(tray_menu))?;
             }
+            #[cfg(windows)]
+            utils::crash_dump::install_handler();
+            log::info!(
+                "application setup complete: version={}",
+                app.package_info().version
+            );
             Ok(())
         })
         .on_tray_icon_event(|app, event| {
@@ -1930,6 +1958,7 @@ fn main() {
                 "tray-settings" => Some("settings-show-request"),
                 "tray-components" => Some("components-show-request"),
                 "quit" => {
+                    log::info!("application exit requested from tray");
                     app.exit(0);
                     None
                 }
@@ -1940,6 +1969,18 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
+            if window.label() == "skylark" {
+                match event {
+                    tauri::WindowEvent::Focused(focused) => {
+                        log::info!("[wake] native focus changed: {focused}")
+                    }
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        log::info!("main window close requested")
+                    }
+                    tauri::WindowEvent::Destroyed => log::info!("main window destroyed"),
+                    _ => {}
+                }
+            }
             if window.label() != "skylark"
                 || !matches!(
                     event,
@@ -1958,6 +1999,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            write_frontend_logs,
             api::tray_icons::list_tray_icons,
             api::tray_icons::replace_tray_icon,
             api::tray_icons::get_tray_icon_rules,

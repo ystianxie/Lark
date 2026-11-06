@@ -12,3 +12,7 @@ pub mod string_factory;
 
 #[cfg(windows)]
 pub mod background;
+
+pub mod diagnostics;
+#[cfg(windows)]
+pub mod crash_dump;
