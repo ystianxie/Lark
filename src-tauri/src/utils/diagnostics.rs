@@ -165,6 +165,11 @@ pub fn initialize() -> io::Result<()> {
                         log::error!("捕获 stdout/stderr 失败: {error}");
                     }
                     super::crash_dump::initialize(directory.join(format!("{session}.dmp")));
+                    if let Err(error) =
+                        start_resource_monitor(directory.join(format!("{session}.resources.log")))
+                    {
+                        log::warn!("Resource monitoring could not start: {error}");
+                    }
                 }
                 log::info!(
                     "session start: version={} pid={} executable={} logs={}",
@@ -186,20 +191,50 @@ fn install_panic_hook(path: PathBuf) {
     std::panic::set_hook(Box::new(move |info| {
         // Independent file and no logger lock: the panic may occur while logging holds that lock.
         let thread = std::thread::current();
-        let text = format!(
-            "{} [PANIC] pid={} thread={:?} name={:?}\n{info}\n{}\n",
-            chrono::Local::now().to_rfc3339(),
-            std::process::id(),
-            thread.id(),
-            thread.name(),
-            std::backtrace::Backtrace::force_capture()
-        );
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = file.write_all(text.as_bytes());
+            let _ = writeln!(
+                file,
+                "{} [PANIC] pid={} thread={:?} name={:?}\n{info}",
+                chrono::Local::now().to_rfc3339(),
+                std::process::id(),
+                thread.id(),
+                thread.name()
+            );
+            #[cfg(windows)]
+            let _ = writeln!(
+                file,
+                "[resources] {}",
+                super::resource_diagnostics::snapshot()
+            );
+            // Save resource evidence before symbol resolution, which can itself fail or stall.
+            let _ = file.sync_all();
+            let _ = writeln!(file, "{}", std::backtrace::Backtrace::force_capture());
             let _ = file.sync_all();
         }
         previous(info);
     }));
+}
+
+#[cfg(windows)]
+fn write_resource_sample(writer: &mut RotatingFile, reason: &str) -> io::Result<()> {
+    let mut sample = super::resource_diagnostics::snapshot();
+    sample["reason"] = reason.into();
+    writer.write(format!("{sample}\n").as_bytes())
+}
+
+#[cfg(windows)]
+fn start_resource_monitor(path: PathBuf) -> io::Result<()> {
+    let mut writer = RotatingFile::open(path, MAX_FILE_BYTES)?;
+    write_resource_sample(&mut writer, "startup")?;
+    std::thread::Builder::new()
+        .name("resource-diagnostics".into())
+        .spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(60));
+            if let Err(error) = write_resource_sample(&mut writer, "periodic") {
+                log::warn!("Resource snapshot could not be written: {error}");
+            }
+        })?;
+    Ok(())
 }
 
 pub fn write_frontend_log(label: &str, level: &str, message: &str) {
@@ -354,6 +389,28 @@ mod tests {
         assert_eq!(fs::read_dir(&directory).unwrap().count(), BACKUPS + 1);
         fs::remove_dir_all(directory).unwrap();
     }
+    #[cfg(windows)]
+    #[test]
+    fn resource_samples_are_readable_json_after_rotation() {
+        let directory = temporary("resources");
+        let path = directory.join("lark-test.resources.log");
+        let mut writer = RotatingFile::open(path.clone(), 1).unwrap();
+        write_resource_sample(&mut writer, "startup").unwrap();
+        write_resource_sample(&mut writer, "periodic").unwrap();
+        drop(writer);
+        for (file, reason) in [
+            (path.with_extension("1.log"), "startup"),
+            (path, "periodic"),
+        ] {
+            let text = fs::read_to_string(file).unwrap();
+            assert_eq!(text.lines().count(), 1);
+            let sample: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(sample["reason"], reason);
+            assert_eq!(sample["pid"], std::process::id());
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn pruning_removes_only_our_old_logs_and_preserves_crash_evidence() {
         let directory = temporary("pruning");

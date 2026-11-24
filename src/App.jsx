@@ -62,7 +62,7 @@ const App = () => {
     // 手枪组件
     const [pistol, setPistol] = useState("");
     // 组件信息
-    const [componentInfo, setComponentInfo] = useState("");
+    const [componentInfo, updateComponentInfo] = useState("");
     // 搜索组件结果数组
     const [keywordComponent, setKeywordComponent] = useState([]);
     useEffect(() => setResultMenu(null), [keywordComponent]);
@@ -399,6 +399,18 @@ const App = () => {
     // 全局事件监听器只注册一次，使用 ref 读取最新的面板状态，避免闭包持有旧值。
     const componentInfoRef = useRef(componentInfo);
     const initStatusRef = useRef(null);
+
+    function setComponentInfo(nextInfo) {
+        // Invalidate searches before React commits the new mode, including empty-input transitions.
+        searchRequestId.current += 1;
+        componentInfoRef.current = nextInfo;
+        if (nextInfo?.type === "panel") {
+            setKeywordComponent([]);
+            setSelectedIndex(-1);
+        }
+        updateComponentInfo(nextInfo);
+    }
+
     // 当前面板（如插件创建向导）需要接管窗口拖放时，在此注册 (path) => void 处理器；
     // 为空则拖入的文件按原路径交给 pistol（插件入参 / 文件搜索 / .py 执行）。
     // Windows 上 WebView2 的原生拖放已被 Tauri 的 drop handler 接管，面板内收不到 HTML5 drop 事件。
@@ -462,7 +474,6 @@ const App = () => {
         return resizePromise;
     }
 
-    componentInfoRef.current = componentInfo;
     initStatusRef.current = initStatus;
 
     const toggleDebugMode = async () => {
@@ -1012,8 +1023,9 @@ const App = () => {
 
     useEffect(() => {
         // 输入框内容提交
+        if (componentInfo?.type === "panel") return;
         const requestId = ++searchRequestId.current;
-        const isCurrent = () => requestId === searchRequestId.current;
+        const isCurrent = () => requestId === searchRequestId.current && componentInfoRef.current?.type !== "panel";
 
         function calculator() {
             let calc_result = calculateExpression(inputValue);
@@ -1091,7 +1103,7 @@ const App = () => {
                         data: String(error),
                     }];
                 }
-                if (requestId !== searchRequestId.current) return;
+                if (!isCurrent()) return;
                 await modifyWindowSize(result.length || "compact");
                 if (!isCurrent()) return;
                 setKeywordComponent(result);
@@ -1121,6 +1133,7 @@ const App = () => {
                             data: inputValue,
                             desc: "使用默认浏览器打开url",
                         });
+                        if (!isCurrent()) return;
                         await modifyWindowSize(result.length || "compact");
                     }
                 }
@@ -1140,6 +1153,7 @@ const App = () => {
                         params: {},
                     });
                 }
+                if (!isCurrent()) return;
                 // const pinyinMatches = [];
                 // const otherMatches = [];
 
@@ -1274,13 +1288,13 @@ const App = () => {
                     console.log("错误:", e);
                 }
                 // 当前组件类型不为小窗组件时改变窗口大小
-                if (componentInfo.type !== "panel") {
-                    await modifyWindowSize(result.length || "compact");
-                }
-            } else if (componentInfo.type !== "panel") {
+                if (!isCurrent()) return;
+                await modifyWindowSize(result.length || "compact");
+            } else {
+                if (!isCurrent()) return;
                 await modifyWindowSize("compact");
             }
-            if (requestId !== searchRequestId.current) return;
+            if (!isCurrent()) return;
             console.log(result);
             setKeywordComponent(result);
             setSelectedIndex(0);
@@ -1306,6 +1320,7 @@ const App = () => {
                 const hideWindow = async () => {
                     console.info("[wake] hiding window after focus loss");
                     await appWindow.hide();
+                    if (screenshotCaptureRef.current || componentInfoRef.current?.type === "panel") return;
                     await modifyWindowSize("compact");
                 };
                 // ? 正式启用
@@ -1351,6 +1366,8 @@ const App = () => {
             console.info("[wake] show request", {panel: componentInfoRef.current?.type === "panel"});
             try {
                 if (componentInfoRef.current?.type === "panel") {
+                    const mode = document.getElementById("mainDiv")?.dataset.windowMode;
+                    await modifyWindowSize(mode === "workspace" ? "workspace" : "expanded");
                     await appWindow.show();
                     await appWindow.setFocus();
                     await focusPanelInputAfterWake();

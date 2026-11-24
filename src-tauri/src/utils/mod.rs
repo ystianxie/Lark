@@ -16,3 +16,6 @@ pub mod background;
 pub mod diagnostics;
 #[cfg(windows)]
 pub mod crash_dump;
+
+#[cfg(windows)]
+pub mod resource_diagnostics;
