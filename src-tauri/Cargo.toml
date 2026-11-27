@@ -37,7 +37,7 @@ anyhow = "1.0.104"
 rusqlite = "0.40.2"
 rust-crypto = "0.2.36"
 chrono = "0.4.45"
-arboard = "3.4.0"
+arboard = "3.6.1"
 rdev = { version = "0.5.1", features = ['unstable_grab'] } #获取键盘按键
 libc = "0.2.152"
 rayon = "1.12.0"
