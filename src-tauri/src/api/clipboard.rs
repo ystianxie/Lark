@@ -16,6 +16,10 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration as StdDuration, Instant};
 
+#[cfg(target_os = "windows")]
+#[path = "clipboard_image.rs"]
+mod clipboard_image;
+
 pub struct ClipboardWatcher;
 
 pub struct ClipboardOperator;
@@ -448,6 +452,8 @@ impl ClipboardWatcher {
             let mut last_img_md5 = String::new();
             #[cfg(target_os = "windows")]
             let mut last_clipboard_sequence = 0;
+            #[cfg(target_os = "windows")]
+            let mut last_image_sequence = 0;
             let mut clipboard = Clipboard::new().unwrap();
             let mut retention = Config::new().clipboard_retention();
             let mut retention_refresh_tick = 0u8;
@@ -579,6 +585,13 @@ impl ClipboardWatcher {
                     });
                 }
 
+                #[cfg(target_os = "windows")]
+                let img = clipboard_image::read_image_if_changed(
+                    &mut clipboard,
+                    &mut last_image_sequence,
+                    current_clipboard_sequence,
+                );
+                #[cfg(not(target_os = "windows"))]
                 let img = clipboard.get_image();
                 let _ = img.map(|img| {
                     #[cfg(target_os = "windows")]

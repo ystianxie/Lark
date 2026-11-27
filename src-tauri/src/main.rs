@@ -34,7 +34,8 @@ use crate::api::screenshot::{
 };
 use crate::api::shell::{
     append_txt, clipboard_control, get_file_icon, open_app, open_environment_variables, open_file,
-    open_url, probe_python_interpreter, read_txt, run_python_plugin, run_python_script, write_txt,
+    open_url, probe_python_interpreter, read_txt, resolve_search_path, run_python_plugin,
+    run_python_script, write_txt,
 };
 use crate::config::plugins::{
     create_jsx_plugin, create_plugin, load_plugin_editor, load_plugins, update_plugin,
@@ -2049,6 +2050,7 @@ fn main() {
             read_txt,
             append_txt,
             open_file,
+            resolve_search_path,
             read_app_info,
             open_explorer,
             read_file_to_base64,

@@ -633,6 +633,80 @@ pub fn open_environment_variables() -> Result<(), String> {
     }
 }
 
+fn resolve_existing_path(input: &str) -> Option<(String, bool)> {
+    let input = input.trim();
+    let input = input
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(input);
+    let path = Path::new(input);
+    if !path.is_absolute() {
+        return None;
+    }
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_dir() && !metadata.is_file() {
+        return None;
+    }
+    Some((input.to_string(), metadata.is_dir()))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn resolve_search_path(input: String) -> Result<Option<Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        resolve_existing_path(&input).map(|(path, is_directory)| {
+            serde_json::json!({"path": path, "isDirectory": is_directory})
+        })
+    })
+    .await
+    .map_err(|error| format!("路径检查失败：{error}"))
+}
+
+#[cfg(test)]
+mod search_path_tests {
+    use super::resolve_existing_path;
+
+    #[test]
+    fn resolves_files_folders_and_quoted_paths() {
+        let file = std::env::current_exe().unwrap();
+        let file = file.to_str().unwrap();
+        assert_eq!(resolve_existing_path(file), Some((file.to_string(), false)));
+        assert_eq!(
+            resolve_existing_path(&format!("  \"{file}\"  ")),
+            Some((file.to_string(), false))
+        );
+        let folder = std::env::temp_dir().join(format!("lark-路径检查 {}", std::process::id()));
+        std::fs::create_dir(&folder).unwrap();
+        let result = resolve_existing_path(folder.to_str().unwrap());
+        let missing = resolve_existing_path(folder.join("missing.txt").to_str().unwrap());
+        std::fs::remove_dir(&folder).unwrap();
+        assert_eq!(result, Some((folder.to_str().unwrap().to_string(), true)));
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn ignores_queries_urls_relative_paths_and_command_arguments() {
+        for input in [
+            "",
+            "百度",
+            "https://example.com",
+            "src",
+            "src/main.rs",
+            "C:",
+        ] {
+            assert_eq!(resolve_existing_path(input), None, "{input}");
+        }
+        let file = std::env::current_exe().unwrap();
+        assert_eq!(
+            resolve_existing_path(&format!("{} --help", file.display())),
+            None
+        );
+        assert_eq!(
+            resolve_existing_path(&format!("\"{}", file.display())),
+            None
+        );
+    }
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn open_file(file_path: &str) {
     if let Err(error) = open_file_result(file_path) {

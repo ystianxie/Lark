@@ -1270,8 +1270,23 @@ const App = () => {
                     // result = [...result, ...pinyinMatches.map(match => match.item), ...otherMatches.map(match => match.item)].slice(0, 9);
 
                     if (result.length === 0 && isAppSearch) {
-                        // 没有结果则进行web搜索
                         result = webSearchComponent(inputValue);
+                        const pathInfo = await invoke("resolve_search_path", {input: inputValue});
+                        if (!isCurrent()) return;
+                        if (pathInfo) {
+                            const fileType = pathInfo.isDirectory ? "folder" : pathInfo.path.split(".").pop();
+                            result.unshift({
+                                title: pathInfo.isDirectory ? "打开文件夹" : "打开文件",
+                                desc: pathInfo.path,
+                                data: pathInfo.path,
+                                path: pathInfo.path,
+                                type: "file",
+                                file_type: fileType,
+                                icon: <img alt="" src={pathInfo.isDirectory
+                                    ? getMaterialFolderIcon(fileType)
+                                    : getMaterialFileIcon(fileType)} style={{width: "100%"}}/>,
+                            });
+                        }
                     } else {
                         // 有结果时按该关键词下的使用积分和最近使用时间进行稳定重排。
                         if (isAppSearch) {
